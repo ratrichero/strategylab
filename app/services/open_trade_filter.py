@@ -1,0 +1,140 @@
+"""Open Trade Filter — kiểm tra trước khi tạo PendingSignal"""
+from datetime import datetime, timedelta
+from typing import Tuple, Optional, Dict
+from app.core.trading_mode import get_current_mode, TradingMode
+
+
+class OpenTradeFilter:
+    def __init__(self, config: dict):
+        self.cfg = config
+
+    def check(self, symbol, direction, strategy_name, pattern,
+               timeframe, regime, score, ml_prob, components,
+               atr_ratio=None, db=None) -> Tuple[bool, str]:
+        if not self.cfg.get("enabled", False): return True, "filter_disabled"
+
+        identity = self.cfg.get("identity", {})
+        if direction not in identity.get("directions", ["LONG","SHORT"]):
+            return False, f"direction_blocked_{direction}"
+        strats = identity.get("strategies", [])
+        if strats and strategy_name not in strats:
+            return False, f"strategy_blocked_{strategy_name}"
+        patterns = identity.get("patterns", [])
+        if patterns and pattern not in patterns:
+            return False, f"pattern_blocked"
+        tfs = identity.get("timeframes", ["15m","1h","4h"])
+        if timeframe not in tfs:
+            return False, f"timeframe_blocked"
+        sym_mode = identity.get("symbol_mode", "all")
+        if sym_mode == "whitelist":
+            wl = identity.get("symbol_whitelist", [])
+            if wl and symbol not in wl: return False, "symbol_not_whitelisted"
+        elif sym_mode == "blacklist":
+            if symbol in identity.get("symbol_blacklist", []):
+                return False, "symbol_blacklisted"
+
+        mkt = self.cfg.get("market_condition", {})
+        if regime not in mkt.get("allowed_regimes", ["BULL","BEAR","SIDEWAYS"]):
+            return False, f"regime_blocked_{regime}"
+        if atr_ratio is not None:
+            min_atr = mkt.get("min_atr_pct", 0); max_atr = mkt.get("max_atr_pct", 0)
+            if min_atr > 0 and atr_ratio < min_atr: return False, "atr_too_low"
+            if max_atr > 0 and atr_ratio > max_atr: return False, "atr_too_high"
+
+        sc = self.cfg.get("score", {})
+        if score < sc.get("min_overall", 0): return False, "score_below_filter"
+        if ml_prob is not None and sc.get("min_ml_prob", 0) > 0:
+            if ml_prob < sc["min_ml_prob"]: return False, "ml_prob_below_filter"
+        if sc.get("min_trend_score", 0) > 0:
+            if components.get("trend_score", 0) < sc["min_trend_score"]:
+                return False, "trend_below_filter"
+        if sc.get("min_mtf_score", 0) > 0:
+            if components.get("mtf_score", 0) < sc["min_mtf_score"]:
+                return False, "mtf_below_filter"
+
+        if db is not None:
+            ok, reason = self._check_position(db, symbol, strategy_name, timeframe)
+            if not ok: return False, reason
+
+        time_cfg = self.cfg.get("time", {})
+        if time_cfg.get("enabled", False):
+            ok, reason = self._check_time(time_cfg)
+            if not ok: return False, reason
+
+        return True, "passed"
+
+    def _check_position(self, db, symbol, strategy_name, timeframe):
+        from app.db.models import Signal, PendingSignal
+        pos = self.cfg.get("position", {})
+        mode = get_current_mode()
+
+        max_conc = pos.get("max_concurrent_trades", 999)
+        if db.query(Signal).filter(Signal.status == "OPEN").count() >= max_conc:
+            return False, "max_concurrent_reached"
+
+        if mode == TradingMode.LIVE:
+            if db.query(Signal).filter(Signal.symbol == symbol, Signal.status == "OPEN").count():
+                return False, "live_symbol_occupied"
+            if db.query(PendingSignal).filter(PendingSignal.symbol == symbol, PendingSignal.status == "WAIT").count():
+                return False, "live_symbol_pending_exists"
+        else:
+            max_sym = pos.get("max_per_symbol", 1)
+            if db.query(Signal).filter(Signal.symbol == symbol,
+                    Signal.strategy_name == strategy_name,
+                    Signal.timeframe == timeframe,
+                    Signal.status == "OPEN").count() >= max_sym:
+                return False, "max_per_symbol"
+
+        max_tf_cfg = pos.get("max_per_timeframe", {})
+        tf_limit = max_tf_cfg.get(timeframe, 999)
+        if db.query(Signal).filter(Signal.timeframe == timeframe, Signal.status == "OPEN").count() >= tf_limit:
+            return False, f"max_per_tf_{timeframe}"
+
+        max_daily = pos.get("max_daily_trades", 0)
+        if max_daily > 0:
+            today = datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0) - timedelta(hours=7)
+            if db.query(Signal).filter(Signal.exit_time >= today).count() >= max_daily:
+                return False, "max_daily_trades"
+
+        max_loss = pos.get("max_daily_loss_pct", 0)
+        if max_loss > 0:
+            today = datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0) - timedelta(hours=7)
+            from sqlalchemy import func
+            pnl = db.query(func.sum(Signal.result_percent)).filter(
+                Signal.exit_time >= today, Signal.status.in_(["WIN","LOSS"])).scalar() or 0
+            if pnl <= -max_loss: return False, "daily_loss_limit"
+
+        pause_n = pos.get("pause_after_loss_streak", 0)
+        if pause_n > 0:
+            recent = db.query(Signal.status).filter(
+                Signal.status.in_(["WIN","LOSS"])).order_by(Signal.exit_time.desc()).limit(pause_n).all()
+            if len(recent) >= pause_n and all(r[0] == "LOSS" for r in recent[:pause_n]):
+                return False, f"loss_streak_pause"
+
+        return True, "ok"
+
+    def _check_time(self, time_cfg):
+        now = datetime.utcnow() + timedelta(hours=7)
+        allowed_days = time_cfg.get("allowed_days", list(range(7)))
+        if now.weekday() not in allowed_days: return False, "day_restricted"
+        hours = time_cfg.get("allowed_hours", {"start": "00:00", "end": "23:59"})
+        sh, sm = map(int, hours["start"].split(":"))
+        eh, em = map(int, hours["end"].split(":"))
+        cur = now.hour*60 + now.minute
+        if not (sh*60+sm <= cur <= eh*60+em): return False, "outside_hours"
+        blackout = time_cfg.get("blackout_minutes_before_funding", 0)
+        if blackout > 0:
+            now_utc = datetime.utcnow()
+            for fh in [0, 8, 16]:
+                ft = now_utc.replace(hour=fh, minute=0, second=0, microsecond=0)
+                if ft <= now_utc: ft = ft.replace(day=ft.day+1)
+                if (ft - now_utc).total_seconds()/60 <= blackout:
+                    return False, "funding_blackout"
+        return True, "ok"
+
+
+def get_open_trade_filter(cfg=None) -> OpenTradeFilter:
+    if cfg is None:
+        from app.services.config_service import get_runtime_config
+        cfg = get_runtime_config().get("OPEN_TRADE_FILTER", {"enabled": False})
+    return OpenTradeFilter(cfg)
