@@ -337,7 +337,6 @@ def _process_single(db, p: PendingSignal, price_map: dict, now) -> bool:
         atr_ratio      = snap.get("atr_ratio"),
         regime         = p.regime,
         candle_time    = ensure_utc(p.candle_time),
-        engine_version = snap.get("engine_version", 2.0),
         engine_version = p.engine_version,
         market_context = {
             "entry": entry_ctx,
