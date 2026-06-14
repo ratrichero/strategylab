@@ -4,6 +4,7 @@ from app.db.models import SignalFeature
 from app.services.outcome_service import save_trade_outcome
 from app.services.btc_context_cache import get_or_build_hourly_snapshot, build_event_context
 from app.core.trading_mode import get_current_mode, TradingMode
+ from app.core.time_utils import utc_now
 
 
 def close_trade(db, trade, current_price, reason: str):
@@ -41,7 +42,8 @@ def close_trade(db, trade, current_price, reason: str):
 
     trade.result_percent = result
     trade.status = "WIN" if result > 0 else "LOSS"
-    trade.exit_time = datetime.utcnow()
+
+    trade.exit_time = utc_now()
 
      # ── PRINT LOG ─────────────────────────────────────
     icon = "🟢" if result > 0 else "🔴"

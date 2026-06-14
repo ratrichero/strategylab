@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Tuple
 import pandas as pd
 from app.db.models import TradeOutcomeAnalytics
+from app.core.time_utils import ensure_utc
 
 
 def save_trade_outcome(db, trade, feature):
@@ -68,6 +69,13 @@ def save_trade_outcome(db, trade, feature):
 
 def _fetch_klines(symbol, start_time, end_time):
     from app.services.binance_service import get_klines
+    from datetime import timedelta
+    import time as time_module
+
+    # Đảm bảo UTC aware trước khi dùng
+    start_time = ensure_utc(start_time)
+    end_time   = ensure_utc(end_time)
+
     fetch_start = start_time - timedelta(minutes=2)
     fetch_end   = end_time   + timedelta(minutes=2)
     for attempt in range(3):

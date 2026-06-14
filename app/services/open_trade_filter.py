@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 from typing import Tuple, Optional, Dict
 from app.core.trading_mode import get_current_mode, TradingMode
+from app.core.time_utils import utc_now, vn_now
 
 
 class OpenTradeFilter:
@@ -65,7 +66,9 @@ class OpenTradeFilter:
 
     def _check_position(self, db, symbol, strategy_name, timeframe):
         from app.db.models import Signal, PendingSignal
-        pos = self.cfg.get("position", {})
+        from sqlalchemy import func
+
+        pos  = self.cfg.get("position", {})
         mode = get_current_mode()
 
         max_conc = pos.get("max_concurrent_trades", 999)
@@ -73,63 +76,96 @@ class OpenTradeFilter:
             return False, "max_concurrent_reached"
 
         if mode == TradingMode.LIVE:
-            if db.query(Signal).filter(Signal.symbol == symbol, Signal.status == "OPEN").count():
+            if db.query(Signal).filter(
+                    Signal.symbol == symbol, Signal.status == "OPEN").count():
                 return False, "live_symbol_occupied"
-            if db.query(PendingSignal).filter(PendingSignal.symbol == symbol, PendingSignal.status == "WAIT").count():
+            if db.query(PendingSignal).filter(
+                    PendingSignal.symbol == symbol,
+                    PendingSignal.status == "WAIT").count():
                 return False, "live_symbol_pending_exists"
         else:
             max_sym = pos.get("max_per_symbol", 1)
-            if db.query(Signal).filter(Signal.symbol == symbol,
+            if db.query(Signal).filter(
+                    Signal.symbol        == symbol,
                     Signal.strategy_name == strategy_name,
-                    Signal.timeframe == timeframe,
-                    Signal.status == "OPEN").count() >= max_sym:
+                    Signal.timeframe     == timeframe,
+                    Signal.status        == "OPEN").count() >= max_sym:
                 return False, "max_per_symbol"
 
         max_tf_cfg = pos.get("max_per_timeframe", {})
-        tf_limit = max_tf_cfg.get(timeframe, 999)
-        if db.query(Signal).filter(Signal.timeframe == timeframe, Signal.status == "OPEN").count() >= tf_limit:
+        tf_limit   = max_tf_cfg.get(timeframe, 999)
+        if db.query(Signal).filter(
+                Signal.timeframe == timeframe,
+                Signal.status    == "OPEN").count() >= tf_limit:
             return False, f"max_per_tf_{timeframe}"
 
+        # ── Daily trades — dùng UTC range của ngày VN hôm nay ──
         max_daily = pos.get("max_daily_trades", 0)
         if max_daily > 0:
-            today = datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0) - timedelta(hours=7)
-            if db.query(Signal).filter(Signal.exit_time >= today).count() >= max_daily:
+            from app.core.time_utils import vn_day_to_utc_range
+            import datetime
+            today_start_utc, _ = vn_day_to_utc_range(
+                vn_now().date().isoformat()     # ngày hôm nay theo VN
+            )
+            if db.query(Signal).filter(
+                    Signal.exit_time >= today_start_utc).count() >= max_daily:
                 return False, "max_daily_trades"
 
+        # ── Daily loss — cùng logic ──────────────────────────
         max_loss = pos.get("max_daily_loss_pct", 0)
         if max_loss > 0:
-            today = datetime.utcnow().replace(hour=0,minute=0,second=0,microsecond=0) - timedelta(hours=7)
-            from sqlalchemy import func
+            from app.core.time_utils import vn_day_to_utc_range
+            today_start_utc, _ = vn_day_to_utc_range(
+                vn_now().date().isoformat()
+            )
             pnl = db.query(func.sum(Signal.result_percent)).filter(
-                Signal.exit_time >= today, Signal.status.in_(["WIN","LOSS"])).scalar() or 0
-            if pnl <= -max_loss: return False, "daily_loss_limit"
+                Signal.exit_time >= today_start_utc,
+                Signal.status.in_(["WIN", "LOSS"])
+            ).scalar() or 0
+            if pnl <= -max_loss:
+                return False, "daily_loss_limit"
 
+        # ── Loss streak ───────────────────────────────────────
         pause_n = pos.get("pause_after_loss_streak", 0)
         if pause_n > 0:
-            recent = db.query(Signal.status).filter(
-                Signal.status.in_(["WIN","LOSS"])).order_by(Signal.exit_time.desc()).limit(pause_n).all()
+            recent = (
+                db.query(Signal.status)
+                .filter(Signal.status.in_(["WIN", "LOSS"]))
+                .order_by(Signal.exit_time.desc())
+                .limit(pause_n)
+                .all()
+            )
             if len(recent) >= pause_n and all(r[0] == "LOSS" for r in recent[:pause_n]):
-                return False, f"loss_streak_pause"
+                return False, "loss_streak_pause"
 
         return True, "ok"
 
     def _check_time(self, time_cfg):
-        now = datetime.utcnow() + timedelta(hours=7)
+        # Hiển thị / check giờ theo VN — dùng vn_now()
+        now_vn       = vn_now()
         allowed_days = time_cfg.get("allowed_days", list(range(7)))
-        if now.weekday() not in allowed_days: return False, "day_restricted"
+        if now_vn.weekday() not in allowed_days:
+            return False, "day_restricted"
+
         hours = time_cfg.get("allowed_hours", {"start": "00:00", "end": "23:59"})
         sh, sm = map(int, hours["start"].split(":"))
         eh, em = map(int, hours["end"].split(":"))
-        cur = now.hour*60 + now.minute
-        if not (sh*60+sm <= cur <= eh*60+em): return False, "outside_hours"
+        cur    = now_vn.hour * 60 + now_vn.minute
+        if not (sh * 60 + sm <= cur <= eh * 60 + em):
+            return False, "outside_hours"
+
+        # Funding blackout — tính theo UTC
         blackout = time_cfg.get("blackout_minutes_before_funding", 0)
         if blackout > 0:
-            now_utc = datetime.utcnow()
+            now_utc = utc_now()
             for fh in [0, 8, 16]:
+                from datetime import timedelta
                 ft = now_utc.replace(hour=fh, minute=0, second=0, microsecond=0)
-                if ft <= now_utc: ft = ft.replace(day=ft.day+1)
-                if (ft - now_utc).total_seconds()/60 <= blackout:
+                if ft <= now_utc:
+                    ft += timedelta(days=1)
+                if (ft - now_utc).total_seconds() / 60 <= blackout:
                     return False, "funding_blackout"
+
         return True, "ok"
 
 

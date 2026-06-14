@@ -1,11 +1,8 @@
-# app/main.py — CLEAN VERSION
-
 import os
 import asyncio
 import threading
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from fastapi import FastAPI, Request, HTTPException
@@ -15,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import TELEGRAM_TOKEN
 from app.core.trading_mode import get_trading_mode
+from app.core.time_utils import utc_now, vn_now_str
 from app.services.price_feed import (
     start_price_feed, stop_price_feed,
     get_price_feed, add_price_callback
@@ -35,36 +33,41 @@ from app.api.monitor_trade import router as monitor_trade_router
 from app.api.retrain import router as retrain_router
 from app.api.signal_analysis_handler import router as signal_analysis_router
 from app.api.system import router as system_router
-
 from app.api.dashboard.signals import router as dash_signals_router
 from app.api.dashboard.research import router as dash_research_router
 from app.api.dashboard.analysis import router as dash_analysis_router
 from app.api.dashboard.edge import router as dash_edge_router
 from app.api.dashboard.config_api import router as dash_config_router
 from app.api.dashboard.performance_api import router as dash_perf_router
+from app.api.dashboard.pending_api import router as dash_pending_router
 
 from asyncio import Queue as AsyncQueue
-
 import logging
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 # ── Globals ───────────────────────────────────────────────────
-
 scan_queue: AsyncQueue = AsyncQueue()
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
 _last_monitor_run: float = 0
 MONITOR_THROTTLE = 2.0
 
 
-# ── Price Update Handler ─────────────────────────────────────
+# ── Price Callback — FIXED ───────────────────────────────────
 
-async def on_price_update(price_map: dict):
+def on_price_update(price_map: dict):
+    """
+    Callback từ price feed thread.
+    PHẢI là sync function để tránh cross-loop coroutine issue.
+    Dùng run_coroutine_threadsafe để dispatch sang main loop.
+    """
     global _main_loop
-    if _main_loop is None:
+    if _main_loop is None or _main_loop.is_closed():
         return
     try:
         asyncio.run_coroutine_threadsafe(
-            _process_price_update(price_map), _main_loop)
+            _process_price_update(price_map),
+            _main_loop
+        )
     except Exception as e:
         print(f"[PRICE CALLBACK] {e}")
 
@@ -72,30 +75,39 @@ async def on_price_update(price_map: dict):
 async def _process_price_update(price_map: dict):
     import time
     global _last_monitor_run
+
     now = time.time()
     if now - _last_monitor_run < MONITOR_THROTTLE:
         return
     _last_monitor_run = now
+
     cfg = get_runtime_config()
     if not cfg.get("ENABLE_MONITOR", True):
         return
+
     try:
         await asyncio.to_thread(_run_monitor, price_map)
     except Exception as e:
         print(f"[MONITOR ERROR] {e}")
+        traceback.print_exc()
 
 
 def _run_monitor(price_map: dict):
+    """Chạy trong thread pool — sync only."""
     from app.services.pending_engine import process_pending_signals
     from app.services.trade_monitor import monitor_open_trades
+
     try:
         process_pending_signals(price_map=price_map)
     except Exception as e:
-        print(f"[PENDING ENGINE ERROR] {e}")
+        print(f"[PENDING ENGINE ERROR] {type(e).__name__}: {e}")
+        traceback.print_exc()
+
     try:
         monitor_open_trades(price_map=price_map)
     except Exception as e:
-        print(f"[TRADE MONITOR ERROR] {e}")
+        print(f"[TRADE MONITOR ERROR] {type(e).__name__}: {e}")
+        traceback.print_exc()
 
 
 # ── Background Tasks ─────────────────────────────────────────
@@ -104,11 +116,10 @@ async def scan_worker():
     while True:
         timeframe = await scan_queue.get()
         try:
-            vn = datetime.now(timezone(timedelta(hours=7)))
-            print(f"🚀 [SCAN] {timeframe} | {vn.strftime('%Y-%m-%d %H:%M:%S')}")
+            print(f"🚀 [SCAN] {timeframe} | {vn_now_str()}")
             from app.services.signal_service import run_market_scan_single_tf
             await asyncio.to_thread(run_market_scan_single_tf, timeframe)
-            print(f"✅ [SCAN DONE] {timeframe} Time: {datetime.now(timezone(timedelta(hours=7))).strftime("%Y-%m-%d %H:%M:%S")}")
+            print(f"✅ [SCAN DONE] {timeframe} | {vn_now_str()}")
         except Exception as e:
             print(f"[SCAN ERROR] {e}")
             traceback.print_exc()
@@ -123,13 +134,22 @@ async def scheduler_loop():
         if not cfg.get("ENABLE_SCHEDULER", True):
             await asyncio.sleep(5)
             continue
-        now = datetime.now()
+
+        # Dùng UTC để schedule — không dùng local time
+        now = utc_now()
+
         if now.minute in [1, 16, 31, 46] and last["15m"] != now.minute:
-            await scan_queue.put("15m"); last["15m"] = now.minute
+            await scan_queue.put("15m")
+            last["15m"] = now.minute
+
         if now.minute == 1 and last["1h"] != now.hour:
-            await scan_queue.put("1h"); last["1h"] = now.hour
+            await scan_queue.put("1h")
+            last["1h"] = now.hour
+
         if now.minute == 1 and now.hour % 4 == 0 and last["4h"] != now.hour:
-            await scan_queue.put("4h"); last["4h"] = now.hour
+            await scan_queue.put("4h")
+            last["4h"] = now.hour
+
         await asyncio.sleep(1)
 
 
@@ -158,19 +178,28 @@ async def report_scheduler_loop():
     while True:
         await asyncio.sleep(60)
         try:
-            vn = datetime.now(timezone(timedelta(hours=7)))
-            if vn.hour == 8 and vn.minute == 0 and _ld != vn.date():
-                _ld = vn.date()
+            # Dùng VN time để check giờ gửi report
+            vn = vn_now_str()
+            from app.core.time_utils import vn_now
+            now_vn = vn_now()
+
+            if now_vn.hour == 8 and now_vn.minute == 0 and _ld != now_vn.date():
+                _ld = now_vn.date()
                 from app.services.report_service import send_daily
                 await asyncio.to_thread(send_daily)
-            if vn.weekday() == 0 and vn.hour == 8 and vn.minute == 0 and _lw != vn.date():
-                _lw = vn.date()
+
+            if (now_vn.weekday() == 0 and now_vn.hour == 8
+                    and now_vn.minute == 0 and _lw != now_vn.date()):
+                _lw = now_vn.date()
                 from app.services.report_service import send_weekly
                 await asyncio.to_thread(send_weekly)
-            if vn.day == 1 and vn.hour == 8 and vn.minute == 0 and _lm != vn.month:
-                _lm = vn.month
+
+            if (now_vn.day == 1 and now_vn.hour == 8
+                    and now_vn.minute == 0 and _lm != now_vn.month):
+                _lm = now_vn.month
                 from app.services.report_service import send_monthly
                 await asyncio.to_thread(send_monthly)
+
         except Exception as e:
             print(f"[REPORT] {e}")
 
@@ -180,14 +209,19 @@ async def report_scheduler_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _main_loop
-    _main_loop = asyncio.get_event_loop()
+
+    # Set main loop TRƯỚC KHI start price feed
+    _main_loop = asyncio.get_running_loop()   # ← dùng get_running_loop thay vì get_event_loop
+
     print("=" * 60)
-    print("🚀 STRATEGY LAPB RESEARCH LAB v5.0")
+    print("🚀 STRATEGY LAB RESEARCH v5.0")
     print("=" * 60)
 
+    # Crash recovery
     from app.services.crash_recovery import check_and_recover
-    check_and_recover()
+    await asyncio.to_thread(check_and_recover)   # ← chạy trong thread, không block loop
 
+    # Async pool
     from app.db.async_pool import get_async_pool
     try:
         await get_async_pool()
@@ -196,22 +230,25 @@ async def lifespan(app: FastAPI):
 
     print(f"  Mode: {get_trading_mode().get_mode().value}")
 
+    # Price Feed — đăng ký callback TRƯỚC khi start
     print("\n📡 Price Feed...")
-    add_price_callback(on_price_update)
+    add_price_callback(on_price_update)   # sync callback
     start_price_feed()
-    feed = get_price_feed()
-    if feed.wait_ready(timeout=10):
-        print(f"✅ Feed: {feed.get_stats()['symbols_count']} symbols")
-    else:
-        print("⚠️ Feed: fallback")
 
-    print("⚙️ Background tasks...")
+    feed = get_price_feed()
+    if feed.wait_ready(timeout=15):
+        print(f"✅ Feed ready: {feed.get_stats()['symbols_count']} symbols")
+    else:
+        print("⚠️ Feed: timeout, running in fallback mode")
+
+    # Background tasks
+    print("⚙️  Background tasks...")
     tasks = [
-        asyncio.create_task(heartbeat_loop()),
-        asyncio.create_task(scheduler_loop()),
-        asyncio.create_task(scan_worker()),
-        asyncio.create_task(mv_refresh_loop()),
-        asyncio.create_task(report_scheduler_loop()),
+        asyncio.create_task(heartbeat_loop(),        name="heartbeat"),
+        asyncio.create_task(scheduler_loop(),        name="scheduler"),
+        asyncio.create_task(scan_worker(),           name="scan_worker"),
+        asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
+        asyncio.create_task(report_scheduler_loop(), name="report"),
     ]
 
     def start_bot():
@@ -222,11 +259,14 @@ async def lifespan(app: FastAPI):
             print(f"[BOT] {e}")
 
     threading.Thread(target=start_bot, daemon=True, name="Bot").start()
-    print("🤖 Bot started\n✅ All GO")
+
+    print("🤖 Bot started")
+    print("✅ All systems GO")
     print("=" * 60)
 
     yield
 
+    # Shutdown
     print("\n🛑 Shutting down...")
     stop_price_feed()
     for t in tasks:
@@ -235,19 +275,27 @@ async def lifespan(app: FastAPI):
     try:
         from app.db.async_pool import close_async_pool
         await close_async_pool()
-    except:
+    except Exception:
         pass
-    print("✅ Done")
+    print("✅ Shutdown complete")
 
 
 # ── App ───────────────────────────────────────────────────────
 
-app = FastAPI(title="Strategy Research Lab v2.0", version="2.0", lifespan=lifespan)
+app = FastAPI(
+    title="Strategy Research Lab v5.0",
+    version="5.0",
+    lifespan=lifespan
+)
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"],
-    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"]
+)
 
-# Register all routers
 for r in [
     health_router, scan_router, ml_router, performance_router,
     assistant_router, report_router, report_history_router,
@@ -255,6 +303,7 @@ for r in [
     retrain_router, signal_analysis_router, system_router,
     dash_signals_router, dash_research_router, dash_analysis_router,
     dash_edge_router, dash_config_router, dash_perf_router,
+    dash_pending_router,
 ]:
     app.include_router(r)
 
@@ -264,7 +313,7 @@ async def root():
     return RedirectResponse(url="/dashboard")
 
 
-# ── SPA Frontend ──────────────────────────────────────────────
+# ── SPA ───────────────────────────────────────────────────────
 
 _DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dist")
 if os.path.exists(_DIST):
@@ -275,7 +324,7 @@ if os.path.exists(_DIST):
     @app.get("/{path:path}")
     async def spa(path: str):
         if path.startswith("api/"):
-            raise HTTPException(404, "Not found")
+            raise HTTPException(404)
         fp = os.path.join(_DIST, path)
         if os.path.exists(fp) and os.path.isfile(fp):
             return FileResponse(fp)
@@ -283,7 +332,7 @@ if os.path.exists(_DIST):
 
 
 @app.exception_handler(Exception)
-async def err(request: Request, exc: Exception):
+async def global_error(request: Request, exc: Exception):
     e = f"{type(exc).__name__}: {exc}"
     print(f"\n{'='*60}\n🚨 {e}\n{traceback.format_exc()}{'='*60}")
-    return JSONResponse(500, {"error": e})
+    return JSONResponse(status_code=500, content={"error": e})

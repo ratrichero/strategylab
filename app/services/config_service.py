@@ -1,6 +1,7 @@
 import json
 from app.db.session import SessionLocal
 from sqlalchemy import text
+from app.core.time_utils import utc_now
 
 DEFAULTS = {
     "TIMEFRAME": "15m", "SCORE_THRESHOLD": "5",
@@ -87,7 +88,7 @@ def update_runtime_config(data: dict):
         db.execute(text("""
             INSERT INTO app_config (key, value, updated_at)
             VALUES (:k, :v, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = NOW()
+            ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = utc_now()
         """), {"k": k, "v": str(v)})
     db.commit(); db.close()
     _runtime_cache = None

@@ -3,6 +3,7 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 import time
 import traceback
+from app.core.time_utils import utc_now, utc_after, utc_before, pd_ts_to_utc
 
 from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed,get_binance_server_time,get_all_prices
 from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state,build_indicator_snapshot
@@ -24,6 +25,7 @@ from app.services.config_service import get_runtime_config
 from app.strategies.registry import get_active_strategies
 from app.services.open_trade_filter import get_open_trade_filter
 from app.core.trading_mode import get_current_mode, TradingMode
+from app.core.time_utils import utc_now
 
 # ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 
@@ -398,7 +400,7 @@ def is_duplicate(db, symbol, timeframe, candle_time):
     ).first() is not None
 
 def in_cooldown(db, symbol, timeframe, hours=4):
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff     = utc_before(hours=hours)
 
     return db.query(Signal).filter(
         Signal.symbol    == symbol,
@@ -410,7 +412,7 @@ def in_cooldown(db, symbol, timeframe, hours=4):
 
 def _in_cooldown_v2(db, symbol, timeframe, strategy_name, hours=4):
     """Cooldown check theo symbol + timeframe + strategy_name."""
-    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    cutoff     = utc_before(hours=hours)
     return db.query(Signal).filter(
         Signal.symbol        == symbol,
         Signal.timeframe     == timeframe,
@@ -436,7 +438,7 @@ def run_market_scan_multi_tf():
         print(f"💤 Scan system is PAUSED (TOP_LIMIT = 0)")
         return
     
-    now = datetime.utcnow()
+    now        = utc_now()
 
     # ← CHANGED: dùng context manager, không double-close
     with SessionLocal() as db:
@@ -508,6 +510,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     scan_run = ScanRun(
         timeframe=timeframe,
         config_id=config.id,
+        scan_time       = utc_now(),
         engine_metadata=engine_metadata
     )
     db.add(scan_run)
@@ -785,7 +788,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 #last = df.iloc[-1]
 
                 # ================= DUPLICATE =================
-                candle_time = last["time"].to_pydatetime()
+                candle_time = pd_ts_to_utc(last["time"])
 
                 if is_duplicate(db, symbol, timeframe, candle_time):
                     debug.block_reason = "duplicate"
@@ -930,7 +933,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 if trigger_price != sl:
                     rr = abs((tp - trigger_price) / (trigger_price - sl))
 
-                expire_at = datetime.utcnow() + timedelta(hours=expire_hours)
+                expire_at  = utc_after(hours=expire_hours)
 
                 # ================= CREATE FULL CONTEXT PENDING =================
 
@@ -958,6 +961,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     # ===== SNAPSHOT =====
                     indicators_snapshot=indicators_snapshot,
                     candle_time=last["time"].to_pydatetime(),
+                    engine_version=engine_version,          
 
                     # ===== ENTRY DATA =====
                     trigger_price=trigger_price,

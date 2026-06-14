@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Tuple, Optional, Dict
 from datetime import datetime, timedelta
 import pandas as pd
+from app.core.time_utils import utc_now
 
 DEFAULT_CONFIG = {
     "enabled": True,

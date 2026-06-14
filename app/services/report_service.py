@@ -5,6 +5,7 @@ from typing import Optional
 from app.db.session import SessionLocal
 from app.db.models import Signal, PendingSignal
 from app.services.telegram_service import send_telegram
+from app.core.time_utils import utc_now, vn_now, to_vn_str
 
 
 def _metrics(trades):
@@ -32,7 +33,7 @@ def _metrics(trades):
 
 
 def _generate(report_type, days, title):
-    db = SessionLocal(); now = datetime.utcnow(); cutoff = now - timedelta(days=days)
+    db = SessionLocal(); now = utc_now(); cutoff = now - timedelta(days=days)
     period_trades = db.query(Signal).filter(Signal.status.in_(["WIN","LOSS"]),
         Signal.exit_time >= cutoff).order_by(Signal.exit_time.asc()).all()
     all_trades    = db.query(Signal).filter(Signal.status.in_(["WIN","LOSS"])).all()
@@ -63,8 +64,13 @@ def _generate(report_type, days, title):
     best = sorted_t[0]  if sorted_t else None
     worst= sorted_t[-1] if sorted_t else None
 
-    date_range = f"{cutoff.strftime('%Y-%m-%d')} → {now.strftime('%Y-%m-%d')}"
-    report = (f"<b>{title}</b>\n<i>{date_range}</i>\n\n"
+
+    date_range = (
+        f"{to_vn_str(cutoff, '%Y-%m-%d')} → "
+        f"{to_vn_str(now,    '%Y-%m-%d')} (GMT+7)"
+    )
+    report =  (
+            f"<b>{title}</b>\n<i>{date_range}</i>\n\n"
               f"<b>═══ PERIOD ═══</b>\n"
               f"📈 Trades: {m_p['total_trades']}\n"
               f"🎯 Winrate: {m_p['winrate_pct']}%\n"
@@ -90,6 +96,8 @@ def _generate(report_type, days, title):
                     {"rt": report_type, "ps": cutoff, "pe": now, "c": report})
         db2.commit(); db2.close()
     except Exception as e: print(f"[REPORT] DB save error: {e}")
+
+    report_type
 
     return report
 

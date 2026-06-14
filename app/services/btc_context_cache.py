@@ -7,6 +7,7 @@ import pandas as pd
 
 from app.services.binance_service import get_klines_closed
 from app.services.indicator_service import add_indicators_advanced
+from app.core.time_utils import utc_now   # ← thêm
 
 
 # ─────────────────────────────────────────────
@@ -20,7 +21,7 @@ _btc_snapshot_hour = None
 # HELPER
 # ─────────────────────────────────────────────
 def _current_hour_utc():
-    now = datetime.utcnow()
+    now = utc_now()
     return now.replace(minute=0, second=0, microsecond=0)
 
 

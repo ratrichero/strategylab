@@ -3,6 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+
+
 # C extensions
 *.so
 
@@ -156,6 +158,7 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+node_modules/
 
 # Spyder project settings
 .spyderproject
@@ -216,3 +219,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+test.py
+dist/
