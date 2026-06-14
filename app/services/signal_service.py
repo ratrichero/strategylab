@@ -976,7 +976,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     scan_id=scan_run.id,
                     scan_debug_id=debug.id,
 
-                    expire_at=expire_at
+                    expire_at=expire_at,
 
                     exchange_order_id=None,
                     exchange_status=None,
