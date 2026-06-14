@@ -977,6 +977,16 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     scan_debug_id=debug.id,
 
                     expire_at=expire_at
+
+                    exchange_order_id=None,
+                    exchange_status=None,
+                    order_quantity=None,
+                    executed_qty=0,
+                    accounted_qty=0,
+                    avg_fill_price=None,
+                    signal_id=None,
+                    sl_order_id=None,
+                    tp_order_id=None,
                 )
 
                 db.add(pending)

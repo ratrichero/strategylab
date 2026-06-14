@@ -32,6 +32,14 @@ DEFAULTS = {
         "candlestick": 5.0, "breakout": 6.0,
         "mean_reversion": 5.5, "pullback": 5.5, "trend_following": 5.5
     }),
+    "LIMIT_ORDER_CONFIG": json.dumps({
+        "enabled": True,
+        "entry_reprice_pct": {
+            "15m": 0.01,
+            "1h": 0.008,
+            "4h": 0.005
+        }
+    }),
 }
 
 _runtime_cache = None
@@ -73,6 +81,7 @@ def get_runtime_config(force_reload=False):
         "PREFILL_CONFIG":        parse_json("PREFILL_CONFIG"),
         "STRATEGY_THRESHOLDS":   parse_json("STRATEGY_THRESHOLDS"),
         "MAX_OPEN_TRADES":       int(config.get("MAX_OPEN_TRADES", DEFAULTS["MAX_OPEN_TRADES"])),
+        "LIMIT_ORDER_CONFIG":    parse_json("LIMIT_ORDER_CONFIG"),
     }
     return _runtime_cache
 
@@ -82,7 +91,8 @@ def update_runtime_config(data: dict):
     db = SessionLocal()
     for k, v in data.items():
         if k in ["RISK_CONFIG","DERIVATIVE_CONFIG","PENDING_CONFIG",
-                 "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS"]:
+                 "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS",
+                 "LIMIT_ORDER_CONFIG"]:
             try: json.loads(v)
             except: db.close(); raise ValueError(f"{k} is invalid JSON")
         db.execute(text("""

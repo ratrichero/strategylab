@@ -287,6 +287,22 @@ class PendingSignal(Base):
     atr_mult_entry   = Column(Float)
     regime           = Column(String)
 
+    # ── live/testnet execution tracking params ─────────────────────────────────────
+    exchange_order_id   = Column(String, nullable=True)
+    exchange_status     = Column(String, nullable=True)
+    placed_at           = _dt(nullable=True)
+    order_quantity      = Column(Float, nullable=True)
+    executed_qty        = Column(Float, nullable=True, default=0)
+    accounted_qty       = Column(Float, nullable=True, default=0)
+    avg_fill_price      = Column(Float, nullable=True)
+    last_exchange_sync_at = _dt(nullable=True)
+
+    signal_id           = Column(BigInteger, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True)
+
+    sl_order_id         = Column(String, nullable=True)
+    tp_order_id         = Column(String, nullable=True)
+
+    
     # ── Refs ─────────────────────────────────────────────
     scan_id       = Column(
         Integer,

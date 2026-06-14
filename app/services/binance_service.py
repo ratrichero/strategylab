@@ -30,7 +30,6 @@ VALID_SYMBOLS_TTL = 3600  # 1 giờ
 # PRICE MAP
 # ─────────────────────────────────────────────
 def get_all_prices():
-
     url = f"{BINANCE_BASE}/fapi/v1/ticker/price"
 
     try:
@@ -51,7 +50,6 @@ def get_all_prices():
 # VALID SYMBOLS (CACHED)
 # ─────────────────────────────────────────────
 def get_valid_symbols():
-
     global _valid_symbols_cache, _valid_symbols_ts
 
     now = time.time()
@@ -76,7 +74,6 @@ def get_valid_symbols():
     symbols = []
 
     for s in data.get("symbols", []):
-
         if (
             s.get("contractType") == "PERPETUAL"
             and s.get("quoteAsset") == "USDT"
@@ -100,7 +97,6 @@ def get_valid_symbols():
 # TOP SYMBOLS
 # ─────────────────────────────────────────────
 def get_top_symbols(limit=30):
-
     url = f"{BINANCE_BASE}/fapi/v1/ticker/24hr"
 
     try:
@@ -130,13 +126,18 @@ def get_top_symbols(limit=30):
 # ─────────────────────────────────────────────
 # KLINES
 # ─────────────────────────────────────────────
-def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None):
+def _resolve_interval(interval=None):
+    """Chuẩn hoá interval nếu không truyền vào."""
+    if interval is not None:
+        return interval
 
     from app.services.config_service import get_runtime_config
+    runtime_cfg = get_runtime_config()
+    return runtime_cfg["TIMEFRAME"]
 
-    if interval is None:
-        runtime_cfg = get_runtime_config()
-        interval = runtime_cfg["TIMEFRAME"]
+
+def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None):
+    interval = _resolve_interval(interval)
 
     params = {
         "symbol": symbol,
@@ -159,10 +160,10 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
             data = response.json()
             break
         except Exception as e:
-            print(f"[KLINES RETRY {attempt+1}] {symbol} error: {e}")
+            print(f"[KLINES RETRY {attempt+1}] {symbol} {interval} error: {e}")
             time.sleep(1)
     else:
-        print(f"[KLINES FAILED] {symbol}")
+        print(f"[KLINES FAILED] {symbol} {interval}")
         return pd.DataFrame()
 
     if not isinstance(data, list):
@@ -181,7 +182,9 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
     df["low"] = df["low"].astype(float)
     df["close"] = df["close"].astype(float)
     df["volume"] = df["volume"].astype(float)
-    df["time"] = pd.to_datetime(df["time"], unit="ms")
+
+    # ✅ UTC-aware cho đúng hệ thống mới
+    df["time"] = pd.to_datetime(df["time"], unit="ms", utc=True)
 
     return df.sort_values("time").reset_index(drop=True)
 
@@ -190,7 +193,6 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
 # SERVER TIME
 # ─────────────────────────────────────────────
 def get_binance_server_time():
-
     url = f"{BINANCE_BASE}/fapi/v1/time"
 
     response = _session.get(url, timeout=5)
@@ -198,22 +200,26 @@ def get_binance_server_time():
 
     r = response.json()
 
-    return pd.to_datetime(r["serverTime"], unit="ms")
+    # ✅ UTC-aware
+    return pd.to_datetime(r["serverTime"], unit="ms", utc=True)
 
 
 # ─────────────────────────────────────────────
 # CLOSED KLINES
 # ─────────────────────────────────────────────
 def get_candle_duration(interval: str):
-
     from datetime import timedelta
 
     mapping = {
+        "1m": timedelta(minutes=1),     # ✅ FIX CHÍNH
         "15m": timedelta(minutes=15),
         "1h": timedelta(hours=1),
         "4h": timedelta(hours=4),
         "1d": timedelta(days=1)
     }
+
+    if interval not in mapping:
+        raise KeyError(f"Unsupported interval: {interval}")
 
     return mapping[interval]
 
@@ -221,6 +227,8 @@ def get_candle_duration(interval: str):
 def get_klines_closed(symbol, limit=300, interval=None,
                       start_time=None, end_time=None,
                       server_now=None):
+    # ✅ FIX: resolve interval ngay từ đầu
+    interval = _resolve_interval(interval)
 
     df = get_klines(
         symbol=symbol,
@@ -238,6 +246,7 @@ def get_klines_closed(symbol, limit=300, interval=None,
 
     duration = get_candle_duration(interval)
 
+    # chỉ giữ candle đã đóng hoàn toàn
     df = df[df["time"] + duration <= server_now]
 
-    return df
+    return df.reset_index(drop=True)

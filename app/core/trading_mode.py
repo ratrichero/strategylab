@@ -13,17 +13,24 @@ class TradingMode(str, Enum):
 class ConflictRule:
     @staticmethod
     def get_pending_block_condition(symbol, strategy_name, timeframe, mode):
-        if mode == TradingMode.LIVE:
+        if mode != TradingMode.PAPER:
             return {"symbol": symbol, "status": "WAIT"}
-        return {"symbol": symbol, "strategy_name": strategy_name,
-                "timeframe": timeframe, "status": "WAIT"}
+        return {
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "timeframe": timeframe,
+            "status": "WAIT"
+        }
 
     @staticmethod
     def get_open_signal_block_condition(symbol, strategy_name, timeframe, mode):
-        if mode == TradingMode.LIVE:
+        if mode != TradingMode.PAPER:
             return {"symbol": symbol, "status": "OPEN"}
-        return {"symbol": symbol, "strategy_name": strategy_name,
-                "timeframe": timeframe, "status": "OPEN"}
+        return {
+            "symbol": symbol,
+            "strategy_name": strategy_name,
+            "timeframe": timeframe,
+            "status": "OPEN"}
 
 
 class TradingModeManager:

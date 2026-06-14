@@ -75,7 +75,7 @@ class OpenTradeFilter:
         if db.query(Signal).filter(Signal.status == "OPEN").count() >= max_conc:
             return False, "max_concurrent_reached"
 
-        if mode == TradingMode.LIVE:
+        if mode != TradingMode.PAPER:
             if db.query(Signal).filter(
                     Signal.symbol == symbol, Signal.status == "OPEN").count():
                 return False, "live_symbol_occupied"
