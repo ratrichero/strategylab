@@ -208,6 +208,18 @@ async def report_scheduler_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
+    # 1. FAIL-FAST: Kiểm tra schema trước tiên
+    from app.services.schema_guard import assert_schema_ok
+    try:
+        print("🔍 Checking Database Schema...")
+        assert_schema_ok()
+        print("✅ Schema valid")
+    except Exception as e:
+        print(f"❌ CRITICAL ERROR: {e}")
+        # Raising Exception ở đây sẽ làm FastAPI dừng việc khởi động (Startup)
+        raise e
+    
     global _main_loop
 
     # Set main loop TRƯỚC KHI start price feed
