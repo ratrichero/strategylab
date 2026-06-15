@@ -2,6 +2,7 @@ import json
 from app.db.session import SessionLocal
 from sqlalchemy import text
 from app.core.time_utils import utc_now
+import os as _os
 
 DEFAULTS = {
     "TIMEFRAME": "15m", "SCORE_THRESHOLD": "5",
@@ -40,6 +41,14 @@ DEFAULTS = {
             "4h": 0.005
         }
     }),
+    "POSITION_SIZE_CONFIG": json.dumps({
+        "mode": "fixed_usdt",
+        "fixed_usdt_per_trade": 200,
+        "risk_per_trade_pct": 0.01,
+        "default_leverage": 3,
+        "max_position_usdt": 500,
+    }),
+    "CONNECTION_OVERRIDE": "false"
 }
 
 _runtime_cache = None
@@ -82,6 +91,9 @@ def get_runtime_config(force_reload=False):
         "STRATEGY_THRESHOLDS":   parse_json("STRATEGY_THRESHOLDS"),
         "MAX_OPEN_TRADES":       int(config.get("MAX_OPEN_TRADES", DEFAULTS["MAX_OPEN_TRADES"])),
         "LIMIT_ORDER_CONFIG":    parse_json("LIMIT_ORDER_CONFIG"),
+        "POSITION_SIZE_CONFIG":   parse_json("POSITION_SIZE_CONFIG"),
+        "CONNECTION_OVERRIDE":    config.get("CONNECTION_OVERRIDE", DEFAULTS["CONNECTION_OVERRIDE"]),
+        
     }
     return _runtime_cache
 
@@ -92,7 +104,7 @@ def update_runtime_config(data: dict):
     for k, v in data.items():
         if k in ["RISK_CONFIG","DERIVATIVE_CONFIG","PENDING_CONFIG",
                  "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS",
-                 "LIMIT_ORDER_CONFIG"]:
+                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG"]:
             try: json.loads(v)
             except: db.close(); raise ValueError(f"{k} is invalid JSON")
         db.execute(text("""
@@ -102,3 +114,55 @@ def update_runtime_config(data: dict):
         """), {"k": k, "v": str(v)})
     db.commit(); db.close()
     _runtime_cache = None
+
+
+
+CONNECTION_KEYS = [
+    "BINANCE_API_KEY",
+    "BINANCE_API_SECRET",
+    "BINANCE_TESTNET_API_KEY",
+    "BINANCE_TESTNET_API_SECRET",
+    "TELEGRAM_BOT_TOKEN",
+    "GROQ_API_KEY",
+    "GEMINI_API_KEY",
+]
+
+
+def get_app_config_value(key: str, default: str = "") -> str:
+    db = SessionLocal()
+    try:
+        row = db.execute(
+            text("SELECT value FROM app_config WHERE key = :k"),
+            {"k": key}
+        ).fetchone()
+        return row[0] if row and row[0] is not None else default
+    finally:
+        db.close()
+
+
+def is_connection_override_enabled() -> bool:
+    raw = get_app_config_value(
+        "CONNECTION_OVERRIDE",
+        _os.getenv("CONNECTION_OVERRIDE", "false")
+    )
+    return str(raw).strip().lower() == "true"
+
+
+def get_connection_value(key: str, default: str = "") -> str:
+    if key == "DATABASE_URL":
+        return _os.environ.get("DATABASE_URL", default)
+
+    if is_connection_override_enabled():
+        val = get_app_config_value(key, "")
+        if val:
+            return val
+
+    return _os.environ.get(key, default)
+
+
+def mask_secret(value: str) -> str:
+    if not value:
+        return ""
+    if len(value) <= 6:
+        return "*" * len(value)
+    return value[:2] + "*" * (len(value) - 4) + value[-2:]

@@ -25,7 +25,6 @@ from app.services.config_service import get_runtime_config
 from app.strategies.registry import get_active_strategies
 from app.services.open_trade_filter import get_open_trade_filter
 from app.core.trading_mode import get_current_mode, TradingMode
-from app.core.time_utils import utc_now
 
 # ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 

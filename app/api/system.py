@@ -354,3 +354,156 @@ async def cancel_pending_manual(pending_id: int):
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+# ============================================================
+# POSITION SIZE CONFIG
+# ============================================================
+
+@router.get("/api/position-size")
+async def get_position_size():
+    from app.services.config_service import get_runtime_config
+    return get_runtime_config().get("POSITION_SIZE_CONFIG", {})
+
+
+@router.put("/api/position-size")
+async def update_position_size(payload: dict):
+    from app.services.config_service import update_runtime_config
+    update_runtime_config({"POSITION_SIZE_CONFIG": json.dumps(payload)})
+    return {"status": "updated", "config": payload}
+
+
+# ============================================================
+# CONNECTION OVERRIDE
+# ============================================================
+
+@router.get("/api/system/connections")
+async def get_connections():
+    import os as _os
+    from app.services.config_service import (
+        CONNECTION_KEYS, is_connection_override_enabled,
+        get_connection_value, get_app_config_value, mask_secret,
+    )
+
+    override = is_connection_override_enabled()
+    fields = {}
+
+    for key in CONNECTION_KEYS:
+        app_val = get_app_config_value(key, "")
+        eff_val = get_connection_value(key, "")
+        source = "app_config" if (override and app_val) else "env"
+        fields[key] = {
+            "has_value": bool(eff_val),
+            "masked": mask_secret(eff_val),
+            "source": source,
+        }
+
+    return {
+        "override_enabled": override,
+        "database_url": {
+            "editable": False,
+            "source": "env_only",
+            "has_value": bool(_os.environ.get("DATABASE_URL", "")),
+        },
+        "fields": fields,
+    }
+
+
+@router.put("/api/system/connections")
+async def update_connections(payload: dict):
+    from app.services.config_service import update_runtime_config, CONNECTION_KEYS
+
+    override = bool(payload.get("override_enabled", False))
+    values = payload.get("values", {}) or {}
+
+    data = {"CONNECTION_OVERRIDE": "true" if override else "false"}
+    for key in CONNECTION_KEYS:
+        if key in values:
+            data[key] = "" if values[key] is None else str(values[key])
+
+    update_runtime_config(data)
+    return {"status": "updated", "override_enabled": override}
+
+@router.get("/api/binance/account")
+async def binance_account(target: str = "live"):
+    """
+    Test kết nối Binance Futures.
+    Đọc key từ app_config trước, fallback .env
+    """
+    import os
+    from app.services.config_service import get_app_config_value
+
+    def _get_key(db_key: str, env_key: str) -> str:
+        """Ưu tiên app_config, fallback .env"""
+        val = get_app_config_value(db_key, "")
+        if val and val.strip():
+            return val.strip()
+        return os.getenv(env_key, "")
+
+    if target == "testnet":
+        api_key    = _get_key("BINANCE_TESTNET_API_KEY",    "BINANCE_TESTNET_API_KEY")
+        api_secret = _get_key("BINANCE_TESTNET_API_SECRET", "BINANCE_TESTNET_API_SECRET")
+        base_url   = "https://testnet.binancefuture.com"
+        label      = "Testnet"
+    else:
+        api_key    = _get_key("BINANCE_API_KEY",    "BINANCE_API_KEY")
+        api_secret = _get_key("BINANCE_API_SECRET", "BINANCE_API_SECRET")
+        base_url   = "https://fapi.binance.com"
+        label      = "Mainnet"
+
+    if not api_key or not api_secret:
+        return {
+            "connected": False,
+            "target":    target,
+            "message":   f"Missing API key/secret for {label}. Check Connection tab or .env",
+            "balance":   None,
+        }
+
+    try:
+        from binance.um_futures import UMFutures
+
+        client  = UMFutures(key=api_key, secret=api_secret, base_url=base_url)
+        account = client.account()
+
+        balance = 0.0
+        for asset in account.get("assets", []):
+            if asset["asset"] == "USDT":
+                balance = float(asset["availableBalance"])
+                break
+
+        positions = []
+        for p in account.get("positions", []):
+            amt = float(p.get("positionAmt", 0))
+            if amt != 0:
+                positions.append({
+                    "symbol":   p["symbol"],
+                    "side":     "LONG" if amt > 0 else "SHORT",
+                    "size":     abs(amt),
+                    "entry":    float(p.get("entryPrice", 0)),
+                    "pnl":      float(p.get("unrealizedProfit", 0)),
+                    "leverage": int(p.get("leverage", 1)),
+                })
+
+        return {
+            "connected":      True,
+            "target":         target,
+            "message":        f"Connected to Binance {label}",
+            "balance":        round(balance, 2),
+            "currency":       "USDT",
+            "open_positions": len(positions),
+            "positions":      positions[:10],
+        }
+
+    except ImportError:
+        return {
+            "connected": False,
+            "target":    target,
+            "message":   "binance-futures-connector not installed. pip install binance-futures-connector",
+            "balance":   None,
+        }
+    except Exception as e:
+        return {
+            "connected": False,
+            "target":    target,
+            "message":   f"Connection failed: {str(e)}",
+            "balance":   None,
+        }

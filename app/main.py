@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import TELEGRAM_TOKEN
+#from app.core.config import get_telegram_token
 from app.core.trading_mode import get_trading_mode
 from app.core.time_utils import utc_now, vn_now_str
 from app.services.price_feed import (
@@ -277,7 +278,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(scan_worker(),           name="scan_worker"),
         asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
         asyncio.create_task(report_scheduler_loop(), name="report"),
-        asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
+        #asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
     ]
 
     def start_bot():
@@ -286,6 +287,17 @@ async def lifespan(app: FastAPI):
             run_bot(TELEGRAM_TOKEN)
         except Exception as e:
             print(f"[BOT] {e}")
+    
+    """def start_bot():
+        try:
+            from app.bot.telegram_bot import run_bot
+            token = get_telegram_token()
+            if not token:
+                print("[BOT] Missing TELEGRAM_BOT_TOKEN — bot disabled")
+                return
+            run_bot(token)
+        except Exception as e:
+            print(f"[BOT] {e}")"""
 
     threading.Thread(target=start_bot, daemon=True, name="Bot").start()
 

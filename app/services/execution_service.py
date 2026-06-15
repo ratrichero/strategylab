@@ -5,12 +5,14 @@ Paper:     ghi DB only, fill tại fill_price
 Testnet:   Binance Testnet API
 Live:      Binance Mainnet API
 
-RULES ĐÃ CHỐT:
-- PAPER: dùng open_position() fill local
-- LIVE/TESTNET: dùng place_limit_entry_order() + exchange sync
-- SL/TP dùng closePosition=true
-- Không rebase SL/TP
-- Xóa cờ làm lại: khi signal đóng, dọn sạch remainder entry + sibling exits
+Position sizing:
+  - Đọc từ POSITION_SIZE_CONFIG trong app_config
+  - 2 mode: fixed_usdt / risk_based
+  - Toggle được từ dashboard, không cần restart
+
+Entry (LIVE/TESTNET):
+  - LIMIT order tại trigger_price (đã reprice)
+  - SL/TP đặt cùng lúc với closePosition=true
 
 Install: pip install binance-futures-connector
 """
@@ -42,12 +44,10 @@ class OrderResult:
 
 
 # ============================================================
-# Position Sizer
+# Position Sizer (risk-based mode)
 # ============================================================
 
 class PositionSizer:
-    """Risk-based position sizing."""
-
     def __init__(
         self,
         account_balance: float = 10000,
@@ -67,7 +67,6 @@ class PositionSizer:
             return self.balance * 0.05, 1
 
         risk_amount = self.balance * self.risk_pct
-
         safe_lev = min(self.max_leverage, max(1, int(0.02 / price_risk)))
         notional = (risk_amount / price_risk) * safe_lev
 
@@ -75,6 +74,54 @@ class PositionSizer:
         notional = min(notional, max_notional)
 
         return round(notional, 2), safe_lev
+
+
+# ============================================================
+# Order Size Calculator — đọc từ POSITION_SIZE_CONFIG
+# ============================================================
+
+def _calc_order_size(
+    entry_price: float,
+    stop_loss: float,
+    balance: float
+) -> Tuple[float, int]:
+    """
+    Tính notional + leverage theo POSITION_SIZE_CONFIG.
+
+    2 mode:
+      fixed_usdt:  cố định $ mỗi lệnh
+      risk_based:  % vốn chịu rủi ro mỗi lệnh
+
+    Config đọc từ app_config, toggle được từ dashboard.
+    """
+    from app.services.config_service import get_runtime_config
+
+    cfg = get_runtime_config()
+    pos_cfg = cfg.get("POSITION_SIZE_CONFIG", {})
+    mode = pos_cfg.get("mode", "fixed_usdt")
+
+    max_pos = float(pos_cfg.get("max_position_usdt", 500))
+    max_lev = int(pos_cfg.get("default_leverage", 3))
+
+    if mode == "fixed_usdt":
+        # ── FIXED SIZE ────────────────────────────────
+        fixed = float(pos_cfg.get("fixed_usdt_per_trade", 200))
+        notional = min(fixed, max_pos)
+        leverage = max_lev
+
+    else:
+        # ── RISK BASED ────────────────────────────────
+        risk_pct = float(pos_cfg.get("risk_per_trade_pct", 0.01))
+
+        sizer = PositionSizer(
+            account_balance=balance,
+            risk_pct=risk_pct,
+            max_leverage=max_lev,
+        )
+        notional, leverage = sizer.calc(entry_price, stop_loss)
+        notional = min(notional, max_pos)
+
+    return notional, leverage
 
 
 # ============================================================
@@ -272,7 +319,6 @@ class BinanceExecutor:
             self._client.cancel_order(symbol=symbol, orderId=order_id)
             return True
         except Exception as e:
-            # order có thể đã hết hoặc đã fill -> warning nhưng không crash
             print(f"[EXEC] Cancel order warning {symbol}/{order_id}: {e}")
             return False
 
@@ -373,7 +419,7 @@ def reset_executor():
 
 
 # ============================================================
-# PUBLIC: OPEN POSITION (PAPER PATH — backward compatible)
+# PUBLIC: OPEN POSITION (PAPER — backward compatible)
 # ============================================================
 
 def open_position(
@@ -383,8 +429,7 @@ def open_position(
 ) -> OrderResult:
     """
     PAPER: fill local tại fill_price hoặc trigger_price.
-    LIVE/TESTNET: backward compatibility — nhưng lifecycle mới dùng
-    place_limit_entry_order() thay vì hàm này.
+    LIVE/TESTNET legacy: market order (kept for backward compat).
     """
     mode = get_trading_mode()
 
@@ -397,7 +442,7 @@ def open_position(
             mode="PAPER"
         )
 
-    # Legacy live/testnet market entry — kept for backward compat
+    # Legacy live/testnet market entry
     executor = get_executor()
     if not executor or not executor.ready:
         return OrderResult(
@@ -415,21 +460,11 @@ def open_position(
                 mode=mode.get_mode().value
             )
 
-        risk_pct = float(os.getenv("RISK_PER_TRADE_PCT", "0.01"))
-        max_lev  = int(os.getenv("DEFAULT_LEVERAGE", "3"))
-        max_pos  = float(os.getenv("MAX_POSITION_USDT", "500"))
-
-        sizer = PositionSizer(
-            account_balance=balance,
-            risk_pct=risk_pct,
-            max_leverage=max_lev
-        )
-
-        usdt_notional, leverage = sizer.calc(
+        usdt_notional, leverage = _calc_order_size(
             entry_price=float(pending.trigger_price),
-            stop_loss=float(pending.stop_loss)
+            stop_loss=float(pending.stop_loss),
+            balance=balance,
         )
-        usdt_notional = min(usdt_notional, max_pos)
 
         symbol_info = executor.get_symbol_info(pending.symbol)
         executor.set_leverage(pending.symbol, leverage)
@@ -516,7 +551,6 @@ def open_position(
 # ============================================================
 
 def close_position(trade, reason: str) -> OrderResult:
-    """Đóng vị thế — dùng cho cả TP/SL/MANUAL/KILL_SWITCH."""
     mode = get_trading_mode()
 
     if mode.is_paper:
@@ -531,7 +565,6 @@ def close_position(trade, reason: str) -> OrderResult:
         )
 
     try:
-        # Cancel all open orders cho symbol (dọn sạch entry/exit)
         executor.cancel_all_orders(trade.symbol)
 
         result = executor.close_position(
@@ -574,18 +607,16 @@ def close_position(trade, reason: str) -> OrderResult:
 
 
 # ============================================================
-# PUBLIC: SYNC POSITION (for live monitoring)
+# PUBLIC: SYNC POSITION
 # ============================================================
 
 def sync_position(trade) -> Optional[Dict]:
     mode = get_trading_mode()
     if mode.is_paper:
         return None
-
     executor = get_executor()
     if not executor or not executor.ready:
         return None
-
     return executor.get_position_info(trade.symbol)
 
 
@@ -593,11 +624,9 @@ def check_position_closed(trade) -> bool:
     mode = get_trading_mode()
     if mode.is_paper:
         return False
-
     executor = get_executor()
     if not executor or not executor.ready:
         return False
-
     size = executor.get_position_size(trade.symbol)
     return size == 0
 
@@ -609,8 +638,7 @@ def check_position_closed(trade) -> bool:
 def place_limit_entry_order(pending) -> OrderResult:
     """
     Place LIMIT entry order on exchange.
-    Chỉ dùng cho LIVE / TESTNET.
-    Lưu ý: trigger_price / stop_loss / take_profit trong pending
+    trigger_price / stop_loss / take_profit trong pending
     phải đã được reprice + round TRƯỚC khi gọi hàm này.
     """
     mode = get_trading_mode()
@@ -635,21 +663,11 @@ def place_limit_entry_order(pending) -> OrderResult:
                 mode=mode.get_mode().value
             )
 
-        risk_pct = float(os.getenv("RISK_PER_TRADE_PCT", "0.01"))
-        max_lev  = int(os.getenv("DEFAULT_LEVERAGE", "3"))
-        max_pos  = float(os.getenv("MAX_POSITION_USDT", "500"))
-
-        sizer = PositionSizer(
-            account_balance=balance,
-            risk_pct=risk_pct,
-            max_leverage=max_lev
-        )
-
-        usdt_notional, leverage = sizer.calc(
+        usdt_notional, leverage = _calc_order_size(
             entry_price=float(pending.trigger_price),
-            stop_loss=float(pending.stop_loss)
+            stop_loss=float(pending.stop_loss),
+            balance=balance,
         )
-        usdt_notional = min(usdt_notional, max_pos)
 
         symbol_info = executor.get_symbol_info(pending.symbol)
         executor.set_leverage(pending.symbol, leverage)
@@ -688,7 +706,8 @@ def place_limit_entry_order(pending) -> OrderResult:
 
         print(
             f"💰 LIMIT ENTRY PLACED: {pending.symbol} {pending.direction} "
-            f"@ {price:.6f} | Qty={quantity} | OrderID={order_id}"
+            f"@ {price:.6f} | Qty={quantity} | Lev={leverage}x "
+            f"| OrderID={order_id}"
         )
 
         return OrderResult(
@@ -717,9 +736,7 @@ def place_close_position_exit_orders(
 ) -> Dict:
     """
     Place STOP_MARKET + TAKE_PROFIT_MARKET with closePosition=true.
-
     Nếu exchange reject vì chưa có position: trả None IDs.
-    Pending engine sẽ retry sau khi first fill xuất hiện.
     """
     mode = get_trading_mode()
     if mode.is_paper:
@@ -745,10 +762,7 @@ def place_close_position_exit_orders(
 
 
 def get_entry_order_status(symbol: str, order_id: str) -> Dict:
-    """
-    Query exchange entry LIMIT order status.
-    Returns: status, avg_price, executed_qty, orig_qty
-    """
+    """Query exchange entry LIMIT order status."""
     mode = get_trading_mode()
     if mode.is_paper:
         return {
@@ -794,10 +808,6 @@ def get_entry_order_status(symbol: str, order_id: str) -> Dict:
 
 
 def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
-    """
-    Cancel 1 order by ID.
-    Safe: nếu order_id None hoặc order đã terminal thì return False.
-    """
     if not order_id:
         return False
 
@@ -817,16 +827,29 @@ def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
 # ============================================================
 
 def cancel_exit_orders(pending) -> bool:
-    """Cancel cả SL và TP exit orders của một pending."""
-    ok1 = cancel_order_by_id(pending.symbol, getattr(pending, "sl_order_id", None))
-    ok2 = cancel_order_by_id(pending.symbol, getattr(pending, "tp_order_id", None))
+    ok1 = cancel_order_by_id(
+        pending.symbol,
+        getattr(pending, "sl_order_id", None)
+    )
+    ok2 = cancel_order_by_id(
+        pending.symbol,
+        getattr(pending, "tp_order_id", None)
+    )
     return ok1 or ok2
 
 
 def cancel_entry_and_exits(pending) -> bool:
-    """Cancel entry + SL + TP — dùng cho kill switch / manual cancel pending."""
     ok = False
-    ok = cancel_order_by_id(pending.symbol, getattr(pending, "exchange_order_id", None)) or ok
-    ok = cancel_order_by_id(pending.symbol, getattr(pending, "sl_order_id", None)) or ok
-    ok = cancel_order_by_id(pending.symbol, getattr(pending, "tp_order_id", None)) or ok
+    ok = cancel_order_by_id(
+        pending.symbol,
+        getattr(pending, "exchange_order_id", None)
+    ) or ok
+    ok = cancel_order_by_id(
+        pending.symbol,
+        getattr(pending, "sl_order_id", None)
+    ) or ok
+    ok = cancel_order_by_id(
+        pending.symbol,
+        getattr(pending, "tp_order_id", None)
+    ) or ok
     return ok

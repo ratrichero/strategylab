@@ -1,16 +1,4 @@
-#!/usr/bin/env python3
-"""
-Generate bootstrap_final.sql
-Bản cuối cùng bao gồm tất cả thay đổi v3.0
-"""
-import os
-
-OUT_DIR  = "sql"
-OUT_FILE = os.path.join(OUT_DIR, "bootstrap_final.sql")
-
-
-def build():
-    return """-- ============================================================
+-- ============================================================
 --  QUANT RESEARCH LAB v5.0 — FULL BOOTSTRAP (FINAL)
 --  Bao gồm: timestamptz, live/testnet fields, MV, indexes,
 --  UNIQUE constraints, app_config defaults
@@ -494,17 +482,3 @@ BEGIN
     SELECT count(*) INTO idx FROM pg_indexes WHERE schemaname='public';
     RAISE NOTICE 'Bootstrap complete: % tables, % MVs, % indexes.', tbl, mv, idx;
 END $$;
-"""
-
-
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
-    content = build()
-    with open(OUT_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
-    print(f"✅ Generated: {OUT_FILE}")
-    print(f"   Lines: {content.count(chr(10)):,}")
-
-
-if __name__ == "__main__":
-    main()

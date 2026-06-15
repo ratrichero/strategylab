@@ -81,16 +81,31 @@ class TradingModeManager:
     def get_conflict_rule(self): return ConflictRule()
 
     def get_binance_config(self) -> Dict:
+        from app.services.config_service import get_connection_value
+
         mode = self.get_mode()
+
         if mode == TradingMode.LIVE:
-            return {"api_key": os.getenv("BINANCE_API_KEY"),
-                    "api_secret": os.getenv("BINANCE_API_SECRET"),
-                    "base_url": "https://fapi.binance.com", "testnet": False}
+            return {
+                "api_key":    get_connection_value("BINANCE_API_KEY"),
+                "api_secret": get_connection_value("BINANCE_API_SECRET"),
+                "base_url":   "https://fapi.binance.com",
+                "testnet":    False,
+            }
         elif mode == TradingMode.TESTNET:
-            return {"api_key": os.getenv("BINANCE_TESTNET_API_KEY"),
-                    "api_secret": os.getenv("BINANCE_TESTNET_API_SECRET"),
-                    "base_url": "https://testnet.binancefuture.com", "testnet": True}
-        return {"api_key": None, "api_secret": None, "base_url": None, "testnet": False}
+            return {
+                "api_key":    get_connection_value("BINANCE_TESTNET_API_KEY"),
+                "api_secret": get_connection_value("BINANCE_TESTNET_API_SECRET"),
+                "base_url":   "https://testnet.binancefuture.com",
+                "testnet":    True,
+            }
+
+        return {
+            "api_key": None,
+            "api_secret": None,
+            "base_url": None,
+            "testnet": False,
+        }
 
     def describe(self) -> Dict:
         mode = self.get_mode()

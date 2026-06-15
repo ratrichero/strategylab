@@ -108,7 +108,7 @@ class OpenTradeFilter:
                 vn_now().date().isoformat()     # ngày hôm nay theo VN
             )
             if db.query(Signal).filter(
-                    Signal.exit_time >= today_start_utc).count() >= max_daily:
+                    Signal.created_at >= today_start_utc).count() >= max_daily:
                 return False, "max_daily_trades"
 
         # ── Daily loss — cùng logic ──────────────────────────
