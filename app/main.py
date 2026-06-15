@@ -42,6 +42,21 @@ from app.api.dashboard.performance_api import router as dash_perf_router
 from app.api.dashboard.pending_api import router as dash_pending_router
 from app.api.price_feed_status import router as price_feed_status_router
 
+from app.services.strategy_debug_scanner import run_debug_scan
+async def debug_scan_loop():
+    """
+    Chạy debug scan mỗi 4 giờ.
+    Ghi CSV, không đụng DB.
+    """
+    while True:
+        try:
+            cfg = get_runtime_config()
+            if cfg.get("ENABLE_SCHEDULER", True):
+                await asyncio.to_thread(run_debug_scan)
+        except Exception as e:
+            print(f"[DEBUG SCAN ERROR] {e}")
+        await asyncio.sleep(1 * 3600)  # mỗi 1 giờ
+
 from asyncio import Queue as AsyncQueue
 import logging
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
@@ -262,6 +277,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(scan_worker(),           name="scan_worker"),
         asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
         asyncio.create_task(report_scheduler_loop(), name="report"),
+        asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
     ]
 
     def start_bot():
