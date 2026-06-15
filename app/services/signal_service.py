@@ -708,7 +708,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     derivative_bias=float(derivative_bias),
                     block_reason=None,
                     regime=regime,
-                    candle_time=last["time"].to_pydatetime(),
+                    candle_time=pd_ts_to_utc(last["time"]),
                     ml_prob=None,
                     rule_score_raw=float(components.get("rule_score_raw", 0)),
                     indicators_snapshot=indicators_snapshot
@@ -960,7 +960,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                     # ===== SNAPSHOT =====
                     indicators_snapshot=indicators_snapshot,
-                    candle_time=last["time"].to_pydatetime(),
+                    candle_time=pd_ts_to_utc(last["time"]),
                     engine_version=engine_version,          
 
                     # ===== ENTRY DATA =====

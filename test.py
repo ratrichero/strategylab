@@ -1,14 +1,10 @@
-import asyncio
-import websockets
-import json
+from app.ml.train import train_model
 
-async def test():
-    url = 'wss://fstream.binance.com/ws/!markPrice@arr@1s'
-    print(f'Connecting to {url}...')
-    async with websockets.connect(url) as ws:
-        print('Connected!')
-        msg = await ws.recv()
-        data = json.loads(msg)
-        print(f'Received {len(data)} symbols')
+result = train_model()
 
-asyncio.run(test())
+print("\n=== RESULT ===")
+print("Status:", result["status"])
+if result["status"] == "success":
+    print("AUC:", result["holdout"]["auc"])
+    print("Threshold:", result["recommended_threshold"])
+    print("Train size:", result["train_size"])

@@ -25,56 +25,45 @@ function qs(p: Record<string, any>): string {
   return s ? `?${s}` : "";
 }
 
-// ── Signals ──────────────────────────────────────────────────
 export const signals = {
-  list: (p: Record<string, any> = {}) =>
-    req<any>(`/api/signals${qs(p)}`),
-  get: (id: number) =>
-    req<any>(`/api/signals/${id}`),
+  list: (p: Record<string, any> = {}) => req<any>(`/api/signals${qs(p)}`),
+  get: (id: number) => req<any>(`/api/signals/${id}`),
 };
 
-// ── Pending ───────────────────────────────────────────────────
 export const pending = {
-  list: (p: Record<string, any> = {}) =>
-    req<any>(`/api/pending-signals${qs(p)}`),
+  list: (p: Record<string, any> = {}) => req<any>(`/api/pending-signals${qs(p)}`),
 };
 
-// ── Engine ────────────────────────────────────────────────────
 export const engine = {
   status:   () => req<any>("/api/engine/status"),
   versions: () => req<any[]>("/api/engine/versions"),
   priceFeed:() => req<any>("/api/price-feed/status"),
 };
 
-// ── Config ────────────────────────────────────────────────────
 export const config = {
   getAll: () => req<Record<string, string>>("/api/app-config"),
   update: (u: Record<string, string>) =>
     req<any>("/api/app-config", { method: "PUT", body: JSON.stringify(u) }),
 };
 
-// ── Trading Mode ──────────────────────────────────────────────
 export const tradingMode = {
   get: () => req<any>("/api/trading-mode"),
   set: (mode: string) =>
     req<any>("/api/trading-mode", { method: "PUT", body: JSON.stringify({ mode }) }),
 };
 
-// ── Strategies ────────────────────────────────────────────────
 export const strategies = {
   list: () => req<any>("/api/strategies"),
   setActive: (list: string[]) =>
     req<any>("/api/strategies/active", { method: "PUT", body: JSON.stringify({ strategies: list }) }),
 };
 
-// ── OTF ───────────────────────────────────────────────────────
 export const otf = {
   get:    () => req<any>("/api/open-trade-filter"),
   save:   (c: any) => req<any>("/api/open-trade-filter", { method: "PUT", body: JSON.stringify(c) }),
   status: () => req<any>("/api/open-trade-filter/status"),
 };
 
-// ── Prefill ───────────────────────────────────────────────────
 export const prefill = {
   get: async () => {
     const cfg = await config.getAll();
@@ -84,21 +73,16 @@ export const prefill = {
   save: (c: any) => config.update({ PREFILL_CONFIG: JSON.stringify(c) }),
 };
 
-// ── ML ────────────────────────────────────────────────────────
 export const ml = {
   evaluate: (days = 30) => req<any>(`/api/ml/evaluate?days=${days}`),
   retrain:  (force = false) => req<any>(`/api/retrain?force=${force}`, { method: "POST" }),
   status:   () => req<any>("/api/ml/status"),
 };
 
-// ── Admin ─────────────────────────────────────────────────────
 export const admin = {
-  cancelAllPending: () =>
-    req<any>("/api/admin/cancel-all-pending", { method: "POST" }),
-  refreshViews: () =>
-    req<any>("/api/admin/refresh-views", { method: "POST" }),
-  closeAllTrades: () =>
-    req<any>("/api/monitor", { method: "POST" }),
+  cancelAllPending: () => req<any>("/api/admin/cancel-all-pending", { method: "POST" }),
+  refreshViews: () => req<any>("/api/admin/refresh-views", { method: "POST" }),
+  closeAllTrades: () => req<any>("/api/monitor", { method: "POST" }),
   killSwitch: async () => {
     await Promise.all([
       req<any>("/api/admin/cancel-all-pending", { method: "POST" }),
@@ -107,49 +91,32 @@ export const admin = {
   },
 };
 
-// ── Research ──────────────────────────────────────────────────
 export const research = {
   run: (body: any) =>
     req<any>("/api/research/run", { method: "POST", body: JSON.stringify(body) }),
 };
 
-// ── Analysis ──────────────────────────────────────────────────
 export const analysis = {
   run: (query: string, params: Record<string, any> = {}) =>
-    req<any>("/api/signal-analysis", {
-      method: "POST",
-      body: JSON.stringify({ query, params }),
-    }),
+    req<any>("/api/signal-analysis", { method: "POST", body: JSON.stringify({ query, params }) }),
 };
 
-// ── Edge ──────────────────────────────────────────────────────
 export const edge = {
   run: (query: string, params: Record<string, any> = {}) =>
-    req<any>("/api/signal-analysis", {
-      method: "POST",
-      body: JSON.stringify({ query, params }),
-    }),
+    req<any>("/api/signal-analysis", { method: "POST", body: JSON.stringify({ query, params }) }),
 };
 
-// ── Query Lab ─────────────────────────────────────────────────
 export const queryLab = {
   execute: (sql: string) =>
-    req<any>("/api/research-queries/execute", {
-      method: "POST",
-      body: JSON.stringify({ sql }),
-    }),
+    req<any>("/api/query-lab/execute", { method: "POST", body: JSON.stringify({ sql }) }),
   schema: () => req<any>("/api/schema"),
 };
 
-// ── Scan Debug ────────────────────────────────────────────────
 export const scanDebug = {
-  list: (p: Record<string, any> = {}) =>
-    req<any>(`/api/scan-debug${qs(p)}`),
-  blockReasons: () =>
-    req<any[]>("/api/scan-debug/block-reasons"),
+  list: (p: Record<string, any> = {}) => req<any>(`/api/scan-debug${qs(p)}`),
+  blockReasons: () => req<any[]>("/api/scan-debug/block-reasons"),
 };
 
-// ── Binance prices ────────────────────────────────────────────
 export async function fetchBinancePrices(): Promise<Record<string, number>> {
   try {
     const r = await fetch("https://fapi.binance.com/fapi/v1/ticker/price");

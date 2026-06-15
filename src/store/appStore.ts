@@ -1,6 +1,19 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
+export interface ResearchQuery {
+  id: string;
+  name: string;
+  folder_path: string;
+  description: string;
+  sql_text: string;
+  parameters: Record<string, any>;
+  chart_config: any;
+  created_at: string;
+  last_used_at: string;
+  is_pinned: boolean;
+}
+
 interface AppState {
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -16,6 +29,11 @@ interface AppState {
   setActiveStrategies: (s: string[]) => void;
   killSwitchActive: boolean;
   setKillSwitchActive: (v: boolean) => void;
+  researchQueries: ResearchQuery[];
+  addResearchQuery: (q: ResearchQuery) => void;
+  updateResearchQuery: (id: string, updates: Partial<ResearchQuery>) => void;
+  deleteResearchQuery: (id: string) => void;
+  toggleQueryPin: (id: string) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -35,6 +53,17 @@ export const useAppStore = create<AppState>()(
       setActiveStrategies: (s) => set({ activeStrategies: s }),
       killSwitchActive: false,
       setKillSwitchActive: (v) => set({ killSwitchActive: v }),
+      researchQueries: [],
+      addResearchQuery: (q) => set((s) => ({ researchQueries: [...s.researchQueries, q] })),
+      updateResearchQuery: (id, updates) => set((s) => ({
+        researchQueries: s.researchQueries.map((q) => q.id === id ? { ...q, ...updates } : q),
+      })),
+      deleteResearchQuery: (id) => set((s) => ({
+        researchQueries: s.researchQueries.filter((q) => q.id !== id),
+      })),
+      toggleQueryPin: (id) => set((s) => ({
+        researchQueries: s.researchQueries.map((q) => q.id === id ? { ...q, is_pinned: !q.is_pinned } : q),
+      })),
     }),
     {
       name: "quant-lab-v2",
@@ -42,6 +71,7 @@ export const useAppStore = create<AppState>()(
         sidebarCollapsed: s.sidebarCollapsed,
         darkMode: s.darkMode,
         activeStrategies: s.activeStrategies,
+        researchQueries: s.researchQueries,
       }),
     }
   )

@@ -1,30 +1,47 @@
 # app/api/signal_analysis_handler.py
 # COMPLETE FILE — replace entirely
+# PATCHED: _parse_dt, _build_sig_filter, signal_analysis,
+#          edge_baseline_compare, edge_sweet_spot, edge_indicator_discovery
 
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any
 from datetime import datetime, timedelta
 from app.db.async_pool import get_async_pool
 import decimal
+import re
 
 router = APIRouter()
 
 
 def _parse_dt(s):
+    """Parse ISO datetime string to naive UTC datetime.
+    Handles all formats:
+      '2026-06-15T00:00:00+07:00'  → naive UTC
+      '2026-06-14T17:00:00.000Z'   → naive UTC
+      '2026-06-14T17:00:00'        → naive (assumed UTC)
+      '2026-06-15'                 → naive date midnight
+    """
     if not s:
         return None
-    s = s.replace("Z", "+00:00")
+    s = str(s).strip()
+    s = re.sub(r'\.\d+', '', s)      # Strip milliseconds
+    s = s.replace("Z", "+00:00")     # Normalize Z
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo:
             from datetime import timezone
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt
-    except:
+    except Exception:
         return None
 
 
 def _parse_vn(start_s, end_s):
+    """Parse date strings with VN timezone handling.
+    Plain dates like '2026-06-15' get +07:00 appended.
+    ISO strings are parsed directly.
+    End date (plain) gets +1 day for inclusive range.
+    """
     dt_start = None
     dt_end = None
     if start_s:
@@ -39,6 +56,93 @@ def _parse_vn(start_s, end_s):
             base = _parse_dt(end_s + "T00:00:00+07:00")
             dt_end = base + timedelta(days=1) if base else None
     return dt_start, dt_end
+
+
+def _build_sig_filter(params, dt_start, dt_end, alias="s", date_col="exit_time"):
+    """Build inline SQL AND conditions from filter params.
+    Reads: start/end dates, timeframes, strategies, patterns, regimes,
+           directions, engine_version, score_min, score_max, symbols.
+    Returns string like: " AND s.timeframe IN ('15m') AND s.direction IN ('LONG')"
+    """
+    parts = []
+
+    # Date range
+    if dt_start:
+        parts.append(f"{alias}.{date_col} >= '{dt_start.isoformat()}'::timestamp")
+    if dt_end:
+        parts.append(f"{alias}.{date_col} < '{dt_end.isoformat()}'::timestamp")
+
+    # Timeframes
+    tf = params.get("timeframes")
+    if tf and isinstance(tf, list) and len(tf) > 0:
+        vals = ",".join(f"'{v}'" for v in tf)
+        parts.append(f"{alias}.timeframe IN ({vals})")
+
+    # Strategies
+    strats = params.get("strategies")
+    if strats and isinstance(strats, list) and len(strats) > 0:
+        vals = ",".join(f"'{v}'" for v in strats)
+        parts.append(f"{alias}.strategy_name IN ({vals})")
+
+    # Patterns
+    pats = params.get("patterns")
+    if pats and isinstance(pats, list) and len(pats) > 0:
+        vals = ",".join(f"'{v}'" for v in pats)
+        parts.append(f"{alias}.pattern IN ({vals})")
+
+    # Regimes (SIDEWAYS also includes RANGING)
+    regs = params.get("regimes")
+    if regs and isinstance(regs, list) and len(regs) > 0:
+        expanded = []
+        for r in regs:
+            expanded.append(r)
+            if r == "SIDEWAYS":
+                expanded.append("RANGING")
+        vals = ",".join(f"'{v}'" for v in set(expanded))
+        parts.append(f"{alias}.regime IN ({vals})")
+
+    # Directions
+    dirs = params.get("directions")
+    if dirs and isinstance(dirs, list) and len(dirs) > 0:
+        vals = ",".join(f"'{v}'" for v in dirs)
+        parts.append(f"{alias}.direction IN ({vals})")
+
+    # Engine version
+    eng = params.get("engine_version")
+    if eng and str(eng) != "all":
+        eng_s = str(eng)
+        if eng_s.endswith("+"):
+            parts.append(f"{alias}.engine_version >= {float(eng_s[:-1])}")
+        elif eng_s.endswith("-"):
+            parts.append(f"{alias}.engine_version <= {float(eng_s[:-1])}")
+        else:
+            parts.append(f"{alias}.engine_version::text = '{eng_s}'")
+
+    # Score range
+    score_min = params.get("score_min")
+    if score_min is not None and float(score_min) > 0:
+        parts.append(f"{alias}.score >= {float(score_min)}")
+    score_max = params.get("score_max")
+    if score_max is not None and float(score_max) < 10:
+        parts.append(f"{alias}.score <= {float(score_max)}")
+
+    # Symbols
+    symbols = params.get("symbols")
+    symbol_mode = params.get("symbol_mode", "include")
+    if symbols and str(symbols).strip():
+        sym_list = []
+        for x in str(symbols).replace(",", " ").split():
+            x = x.strip().upper()
+            if x:
+                sym_list.append(x if x.endswith("USDT") else x + "USDT")
+        if sym_list:
+            vals = ",".join(f"'{v}'" for v in sym_list)
+            op = "NOT IN" if symbol_mode == "exclude" else "IN"
+            parts.append(f"{alias}.symbol {op} ({vals})")
+
+    if not parts:
+        return ""
+    return " AND " + " AND ".join(parts)
 
 
 def _safe(obj):
@@ -62,16 +166,8 @@ async def signal_analysis(body: Dict[str, Any]):
         params.get("end_date")
     )
 
-    # sig_f: inline date filter for signals (no $1/$2)
-    def sf(alias="s", col="exit_time"):
-        parts = []
-        if dt_start:
-            parts.append(f"{alias}.{col} >= '{dt_start.isoformat()}'::timestamp")
-        if dt_end:
-            parts.append(f"{alias}.{col} < '{dt_end.isoformat()}'::timestamp")
-        return (" AND " + " AND ".join(parts)) if parts else ""
-
-    sig_f = sf("s", "exit_time")
+    # Build full sig_f with ALL filter params (date + timeframe + direction + etc)
+    sig_f = _build_sig_filter(params, dt_start, dt_end, alias="s", date_col="exit_time")
 
     # sd_f: parameterized for scan_debug ($1, $2)
     sd_params = []
@@ -100,10 +196,12 @@ async def signal_analysis(body: Dict[str, Any]):
     except Exception as e:
         import traceback
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
 
 async def _dispatch(conn, name, params, sig_f, sd_f, sd_params):
+
+    # ── SIGNAL / SCORE QUERIES ────────────────────────────
 
     if name == "funnel":
         s = [
@@ -162,6 +260,8 @@ async def _dispatch(conn, name, params, sig_f, sd_f, sd_params):
 
     elif name == "score_quality_trend":
         return await conn.fetch(f"SELECT DATE_TRUNC('day',s.created_at) AS day, ROUND(AVG(s.score)::numeric,3) avg_score, COUNT(*) n_signals, ROUND(100.0*SUM(CASE WHEN s.status='WIN' THEN 1 ELSE 0 END)/NULLIF(SUM(CASE WHEN s.status IN ('WIN','LOSS') THEN 1 ELSE 0 END),0),1) win_rate FROM signals s WHERE s.status IN ('WIN','LOSS') {sig_f} GROUP BY DATE_TRUNC('day',s.created_at) ORDER BY day")
+
+    # ── HEATMAP QUERIES ───────────────────────────────────
 
     elif name == "rsi_vol_heatmap":
         return await conn.fetch(f"WITH ind AS (SELECT toa.label, toa.trade_return, (sd.indicators_snapshot->>'rsi')::numeric AS rsi, (sd.indicators_snapshot->>'volume_ratio')::numeric AS vol_ratio FROM scan_debug sd JOIN trade_outcome_analytics toa ON toa.signal_id=sd.signal_id JOIN signals s ON s.id=sd.signal_id WHERE sd.signal_id IS NOT NULL AND sd.indicators_snapshot IS NOT NULL AND toa.label IS NOT NULL {sig_f}), b AS (SELECT label, trade_return, CASE WHEN rsi<30 THEN '<30' WHEN rsi<45 THEN '30-45' WHEN rsi<55 THEN '45-55' WHEN rsi<70 THEN '55-70' ELSE '70+' END AS rsi_zone, CASE WHEN vol_ratio<0.8 THEN '<0.8x' WHEN vol_ratio<1.5 THEN '0.8-1.5x' WHEN vol_ratio<3 THEN '1.5-3x' WHEN vol_ratio<6 THEN '3-6x' ELSE '>6x' END AS vol_zone FROM ind) SELECT rsi_zone,vol_zone,COUNT(*) n_trades, ROUND(100.0*SUM(CASE WHEN label=1 THEN 1 ELSE 0 END)/COUNT(*),1) win_rate, ROUND(AVG(trade_return)::numeric,4) avg_return FROM b GROUP BY rsi_zone,vol_zone ORDER BY rsi_zone,vol_zone")
@@ -256,25 +356,74 @@ async def _dispatch(conn, name, params, sig_f, sd_f, sd_params):
     elif name == "edge_data_validate":
         return await conn.fetch(f"SELECT s.id,s.symbol,s.direction,s.entry_price,s.stop_loss,s.take_profit, ROUND(((s.take_profit-s.entry_price)/NULLIF(ABS(s.entry_price-s.stop_loss),0))::numeric,2) AS rr, CASE WHEN s.direction='LONG' AND s.stop_loss>=s.entry_price THEN 'LONG SL>=Entry' WHEN s.direction='SHORT' AND s.stop_loss<=s.entry_price THEN 'SHORT SL<=Entry' ELSE 'OK' END AS flag FROM signals s WHERE s.status IN ('WIN','LOSS') {sig_f} ORDER BY CASE WHEN flag!='OK' THEN 0 ELSE 1 END,s.id DESC LIMIT 100")
 
+    # ✅ PATCHED: {sig_f} injected into both base and filt CTEs
     elif name == "edge_baseline_compare":
         mtf_min = float(params.get("mtf_min_score", 0.6))
-        return await conn.fetch("WITH base AS (SELECT s.direction,s.timeframe,AVG(t.rr_realized)::numeric avg_r FROM trade_outcome_analytics t JOIN signals s ON s.id=t.signal_id WHERE t.label IS NOT NULL GROUP BY s.direction,s.timeframe), filt AS (SELECT s.direction,s.timeframe,COUNT(*) total, ROUND(AVG(t.rr_realized)::numeric,3) avg_r FROM trade_outcome_analytics t JOIN signals s ON s.id=t.signal_id JOIN signal_features sf ON s.id=sf.signal_id WHERE sf.mtf_score>$1 GROUP BY s.direction,s.timeframe) SELECT b.direction,b.timeframe, ROUND(b.avg_r,3) base_r, f.avg_r filtered_r, ROUND((f.avg_r-b.avg_r)::numeric,3) improvement, f.total FROM base b JOIN filt f ON b.direction=f.direction AND b.timeframe=f.timeframe WHERE f.total>10", mtf_min)
+        return await conn.fetch(f"""
+            WITH base AS (
+                SELECT s.direction, s.timeframe, AVG(t.rr_realized)::numeric avg_r
+                FROM trade_outcome_analytics t
+                JOIN signals s ON s.id = t.signal_id
+                WHERE t.label IS NOT NULL {sig_f}
+                GROUP BY s.direction, s.timeframe
+            ),
+            filt AS (
+                SELECT s.direction, s.timeframe, COUNT(*) total,
+                    ROUND(AVG(t.rr_realized)::numeric, 3) avg_r
+                FROM trade_outcome_analytics t
+                JOIN signals s ON s.id = t.signal_id
+                JOIN signal_features sf ON s.id = sf.signal_id
+                WHERE sf.mtf_score > $1 {sig_f}
+                GROUP BY s.direction, s.timeframe
+            )
+            SELECT b.direction, b.timeframe,
+                ROUND(b.avg_r, 3) base_r, f.avg_r filtered_r,
+                ROUND((f.avg_r - b.avg_r)::numeric, 3) improvement, f.total
+            FROM base b
+            JOIN filt f ON b.direction = f.direction AND b.timeframe = f.timeframe
+            WHERE f.total > 3
+        """, mtf_min)
 
+    # ✅ PATCHED: {sig_f} injected
     elif name == "edge_sweet_spot":
         atr_t = float(params.get("atr_threshold", 0.4))
         mtf_t = float(params.get("mtf_threshold", 0.6))
-        return await conn.fetch("WITH best AS (SELECT s.timeframe,s.direction,s.regime, CASE WHEN sf.mtf_score>=$1 THEN 'High MTF' ELSE 'Low MTF' END AS mtf_q, CASE WHEN (d.indicators_snapshot->>'ema50')::numeric>(d.indicators_snapshot->>'ema200')::numeric THEN 'Uptrend' ELSE 'Down/Side' END AS trend, CASE WHEN (d.indicators_snapshot->>'atr_percentile')::numeric<$2 THEN 'Low Vol' ELSE 'High Vol' END AS vol, t.rr_realized, t.label FROM signals s JOIN signal_features sf ON sf.signal_id=s.id JOIN scan_debug d ON d.signal_id=s.id JOIN trade_outcome_analytics t ON t.signal_id=s.id WHERE t.label IS NOT NULL AND d.indicators_snapshot IS NOT NULL) SELECT timeframe,direction,regime,mtf_q,trend,vol,COUNT(*) n, ROUND(AVG(label::numeric)*100,1) winrate, ROUND(AVG(rr_realized)::numeric,3) avg_r FROM best GROUP BY 1,2,3,4,5,6 HAVING COUNT(*)>=5 ORDER BY avg_r DESC LIMIT 30", mtf_t, atr_t)
+        return await conn.fetch(f"""
+            WITH best AS (
+                SELECT s.timeframe, s.direction, s.regime,
+                    CASE WHEN sf.mtf_score >= $1 THEN 'High MTF' ELSE 'Low MTF' END AS mtf_q,
+                    CASE WHEN (d.indicators_snapshot->>'ema50')::numeric > (d.indicators_snapshot->>'ema200')::numeric
+                         THEN 'Uptrend' ELSE 'Down/Side' END AS trend,
+                    CASE WHEN (d.indicators_snapshot->>'atr_percentile')::numeric < $2
+                         THEN 'Low Vol' ELSE 'High Vol' END AS vol,
+                    t.rr_realized, t.label
+                FROM signals s
+                JOIN signal_features sf ON sf.signal_id = s.id
+                JOIN scan_debug d ON d.signal_id = s.id
+                JOIN trade_outcome_analytics t ON t.signal_id = s.id
+                WHERE t.label IS NOT NULL AND d.indicators_snapshot IS NOT NULL {sig_f}
+            )
+            SELECT timeframe, direction, regime, mtf_q, trend, vol,
+                COUNT(*) n, ROUND(AVG(label::numeric) * 100, 1) winrate,
+                ROUND(AVG(rr_realized)::numeric, 3) avg_r
+            FROM best GROUP BY 1,2,3,4,5,6
+            HAVING COUNT(*) >= 3
+            ORDER BY avg_r DESC LIMIT 30
+        """, mtf_t, atr_t)
 
+    # ✅ PATCHED: {sig_f} applied via EXISTS on signals
     elif name == "edge_indicator_discovery":
         atr_l = float(params.get("atr_limit", 0.4))
         vol_l = float(params.get("vol_ratio_limit", 2.0))
+        # sig_f uses alias "s" — use EXISTS subquery to apply it
+        sig_exists = f"EXISTS (SELECT 1 FROM signals s WHERE s.id = d.signal_id {sig_f})" if sig_f else "1=1"
         tests = [
-            ("Baseline (LONG)", "d.direction='LONG' AND t.label IS NOT NULL"),
-            ("EMA50>EMA200", "d.direction='LONG' AND t.label IS NOT NULL AND (d.indicators_snapshot->>'ema50')::numeric>(d.indicators_snapshot->>'ema200')::numeric"),
-            ("EMA200_Slope>0", "d.direction='LONG' AND t.label IS NOT NULL AND (d.indicators_snapshot->>'ema200_slope')::numeric>0"),
-            (f"ATR_Perc<{atr_l}", f"d.direction='LONG' AND t.label IS NOT NULL AND (d.indicators_snapshot->>'atr_percentile')::numeric<{atr_l}"),
-            ("RSI_Slope>0", "d.direction='LONG' AND t.label IS NOT NULL AND (d.indicators_snapshot->>'rsi_slope')::numeric>0"),
-            (f"VolRatio>{vol_l}", f"d.direction='LONG' AND t.label IS NOT NULL AND (d.indicators_snapshot->>'volume_ratio')::numeric>{vol_l}"),
+            ("Baseline (LONG)", f"d.direction='LONG' AND t.label IS NOT NULL AND {sig_exists}"),
+            ("EMA50>EMA200", f"d.direction='LONG' AND t.label IS NOT NULL AND {sig_exists} AND (d.indicators_snapshot->>'ema50')::numeric>(d.indicators_snapshot->>'ema200')::numeric"),
+            ("EMA200_Slope>0", f"d.direction='LONG' AND t.label IS NOT NULL AND {sig_exists} AND (d.indicators_snapshot->>'ema200_slope')::numeric>0"),
+            (f"ATR_Perc<{atr_l}", f"d.direction='LONG' AND t.label IS NOT NULL AND {sig_exists} AND (d.indicators_snapshot->>'atr_percentile')::numeric<{atr_l}"),
+            ("RSI_Slope>0", f"d.direction='LONG' AND t.label IS NOT NULL AND {sig_exists} AND (d.indicators_snapshot->>'rsi_slope')::numeric>0"),
+            (f"VolRatio>{vol_l}", f"d.direction='LONG' AND t.label IS NOT NULL AND {sig_exists} AND (d.indicators_snapshot->>'volume_ratio')::numeric>{vol_l}"),
         ]
         rows = []
         for tname, where in tests:

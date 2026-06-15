@@ -1,44 +1,35 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import { Toaster } from "react-hot-toast";
-import { Layout } from "./components/layout/Layout";
-import { Dashboard } from "./pages/Dashboard";
-import { Research } from "./pages/Research";
-import { Market } from "./pages/Market";
-import { Signals } from "./pages/Signals";
-import { EdgeDiscovery } from "./pages/EdgeDiscovery";
-import { Indicators } from "./pages/Indicators";
-import { Engine } from "./pages/Engine";
-import { Blocked } from "./pages/Blocked";
-import { Simulation } from "./pages/Simulation";
-import { QueryLab } from "./pages/QueryLab";
-import { SettingsPage } from "./pages/Settings";
+// @ts-nocheck
+import { HashRouter, Routes, Route } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
+import { Layout } from './components/layout/Layout';
+import { Dashboard } from './pages/DashboardPage';
+import { Research } from './pages/ResearchPage';
+import { Signals } from './pages/SignalsPage';
+import { EdgeDiscovery } from './pages/EdgeDiscoveryPage';
+import { Indicators } from './pages/IndicatorsPage';
+import { QueryLab } from './pages/QueryLabPage';
+import { SettingsPage } from './pages/SettingsPage';
+import { MarketPage, EnginePage, BlockedPage, SimulationPage } from './pages/PlaceholderPages';
 
-function App() {
+export default function App() {
   return (
-    <Router>
-      <Toaster position="top-right" toastOptions={{
-        duration: 4000,
-        style: { background: "#1e293b", color: "#f1f5f9", border: "1px solid #334155" },
-        success: { iconTheme: { primary: "#10b981", secondary: "#f1f5f9" } },
-        error:   { iconTheme: { primary: "#ef4444", secondary: "#f1f5f9" } },
-      }} />
+    <HashRouter>
+      <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
       <Layout>
         <Routes>
-          <Route path="/"               element={<Dashboard />} />
-          <Route path="/research"       element={<Research />} />
-          <Route path="/market"         element={<Market />} />
-          <Route path="/signals"        element={<Signals />} />
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/research" element={<Research />} />
+          <Route path="/market" element={<MarketPage />} />
+          <Route path="/signals" element={<Signals />} />
           <Route path="/edge-discovery" element={<EdgeDiscovery />} />
-          <Route path="/indicators"     element={<Indicators />} />
-          <Route path="/engine"         element={<Engine />} />
-          <Route path="/blocked"        element={<Blocked />} />
-          <Route path="/simulation"     element={<Simulation />} />
-          <Route path="/query-lab"      element={<QueryLab />} />
-          <Route path="/settings"       element={<SettingsPage />} />
+          <Route path="/indicators" element={<Indicators />} />
+          <Route path="/engine" element={<EnginePage />} />
+          <Route path="/blocked" element={<BlockedPage />} />
+          <Route path="/simulation" element={<SimulationPage />} />
+          <Route path="/query-lab" element={<QueryLab />} />
+          <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </Layout>
-    </Router>
+    </HashRouter>
   );
 }
-
-export default App;

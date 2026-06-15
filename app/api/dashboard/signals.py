@@ -1,21 +1,54 @@
-"""Dashboard Signals API"""
+"""Dashboard Signals API — PATCHED: unified VN date parsing"""
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter
 from app.db.async_pool import get_async_pool, serialize_records
 
 router = APIRouter(tags=["Dashboard - Signals"])
 
+
+# ── Unified date parser (same logic as signal_analysis_handler) ──
+
 def _parse_dt(s):
-    if not s: return None
-    s = s.replace("Z","+00:00")
+    """Parse any datetime string to naive UTC datetime."""
+    if not s:
+        return None
+    import re
+    s = str(s).strip()
+    s = re.sub(r'\.\d+', '', s)      # Strip milliseconds
+    s = s.replace("Z", "+00:00")
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo:
-            from datetime import timezone
             dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt
-    except: return None
+    except:
+        return None
+
+
+def _parse_vn_date(s, is_end=False):
+    """Parse date string with VN timezone awareness.
+    
+    Plain date "2026-06-15":
+      - start → 2026-06-15 00:00 VN = 2026-06-14 17:00 UTC
+      - end   → 2026-06-16 00:00 VN = 2026-06-15 17:00 UTC (next day, exclusive)
+    
+    ISO datetime "2026-06-15T00:00:00+07:00":
+      - parsed directly, no +1 day for end
+    """
+    if not s:
+        return None
+    s = str(s).strip()
+
+    # Plain date like "2026-06-15"
+    if "T" not in s:
+        base = _parse_dt(s + "T00:00:00+07:00")
+        if is_end and base:
+            return base + timedelta(days=1)
+        return base
+
+    # Full ISO datetime — parse as-is
+    return _parse_dt(s)
 
 
 @router.get("/api/signals")
@@ -34,8 +67,16 @@ async def get_signals(page:int=1, limit:int=50, symbol:Optional[str]=None,
         if val:
             conds.append(f"{col}=${idx}"); params.append(val); idx+=1
     dc = "exit_time" if date_field=="exit_time" else "created_at"
-    if start_date: conds.append(f"{dc}>=${idx}"); params.append(_parse_dt(start_date)); idx+=1
-    if end_date: conds.append(f"{dc}<${idx}"); params.append(_parse_dt(end_date)); idx+=1
+
+    # ✅ PATCHED: use _parse_vn_date for VN-aware date handling
+    start_dt = _parse_vn_date(start_date, is_end=False)
+    end_dt = _parse_vn_date(end_date, is_end=True)
+
+    if start_dt:
+        conds.append(f"{dc}>=${idx}"); params.append(start_dt); idx+=1
+    if end_dt:
+        conds.append(f"{dc}<${idx}"); params.append(end_dt); idx+=1
+
     if min_score is not None: conds.append(f"score>=${idx}"); params.append(min_score); idx+=1
     if max_score is not None: conds.append(f"score<=${idx}"); params.append(max_score); idx+=1
     where = " AND ".join(conds); offset = (page-1)*limit

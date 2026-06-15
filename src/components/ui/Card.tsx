@@ -8,22 +8,9 @@ interface CardProps {
 }
 
 export function Card({ children, className, padding = 'md', hover = false }: CardProps) {
-  const paddingClasses = {
-    none: '',
-    sm: 'p-3',
-    md: 'p-4',
-    lg: 'p-6',
-  };
-
+  const paddingClasses = { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' };
   return (
-    <div
-      className={cn(
-        'bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-xl',
-        paddingClasses[padding],
-        hover && 'hover:border-slate-600 transition-colors cursor-pointer',
-        className
-      )}
-    >
+    <div className={cn('bg-slate-800/50 backdrop-blur-sm border border-slate-700/50 rounded-xl', paddingClasses[padding], hover && 'hover:border-slate-600 transition-colors cursor-pointer', className)}>
       {children}
     </div>
   );
@@ -59,18 +46,12 @@ interface MetricCardProps {
 }
 
 export function MetricCard({ title, value, change, changeLabel, icon, trend, className }: MetricCardProps) {
-  const trendColors = {
-    up: 'text-emerald-400',
-    down: 'text-red-400',
-    neutral: 'text-slate-400',
-  };
-
+  const trendColors = { up: 'text-emerald-400', down: 'text-red-400', neutral: 'text-slate-400' };
   const getTrend = () => {
     if (trend) return trend;
     if (change === undefined) return 'neutral';
     return change > 0 ? 'up' : change < 0 ? 'down' : 'neutral';
   };
-
   return (
     <Card className={cn('relative overflow-hidden', className)}>
       <div className="flex items-start justify-between">
@@ -86,11 +67,7 @@ export function MetricCard({ title, value, change, changeLabel, icon, trend, cla
             </div>
           )}
         </div>
-        {icon && (
-          <div className="p-2 bg-slate-700/50 rounded-lg text-slate-400">
-            {icon}
-          </div>
-        )}
+        {icon && <div className="p-2 bg-slate-700/50 rounded-lg text-slate-400">{icon}</div>}
       </div>
       <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-full -translate-y-16 translate-x-16" />
     </Card>

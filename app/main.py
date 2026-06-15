@@ -31,7 +31,7 @@ from app.api.telegram_webhook import router as telegram_webhook_router
 from app.api.config import router as config_router
 from app.api.monitor_trade import router as monitor_trade_router
 from app.api.retrain import router as retrain_router
-from app.api.signal_analysis_handler import router as signal_analysis_router
+from app.api.signal_analysis_handler_update import router as signal_analysis_router
 from app.api.system import router as system_router
 from app.api.dashboard.signals import router as dash_signals_router
 from app.api.dashboard.research import router as dash_research_router
