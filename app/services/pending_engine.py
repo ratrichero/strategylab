@@ -622,10 +622,10 @@ def _process_single_live(db, p, price_map, now):
             },
             atr_ratio=atr_ratio, db=db
         )
-        print(
+        """print(
             f"[OTF RESULT][PRE-PLACE] {p.symbol} {p.direction} "
             f"| ok={otf_ok} reason={otf_reason}"
-        )
+        )"""
         if not otf_ok:
             return
 
