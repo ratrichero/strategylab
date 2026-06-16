@@ -236,6 +236,7 @@ class BinanceExecutor:
         self.testnet = testnet
         self._client = None
         self._init_client()
+        self._last_error = None
 
     def _init_client(self):
         try:
@@ -360,22 +361,17 @@ class BinanceExecutor:
             print(f"[EXEC] Market order error {symbol} {side}: {e}")
             return None
 
-    def limit_order(
-        self, symbol: str, side: str, quantity: float,
-        price: float, tif: str = "GTC"
-    ) -> Optional[Dict]:
+    def limit_order(self, symbol, side, quantity, price, tif="GTC"):
         if not self.ready:
             return None
         try:
+            self._last_error = None
             return self._client.new_order(
-                symbol=symbol,
-                side=side,
-                type="LIMIT",
-                quantity=quantity,
-                price=price,
-                timeInForce=tif
+                symbol=symbol, side=side, type="LIMIT",
+                quantity=quantity, price=price, timeInForce=tif
             )
         except Exception as e:
+            self._last_error = str(e)
             print(f"[EXEC] Limit order error {symbol} {side}: {e}")
             return None
 
@@ -386,7 +382,10 @@ class BinanceExecutor:
             self._client.cancel_order(symbol=symbol, orderId=order_id)
             return True
         except Exception as e:
-            print(f"[EXEC] Cancel order warning {symbol}/{order_id}: {e}")
+            err_str = str(e)
+            if "-2011" in err_str or "Unknown order" in err_str:
+                return True  # đã không còn = coi như cancel thành công
+            print(f"[EXEC] Cancel order error {symbol}/{order_id}: {e}")
             return False
 
     def cancel_all_orders(self, symbol: str) -> bool:
@@ -662,9 +661,10 @@ def place_limit_entry_order(pending) -> OrderResult:
         )
 
         if not order:
+            err = getattr(executor, "_last_error", None) or "Limit entry order failed"
             return OrderResult(
                 success=False,
-                error="Limit entry order failed",
+                error=err,
                 mode=mode.get_mode().value
             )
 
@@ -875,7 +875,8 @@ def cancel_algo_order(algo_id: str) -> bool:
         })
         return True
     except Exception as e:
-        print(f"[EXEC] cancel_algo_order warning algoId={algo_id}: {e}")
+        if "-2011" not in str(e):
+            print(f"[EXEC] cancel_algo_order warning algoId={algo_id}: {e}")
         return False
 
 

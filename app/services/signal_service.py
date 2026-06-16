@@ -428,7 +428,7 @@ def _in_cooldown_v2(db, symbol, timeframe, strategy_name, hours=4):
 def run_market_scan_multi_tf():
     
 
-    runtime_cfg = get_runtime_config()
+    runtime_cfg = get_runtime_config(force_reload=True)
     
 
     # 🛑 CHẶN TẠI ĐÂY: Nếu TOP_LIMIT <= 0, coi như hệ thống đã dừng.
@@ -756,6 +756,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     ml_prob=None, components=components,
                     atr_ratio=_atr_r, db=db
                 )
+                
                 if not otf_ok:
                     debug.block_reason = f"OTF::{otf_reason}"
                     debug_rows[-1]["block_reason"] = f"OTF::{otf_reason}"

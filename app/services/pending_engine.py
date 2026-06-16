@@ -70,6 +70,7 @@ DETERMINISTIC_ERRORS = [
     "Qty too small",
     "Actual notional too small",
     "Low balance",
+    "Margin is insufficient",
 ]
 
 
@@ -309,7 +310,24 @@ def _finalize_paper_fill(db, p, now, actual_entry, stop_loss, take_profit, exec_
 # ============================================================
 
 def _create_live_signal_from_pending(db, p, now, price_map):
-    snap = p.indicators_snapshot or {}
+    """
+    Create Signal lần đầu khi entry order có executed_qty > 0.
+    Có row lock để chống duplicate signal khi 2 monitor cycles đụng nhau.
+    """
+    # Lock row pending hiện tại
+    locked = (
+        db.query(PendingSignal)
+        .filter(PendingSignal.id == p.id)
+        .with_for_update()
+        .one()
+    )
+
+    # Nếu session khác vừa tạo signal xong thì dùng luôn, không tạo nữa
+    if locked.signal_id:
+        existing_signal = db.query(Signal).get(locked.signal_id)
+        return existing_signal
+
+    snap = locked.indicators_snapshot or {}
     mode = get_current_mode()
 
     btc_snap = get_or_build_hourly_snapshot()
@@ -317,35 +335,48 @@ def _create_live_signal_from_pending(db, p, now, price_map):
     entry_ctx = build_event_context(btc_snap, btc_price)
 
     engine_ver = (
-        p.engine_version
-        if p.engine_version is not None
+        locked.engine_version
+        if locked.engine_version is not None
         else snap.get("engine_version", 2.0)
     )
 
     exec_result = OrderResult(
-        success=True, order_id=p.exchange_order_id,
-        actual_entry=float(p.avg_fill_price or p.trigger_price),
-        actual_quantity=float(p.executed_qty or 0),
-        mode=mode.value, sl_order_id=p.sl_order_id, tp_order_id=p.tp_order_id,
+        success=True,
+        order_id=locked.exchange_order_id,
+        actual_entry=float(locked.avg_fill_price or locked.trigger_price),
+        actual_quantity=float(locked.executed_qty or 0),
+        mode=mode.value,
+        sl_order_id=locked.sl_order_id,
+        tp_order_id=locked.tp_order_id,
     )
 
     signal = Signal(
-        symbol=p.symbol, timeframe=p.timeframe, pattern=p.pattern,
-        strategy_name=p.strategy_name, direction=p.direction,
-        score=p.signal_score,
-        entry_price=float(p.avg_fill_price or p.trigger_price),
-        stop_loss=float(p.stop_loss), take_profit=float(p.take_profit),
-        rsi=snap.get("rsi"), volume_ratio=snap.get("volume_ratio"),
-        atr_ratio=snap.get("atr_ratio"), regime=p.regime,
-        candle_time=ensure_utc(p.candle_time), evaluated_at=now,
+        symbol=locked.symbol,
+        timeframe=locked.timeframe,
+        pattern=locked.pattern,
+        strategy_name=locked.strategy_name,
+        direction=locked.direction,
+        score=locked.signal_score,
+        entry_price=float(locked.avg_fill_price or locked.trigger_price),
+        stop_loss=float(locked.stop_loss),
+        take_profit=float(locked.take_profit),
+        rsi=snap.get("rsi"),
+        volume_ratio=snap.get("volume_ratio"),
+        atr_ratio=snap.get("atr_ratio"),
+        regime=locked.regime,
+        candle_time=ensure_utc(locked.candle_time),
+        evaluated_at=now,
         engine_version=engine_ver,
         market_context={
-            "entry": entry_ctx, "pending_id": p.id,
+            "entry": entry_ctx,
+            "pending_id": locked.id,
             "execution": {
-                "mode": mode.value, "order_id": p.exchange_order_id,
-                "quantity": float(p.executed_qty or 0),
-                "entry_exchange_status": p.exchange_status,
-                "sl_order_id": p.sl_order_id, "tp_order_id": p.tp_order_id,
+                "mode": mode.value,
+                "order_id": locked.exchange_order_id,
+                "quantity": float(locked.executed_qty or 0),
+                "entry_exchange_status": locked.exchange_status,
+                "sl_order_id": locked.sl_order_id,
+                "tp_order_id": locked.tp_order_id,
             }
         },
         trading_mode=mode.value
@@ -355,35 +386,80 @@ def _create_live_signal_from_pending(db, p, now, price_map):
 
     feature = SignalFeature(
         signal_id=signal.id,
-        rsi=snap.get("rsi"), volume_ratio=snap.get("volume_ratio"),
-        atr_ratio=snap.get("atr_ratio"), ema_distance=snap.get("ema_distance"),
-        regime=p.regime, trend_score=p.trend_score,
-        momentum_score=p.momentum_score, volume_score=p.volume_score,
-        pattern_score=p.pattern_score, mtf_score=p.mtf_score,
-        penalty_norm=p.penalty, total_score=p.signal_score, rr=p.rr
+        rsi=snap.get("rsi"),
+        volume_ratio=snap.get("volume_ratio"),
+        atr_ratio=snap.get("atr_ratio"),
+        ema_distance=snap.get("ema_distance"),
+        regime=locked.regime,
+        trend_score=locked.trend_score,
+        momentum_score=locked.momentum_score,
+        volume_score=locked.volume_score,
+        pattern_score=locked.pattern_score,
+        mtf_score=locked.mtf_score,
+        penalty_norm=locked.penalty,
+        total_score=locked.signal_score,
+        rr=locked.rr
     )
     db.add(feature)
 
-    if p.scan_debug_id:
-        debug = db.query(ScanDebug).get(p.scan_debug_id)
+    if locked.scan_debug_id:
+        debug = db.query(ScanDebug).get(locked.scan_debug_id)
         if debug:
             debug.signal_id = signal.id
 
-    p.signal_id = signal.id
-    p.accounted_qty = float(p.executed_qty or 0)
+    locked.signal_id = signal.id
+    locked.accounted_qty = float(locked.executed_qty or 0)
+
     db.commit()
 
-    _notify_fill(p, signal, exec_result)
+    _notify_fill(locked, signal, exec_result)
+
     print(
-        f"✅ LIVE SIGNAL CREATED: {p.symbol} {p.direction} "
-        f"| qty={p.executed_qty} avg={p.avg_fill_price}"
+        f"✅ LIVE SIGNAL CREATED: {locked.symbol} {locked.direction} "
+        f"| qty={locked.executed_qty} avg={locked.avg_fill_price}"
     )
     return signal
 
 
 def _update_live_signal_from_pending(db, p):
-    if not p.signal_id:
+    """
+    Update signal nếu executed_qty tăng thêm.
+    Có row lock để serialize updates.
+    """
+    locked = (
+        db.query(PendingSignal)
+        .filter(PendingSignal.id == p.id)
+        .with_for_update()
+        .one()
+    )
+
+    if not locked.signal_id:
         return
+
+    signal = db.query(Signal).get(locked.signal_id)
+    if not signal or signal.status != "OPEN":
+        return
+
+    if locked.avg_fill_price:
+        signal.entry_price = float(locked.avg_fill_price)
+
+    ctx = dict(signal.market_context or {})
+    exec_ctx = dict(ctx.get("execution") or {})
+    exec_ctx["order_id"] = locked.exchange_order_id
+    exec_ctx["quantity"] = float(locked.executed_qty or 0)
+    exec_ctx["entry_exchange_status"] = locked.exchange_status
+    exec_ctx["sl_order_id"] = locked.sl_order_id
+    exec_ctx["tp_order_id"] = locked.tp_order_id
+    ctx["execution"] = exec_ctx
+    signal.market_context = ctx
+
+    locked.accounted_qty = float(locked.executed_qty or 0)
+    db.commit()
+
+    print(
+        f"🔄 LIVE SIGNAL UPDATED: {locked.symbol} "
+        f"| qty={locked.executed_qty} avg={locked.avg_fill_price}"
+    )
 
     signal = db.query(Signal).get(p.signal_id)
     if not signal or signal.status != "OPEN":
@@ -449,7 +525,7 @@ def _process_single_paper(db, p, price_map, now):
         print(f"🚫 REJECTED [PAPER]: {p.symbol} {p.direction} | {result.reason}")
         return
 
-    cfg = get_runtime_config()
+    cfg = get_runtime_config(force_reload=True)
     max_open = cfg.get("MAX_OPEN_TRADES", 10)
     current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
     if current_open >= max_open:
@@ -500,7 +576,19 @@ def _process_single_paper(db, p, price_map, now):
 # ============================================================
 
 def _process_single_live(db, p, price_map, now):
-    cfg = get_runtime_config()
+    cfg = get_runtime_config(force_reload=True)
+
+    try:
+        otf_dbg = cfg.get("OPEN_TRADE_FILTER", {})
+        print(
+            f"[OTF DEBUG][PRE-PLACE] {p.symbol} {p.direction} "
+            f"| enabled={otf_dbg.get('enabled')} "
+            f"| directions={otf_dbg.get('identity', {}).get('directions')} "
+            f"| strategies={otf_dbg.get('identity', {}).get('strategies')} "
+            f"| timeframes={otf_dbg.get('identity', {}).get('timeframes')}"
+        )
+    except Exception as e:
+        print(f"[OTF DEBUG ERR] {e}")
 
     # ========================================================
     # PRE-PLACE: WAIT + exchange_order_id IS NULL
@@ -533,6 +621,10 @@ def _process_single_live(db, p, price_map, now):
                 "penalty_norm": p.penalty or 0,
             },
             atr_ratio=atr_ratio, db=db
+        )
+        print(
+            f"[OTF RESULT][PRE-PLACE] {p.symbol} {p.direction} "
+            f"| ok={otf_ok} reason={otf_reason}"
         )
         if not otf_ok:
             return
@@ -586,6 +678,19 @@ def _process_single_live(db, p, price_map, now):
                 p.rejection_reason = f"ENTRY_FAIL::{error_msg}"
                 db.commit()
                 print(f"🚫 REJECTED (deterministic): {p.symbol} | {error_msg}")
+
+                # Telegram cảnh báo
+                try:
+                    from app.services.telegram_service import send_telegram
+                    send_telegram(
+                        f"⚠️ <b>ENTRY REJECTED</b>\n\n"
+                        f"<b>Symbol:</b> {p.symbol}\n"
+                        f"<b>Direction:</b> {p.direction}\n"
+                        f"<b>Reason:</b> {error_msg}\n"
+                        f"<b>Score:</b> {p.signal_score}"
+                    )
+                except Exception:
+                    pass
             else:
                 # Transient → giữ WAIT retry
                 print(f"⚠️ LIMIT PLACE FAILED (transient): {p.symbol} | {error_msg}")

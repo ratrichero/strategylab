@@ -68,6 +68,9 @@ _main_loop: Optional[asyncio.AbstractEventLoop] = None
 _last_monitor_run: float = 0
 MONITOR_THROTTLE = 2.0
 
+_monitor_running = False
+_monitor_lock = threading.Lock()
+
 
 # ── Price Callback — FIXED ───────────────────────────────────
 
@@ -110,21 +113,36 @@ async def _process_price_update(price_map: dict):
 
 
 def _run_monitor(price_map: dict):
-    """Chạy trong thread pool — sync only."""
-    from app.services.pending_engine import process_pending_signals
-    from app.services.trade_monitor import monitor_open_trades
+    """
+    Chỉ cho phép 1 monitor cycle chạy tại 1 thời điểm.
+    Tránh overlap gây double fill / double close.
+    """
+    global _monitor_running
+
+    with _monitor_lock:
+        if _monitor_running:
+            return
+        _monitor_running = True
 
     try:
-        process_pending_signals(price_map=price_map)
-    except Exception as e:
-        print(f"[PENDING ENGINE ERROR] {type(e).__name__}: {e}")
-        traceback.print_exc()
+        from app.services.pending_engine import process_pending_signals
+        from app.services.trade_monitor import monitor_open_trades
 
-    try:
-        monitor_open_trades(price_map=price_map)
-    except Exception as e:
-        print(f"[TRADE MONITOR ERROR] {type(e).__name__}: {e}")
-        traceback.print_exc()
+        try:
+            process_pending_signals(price_map=price_map)
+        except Exception as e:
+            print(f"[PENDING ENGINE ERROR] {type(e).__name__}: {e}")
+            traceback.print_exc()
+
+        try:
+            monitor_open_trades(price_map=price_map)
+        except Exception as e:
+            print(f"[TRADE MONITOR ERROR] {type(e).__name__}: {e}")
+            traceback.print_exc()
+
+    finally:
+        with _monitor_lock:
+            _monitor_running = False
 
 
 # ── Background Tasks ─────────────────────────────────────────
