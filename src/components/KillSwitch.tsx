@@ -10,24 +10,27 @@ export function KillSwitch() {
   const [confirm, setConfirm] = useState(false);
 
   const mode = tradingMode?.mode || "UNKNOWN";
-  const isLive = mode === "LIVE" || mode === "TESTNET";
+  const isExchangeMode = mode === "LIVE" || mode === "TESTNET";
 
   const handleKill = async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/admin/kill-switch", { method: "POST" });
       const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data?.detail || data?.message || "Kill Switch failed");
+      }
+
       setKillSwitchActive(true);
 
-      const parts = [];
+      const parts: string[] = [];
       if (data.pending_cancelled) parts.push(`${data.pending_cancelled} pending cancelled`);
-      if (data.pending_filled)    parts.push(`${data.pending_filled} partial filled`);
+      if (data.pending_filled)    parts.push(`${data.pending_filled} partial-filled finalized`);
       if (data.signals_closed)    parts.push(`${data.signals_closed} signals closed`);
-      if (data.exchange_cleanup)  parts.push("exchange cleaned");
+      if (data.exchange_cleanup)  parts.push(`exchange cleaned`);
 
-      const summary = parts.length > 0 ? parts.join(", ") : "nothing to clean";
-
-      toast.success(`🚨 Kill Switch [${data.mode}]: ${summary}`);
+      toast.success(`🚨 Kill Switch [${data.mode || mode}]: ${parts.join(", ") || "done"}`);
     } catch (e: any) {
       toast.error(`Kill Switch failed: ${e.message}`);
     } finally {
@@ -55,26 +58,31 @@ export function KillSwitch() {
               <div>
                 <h3 className="font-bold text-white">Confirm Kill Switch</h3>
                 <p className="text-sm text-slate-400">
-                  Mode: <span className={isLive ? "text-red-300 font-semibold" : "text-blue-300"}>{mode}</span>
+                  Mode: <span className="font-medium text-white">{mode}</span>
                 </p>
               </div>
             </div>
 
             <ul className="text-sm text-slate-400 mb-6 space-y-1.5 ml-4 list-disc">
-              <li>Cancel ALL pending signals (WAIT → CANCELLED)</li>
-              <li>Close ALL open signals (OPEN → MANUAL)</li>
-              {isLive && (
-                <>
-                  <li className="text-red-300 font-medium">
-                    Cancel ALL exchange orders (entry + SL + TP)
-                  </li>
-                  <li className="text-red-300 font-medium">
-                    Close ALL exchange positions (market close)
-                  </li>
-                  <li className="text-yellow-300">
-                    Partial filled pendings → FILLED + KILL_SWITCH
-                  </li>
-                </>
+              <li>Cancel ALL pending signals</li>
+              <li>Close ALL open signals</li>
+
+              {mode === "PAPER" && (
+                <li className="text-blue-300 font-medium">
+                  PAPER: only local DB state will be closed
+                </li>
+              )}
+
+              {mode === "TESTNET" && (
+                <li className="text-yellow-300 font-medium">
+                  TESTNET: Binance testnet orders + positions will be closed
+                </li>
+              )}
+
+              {mode === "LIVE" && (
+                <li className="text-red-300 font-medium">
+                  LIVE: real Binance orders + positions will be closed
+                </li>
               )}
             </ul>
 
@@ -85,7 +93,7 @@ export function KillSwitch() {
                 loading={loading}
                 onClick={handleKill}
               >
-                {isLive ? "⚠️ Confirm LIVE Kill" : "Confirm Kill"}
+                {isExchangeMode ? "⚠️ Confirm Kill" : "Confirm Kill"}
               </Button>
               <Button
                 variant="ghost"
@@ -100,4 +108,4 @@ export function KillSwitch() {
       )}
     </>
   );
-} 
+}

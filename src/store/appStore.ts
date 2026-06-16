@@ -19,6 +19,8 @@ interface AppState {
   toggleSidebar: () => void;
   darkMode: boolean;
   toggleDarkMode: () => void;
+  theme: string;
+  setTheme: (t: string) => void;
   tradingMode: any;
   setTradingMode: (m: any) => void;
   priceFeedHealthy: boolean;
@@ -43,6 +45,8 @@ export const useAppStore = create<AppState>()(
       toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       darkMode: true,
       toggleDarkMode: () => set((s) => ({ darkMode: !s.darkMode })),
+      theme: "dark",
+      setTheme: (t) => set({ theme: t }),
       tradingMode: null,
       setTradingMode: (m) => set({ tradingMode: m }),
       priceFeedHealthy: false,
@@ -70,6 +74,7 @@ export const useAppStore = create<AppState>()(
       partialize: (s) => ({
         sidebarCollapsed: s.sidebarCollapsed,
         darkMode: s.darkMode,
+        theme: s.theme,
         activeStrategies: s.activeStrategies,
         researchQueries: s.researchQueries,
       }),

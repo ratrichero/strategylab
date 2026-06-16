@@ -42,6 +42,7 @@ class PreFillValidator:
         checks = []; details = {}
 
         checks_config = [
+            ("whitelist",           lambda: self._check_whitelist(pending)),
             ("price_context",      lambda: self._check_price(pending, current_price)),
             ("candle_invalidation",lambda: self._check_candle(pending, current_price)),
             ("momentum_check",     lambda: self._check_momentum(pending)),
@@ -155,3 +156,37 @@ class PreFillValidator:
 
 def validate_before_fill(pending, current_price: float) -> ValidationResult:
     return PreFillValidator().validate(pending, current_price)
+
+def _check_whitelist(self, pending):
+    """
+    Whitelist check:
+    - Nếu whitelist rỗng hoặc không có → pass tất cả
+    - Nếu có danh sách → chỉ symbol trong list mới pass
+    """
+    info = {}
+    wl = self.cfg.get("whitelist", [])
+
+    # Không có whitelist → pass
+    if not wl:
+        return True, "no_whitelist", info
+
+    # Normalize: "BTC" → "BTCUSDT"
+    normalized = set()
+    for s in wl:
+        s = str(s).strip().upper()
+        if not s:
+            continue
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        normalized.add(s)
+
+    if not normalized:
+        return True, "empty_whitelist", info
+
+    info["whitelist_size"] = len(normalized)
+    info["symbol"] = pending.symbol
+
+    if pending.symbol in normalized:
+        return True, "whitelisted", info
+
+    return False, f"not_in_whitelist", info

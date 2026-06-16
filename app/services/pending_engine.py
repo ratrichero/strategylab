@@ -712,12 +712,40 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
 
     # Nếu đã có fill nhưng exits chưa đặt được ở lúc pre-place -> retry
     if (p.executed_qty or 0) > 0 and (not p.sl_order_id or not p.tp_order_id):
-        exit_ids = place_close_position_exit_orders(
-            p.symbol,
-            p.direction,
-            float(p.stop_loss),
-            float(p.take_profit)
-        )
+        should_place = True
+
+        try:
+            executor = get_executor()
+            if executor and executor.ready:
+                existing = executor.get_open_orders(p.symbol)
+                has_sl = any(
+                    o.get("type") == "STOP_MARKET"
+                    for o in existing
+                )
+                has_tp = any(
+                    o.get("type") == "TAKE_PROFIT_MARKET"
+                    for o in existing
+                )
+
+                if has_sl and has_tp:
+                    should_place = False
+                    # Sync order IDs từ exchange
+                    for o in existing:
+                        if o.get("type") == "STOP_MARKET" and not p.sl_order_id:
+                            p.sl_order_id = str(o.get("orderId", ""))
+                        if o.get("type") == "TAKE_PROFIT_MARKET" and not p.tp_order_id:
+                            p.tp_order_id = str(o.get("orderId", ""))
+                    db.commit()
+        except Exception as e:
+            print(f"[PENDING] Check existing exits error {p.symbol}: {e}")
+
+        if should_place:
+            exit_ids = place_close_position_exit_orders(
+                p.symbol,
+                p.direction,
+                float(p.stop_loss),
+                float(p.take_profit)
+            )
         if not p.sl_order_id:
             p.sl_order_id = exit_ids.get("sl_order_id")
         if not p.tp_order_id:

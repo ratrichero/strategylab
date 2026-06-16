@@ -17,12 +17,6 @@ async function fetchAPI(ep) { const r = await fetch(`${API}${ep}`); if (!r.ok) t
 function ScoreCell({ value }) { const v = Number(value) || 0; return <span className={`font-mono text-sm ${v >= 8 ? 'text-emerald-400' : v >= 6 ? 'text-yellow-400' : 'text-red-400'}`}>{v.toFixed(2)}</span>; }
 const fetchBinancePrices = async () => { try { const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/price'); const d = await r.json(); const p = {}; d.forEach((i) => { p[i.symbol] = parseFloat(i.price); }); return p; } catch { return {}; } };
 
-// Convert VN date range -> explicit UTC ISO range for backend filtering
-function toUtcIsoRangeFromVNDate(startDate, endDate) {
-  const start = startDate ? new Date(`${startDate}T00:00:00+07:00`).toISOString() : '';
-  const end = endDate ? new Date(new Date(`${endDate}T00:00:00+07:00`).getTime() + 86400000).toISOString() : '';
-  return { start, end };
-}
 
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
@@ -47,6 +41,7 @@ export function Dashboard() {
   const todayVN = getTodayVN();
 
   const [allSignals, setAllSignals] = useState([]);
+  const [pendingSignals, setPendingSignals] = useState([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [maxOpen, setMaxOpen] = useState(50);
   const [engineVersions, setEngineVersions] = useState([]);
@@ -95,11 +90,10 @@ export function Dashboard() {
     (async () => {
       setLoading(true); setApiError('');
       try {
-        const { start, end } = toUtcIsoRangeFromVNDate(todayVN, todayVN);
-        console.log('[Dashboard] todayVN:', todayVN, '| UTC range:', start, '→', end);
+        console.log('[Dashboard] todayVN:', todayVN);
         const [allSigs, pending, vers, prices, appCfg] = await Promise.all([
           fetchAPI('/signals?limit=2000').catch(e => { setApiError(p => p + ' signals:' + e.message); return { data: [] }; }),
-          fetchAPI('/pending-signals?status=WAIT&limit=1').catch(() => ({ total: 0 })),
+          fetchAPI('/pending-signals?status=WAIT&limit=200').catch(() => ({ data: [], total: 0 })),
           fetchAPI('/engine/versions').catch(() => []),
           fetchBinancePrices(),
           fetchAPI('/app-config').catch(() => ({})),
@@ -108,6 +102,7 @@ export function Dashboard() {
         console.log('[Dashboard] all:', signals.length);
 
         setAllSignals(signals);
+        setPendingSignals((pending.data || []).map(normalizeSignalDates));
         setPendingCount(pending.total || 0);
         setEngineVersions(vers.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
         setStrategies(Array.from(new Set(signals.map(s => s.strategy_name).filter(Boolean))).sort());
@@ -118,21 +113,9 @@ export function Dashboard() {
     })();
   }, [todayVN]);
 
-  // Debug log when applied VN date range changes
+  // Debug log when applied VN date range changes (all filtering is local)
   useEffect(() => {
-    const { start, end } = toUtcIsoRangeFromVNDate(appliedFilters.startDate, appliedFilters.endDate);
-    const VN_MS = 7 * 3600 * 1000;
-    const localCount = allSignals.filter(s => {
-      if (s.status !== 'WIN' && s.status !== 'LOSS') return false;
-      if (!s.exit_time) return false;
-      const exitMs = parseUtcMs(s.exit_time);
-      if (!exitMs) return false;
-      const vnDate = new Date(exitMs + VN_MS);
-      const vnDateStr = `${vnDate.getUTCFullYear()}-${String(vnDate.getUTCMonth()+1).padStart(2,'0')}-${String(vnDate.getUTCDate()).padStart(2,'0')}`;
-      return (!appliedFilters.startDate || vnDateStr >= appliedFilters.startDate) && (!appliedFilters.endDate || vnDateStr <= appliedFilters.endDate);
-    }).length;
-    console.log('[Dashboard] Refetch:', appliedFilters.startDate, '→', appliedFilters.endDate, '| UTC:', start, '→', end);
-    console.log('[Dashboard] Refetch result(local):', localCount);
+    console.log('[Dashboard] Filter applied:', appliedFilters.startDate || '(all)', '→', appliedFilters.endDate || '(all)', '| allSignals:', allSignals.length);
   }, [appliedFilters.startDate, appliedFilters.endDate, allSignals]);
 
   // Auto-refresh prices
@@ -356,6 +339,12 @@ export function Dashboard() {
     return { ...s, currentPrice: cp, pnl, flash: priceFlash[s.symbol] };
   }), [allOpen, binancePrices, priceFlash]);
 
+  // ========== PENDING WITH PRICE ==========
+  const pendingWithPrice = useMemo(() => pendingSignals.map(s => {
+    const cp = binancePrices[s.symbol] || 0;
+    return { ...s, currentPrice: cp, flash: priceFlash[s.symbol] };
+  }), [pendingSignals, binancePrices, priceFlash]);
+
   // ========== EQUITY CURVE COMBINED ==========
   const eqCurve = useMemo(() => {
     const n = Math.max(pComp.curve.length, pFixed.curve.length);
@@ -386,6 +375,24 @@ export function Dashboard() {
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
     { key: 'score', header: 'Score', sortable: true, render: v => <ScoreCell value={v} /> },
     { key: 'candle_time', header: 'Opened', sortable: true, render: v => utcToVN(v) },
+  ];
+
+  const pendingColumns = [
+    { key: 'symbol', header: 'Symbol', sortable: true },
+    { key: 'pattern', header: 'Pattern', sortable: true },
+    { key: 'direction', header: 'Dir', sortable: true, render: v => <DirectionBadge direction={v || 'LONG'} /> },
+    { key: 'timeframe', header: 'TF', sortable: true },
+    { key: 'trigger_price', header: 'Entry', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'currentPrice', header: 'Current', render: (v, row) => (
+      <span className={`font-mono transition-all duration-300 ${row.flash === 'up' ? 'text-emerald-400 bg-emerald-500/20 px-1 rounded' : row.flash === 'down' ? 'text-red-400 bg-red-500/20 px-1 rounded' : 'text-white'}`}>
+        {v?.toFixed(v > 100 ? 2 : 4) || '-'}
+      </span>
+    )},
+    { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
+    { key: 'signal_score', header: 'Score', sortable: true, render: v => <ScoreCell value={v} /> },
+    { key: 'created_at', header: 'Opened', sortable: true, render: v => utcToVN(v) },
   ];
 
   const recentColumns = [
@@ -554,6 +561,12 @@ export function Dashboard() {
       <Card>
         <CardHeader title="Active Signals" subtitle={`${allOpen.length} open • Live 10s`} action={<span className="text-xs text-emerald-400 animate-pulse">● Live</span>} />
         <DataTable columns={activeColumns} data={activeWithPrice} pageSize={10} emptyMessage="No active signals" />
+      </Card>
+
+      {/* PENDING SIGNALS (WAIT) */}
+      <Card>
+        <CardHeader title="Pending Signals" subtitle={`${pendingSignals.length} waiting • Trigger price orders`} action={<span className="text-xs text-yellow-400">⏳ Pending</span>} />
+        <DataTable columns={pendingColumns} data={pendingWithPrice} pageSize={10} emptyMessage="No pending signals" />
       </Card>
 
       {/* RECENT (UNFILTERED) */}

@@ -9,9 +9,20 @@ import { Tabs, TabContent } from '../components/ui/Tabs';
 import { Heatmap } from '../components/charts/Heatmap';
 import { Filter, Loader2 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from 'recharts';
-import { getTodayVN } from '../utils/time';
+import { parseUtcMs, getTodayVN, normalizeSignalDates } from '../utils/time';
 
 const API = '/api';
+const VN_MS = 7 * 3600 * 1000;
+
+/** Convert exit_time UTC → VN date string "YYYY-MM-DD" */
+function exitToVNDate(exitTime) {
+  if (!exitTime) return '';
+  const ms = parseUtcMs(exitTime);
+  if (!ms) return '';
+  const vn = new Date(ms + VN_MS);
+  return `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,'0')}-${String(vn.getUTCDate()).padStart(2,'0')}`;
+}
+
 function ChartTT({ active, payload, label }) { if (!active || !payload?.length) return null; return (<div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-sm"><p className="text-yellow-400 font-semibold mb-1">{label}</p>{payload.map((e, i) => (<div key={i} className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: e.color }} /><span className="text-white">{e.name}: <strong>{typeof e.value === 'number' ? e.value.toFixed(2) : e.value}</strong></span></div>))}</div>); }
 async function fetchQ(query, params = {}) {
   console.log('[Indicators] fetchQ:', query, JSON.stringify(params));
@@ -32,7 +43,7 @@ const TABS = [{id:'buckets',label:'Indicator Buckets'},{id:'heatmap',label:'Heat
 
 export function Indicators() {
   const today = getTodayVN();
-  const [tab, setTab] = useState('buckets'); const [loading, setLoading] = useState(true); const [ad, setAd] = useState({}); const [loadedTabs, setLoadedTabs] = useState(new Set()); const [signals, setSignals] = useState([]);
+  const [tab, setTab] = useState('buckets'); const [loading, setLoading] = useState(true); const [ad, setAd] = useState({}); const [loadedTabs, setLoadedTabs] = useState(new Set()); const [allSignals, setAllSignals] = useState([]);
   const [allStrategies, setAllStrategies] = useState([]); const [allPatterns, setAllPatterns] = useState([]); const [engineVersions, setEngineVersions] = useState([]);
   const [fetchingTop50, setFetchingTop50] = useState(false);
   const [f, setF] = useState({startDate:'',endDate:'',symbols:'',symbolMode:'include',scoreMin:0,scoreMax:10,engineVersion:'all',engineMode:'only',timeframes:[],strategies:[],patterns:[],regimes:[],directions:[]});
@@ -57,28 +68,20 @@ export function Indicators() {
     if (applied.scoreMax < 10) p.score_max = applied.scoreMax;
     return p;
   };
-  // For /api/signals — plain dates, backend _parse_vn_date handles VN→UTC
-  const buildSignalApiParams = () => {
-    const sp = new URLSearchParams({ limit: '2000', date_field: 'exit_time' });
-    if (applied.startDate) sp.set('start_date', applied.startDate);
-    if (applied.endDate) sp.set('end_date', applied.endDate);
-    return sp;
-  };
 
   const TAB_Q = {buckets:['indicator_bucket_rsi','indicator_bucket_volume_ratio','indicator_bucket_atr_percentile'],heatmap:['rsi_vol_heatmap','atr_score_heatmap','mtf_trend_heatmap'],scatter:['mae_mfe_scatter'],exit:['exit_reason_breakdown','time_to_exit_dist']};
 
-  // Load signals for local filtering + filter options
+  // Load ALL signals once (no date filter on API — filter locally)
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const sp = buildSignalApiParams();
         const [sigRes, versRes] = await Promise.all([
-          fetch(`${API}/signals?${sp}`).then(r => r.json()).catch(() => ({ data: [] })),
+          fetch(`${API}/signals?limit=2000`).then(r => r.json()).catch(() => ({ data: [] })),
           fetch(`${API}/engine/versions`).then(r => r.json()).catch(() => []),
         ]);
-        const sigs = sigRes.data || [];
-        setSignals(sigs);
+        const sigs = (sigRes.data || []).map(normalizeSignalDates);
+        setAllSignals(sigs);
         setAllStrategies(Array.from(new Set(sigs.map(s => s.strategy_name).filter(Boolean))).sort());
         setAllPatterns(Array.from(new Set(sigs.map(s => s.pattern).filter(Boolean))).sort());
         setEngineVersions(versRes.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
@@ -87,7 +90,7 @@ export function Indicators() {
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     })();
-  }, [filterVersion, applied]);
+  }, []);
 
   // Load tab-specific data from analysis API
   useEffect(() => {
@@ -122,28 +125,39 @@ export function Indicators() {
       } catch (e) { console.error(e); }
     })();
   }, [tab, loading, filterVersion, applied]);
-  // Loading handled by useEffect blocks above based on filterVersion and tab
-  const filtered = signals.filter(s => {
-    if (s.status !== 'WIN' && s.status !== 'LOSS') return false;
-    const c = applied;
-    if (c.symbols?.trim()) {
-      const list = c.symbols.replace(/,/g, ' ').split(/\s+/).map(x => x.trim().toUpperCase()).filter(Boolean).map(x => x.endsWith('USDT') ? x : x + 'USDT');
-      if (list.length) { const match = list.includes(s.symbol); if (c.symbolMode === 'include' ? !match : match) return false; }
-    }
-    if (c.scoreMin > 0 && (s.score || 0) < c.scoreMin) return false;
-    if (c.scoreMax < 10 && (s.score || 0) > c.scoreMax) return false;
-    if (c.engineVersion !== 'all') {
-      if (c.engineMode === 'newest' && Number(s.engine_version) < Number(c.engineVersion)) return false;
-      if (c.engineMode === 'older' && Number(s.engine_version) > Number(c.engineVersion)) return false;
-      if (c.engineMode === 'only' && String(s.engine_version) !== c.engineVersion) return false;
-    }
-    if (c.timeframes?.length && !c.timeframes.includes(s.timeframe)) return false;
-    if (c.strategies?.length && !c.strategies.includes(s.strategy_name)) return false;
-    if (c.patterns?.length && !c.patterns.includes(s.pattern)) return false;
-    if (c.regimes?.length && !c.regimes.includes(s.regime)) return false;
-    if (c.directions?.length && !c.directions.includes(s.direction)) return false;
-    return true;
-  });
+
+  // Local filtering from allSignals — same VN date logic as Dashboard
+  const filtered = useMemo(() => {
+    return allSignals.filter(s => {
+      if (s.status !== 'WIN' && s.status !== 'LOSS') return false;
+      const c = applied;
+      // VN date range filter
+      if (c.startDate || c.endDate) {
+        const vnDate = exitToVNDate(s.exit_time);
+        if (!vnDate) return false;
+        if (c.startDate && vnDate < c.startDate) return false;
+        if (c.endDate && vnDate > c.endDate) return false;
+      }
+      if (c.symbols?.trim()) {
+        const list = c.symbols.replace(/,/g, ' ').split(/\s+/).map(x => x.trim().toUpperCase()).filter(Boolean).map(x => x.endsWith('USDT') ? x : x + 'USDT');
+        if (list.length) { const match = list.includes(s.symbol); if (c.symbolMode === 'include' ? !match : match) return false; }
+      }
+      if (c.scoreMin > 0 && (s.score || 0) < c.scoreMin) return false;
+      if (c.scoreMax < 10 && (s.score || 0) > c.scoreMax) return false;
+      if (c.engineVersion !== 'all') {
+        if (c.engineMode === 'newest' && Number(s.engine_version) < Number(c.engineVersion)) return false;
+        if (c.engineMode === 'older' && Number(s.engine_version) > Number(c.engineVersion)) return false;
+        if (c.engineMode === 'only' && String(s.engine_version) !== c.engineVersion) return false;
+      }
+      if (c.timeframes?.length && !c.timeframes.includes(s.timeframe)) return false;
+      if (c.strategies?.length && !c.strategies.includes(s.strategy_name)) return false;
+      if (c.patterns?.length && !c.patterns.includes(s.pattern)) return false;
+      if (c.regimes?.length && !c.regimes.includes(s.regime)) return false;
+      if (c.directions?.length && !c.directions.includes(s.direction)) return false;
+      return true;
+    });
+  }, [allSignals, applied]);
+
   const wins = filtered.filter(s=>s.status==='WIN'); const losses = filtered.filter(s=>s.status==='LOSS');
   const kpi = filtered.length?(()=>{const t=filtered.length,w=wins.length;const wr=(w/t)*100;const gp=filtered.filter(s=>(s.result_percent||0)>0).reduce((a,s)=>a+(s.result_percent||0),0);const gl=Math.abs(filtered.filter(s=>(s.result_percent||0)<0).reduce((a,s)=>a+(s.result_percent||0),0));const pf=gl>0?gp/gl:gp>0?Infinity:0;return{total:t,wr,pf};})():null;
   const [distIndicator, setDistIndicator] = useState('rsi');
@@ -153,13 +167,10 @@ export function Indicators() {
 
   const regimeFingerprint = useMemo(()=>{const regimes={};filtered.forEach(s=>{const r=s.regime||'UNKNOWN';if(!regimes[r])regimes[r]=[];regimes[r].push(s);});return Object.entries(regimes).map(([regime,sigs])=>{const avg=key=>{const vals=sigs.map(s=>Number(s[key])||0).filter(v=>v>0);return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:0;};const w=sigs.filter(s=>s.status==='WIN').length;return{regime,trades:sigs.length,winrate:sigs.length>0?(w/sigs.length)*100:0,rsi:avg('rsi'),volume_ratio:avg('volume_ratio'),atr_ratio:avg('atr_ratio'),score:avg('score')};}).sort((a,b)=>b.trades-a.trades);},[filtered]);
 
-  // Threshold optimizer
   const thresholdData = useMemo(()=>{const ind=distIndicator;const steps=ind==='rsi'?[20,30,40,50,60,70,80]:ind==='volume_ratio'?[0.5,1,1.5,2,3,5]:ind==='score'?[5,6,7,8,9]:[0.005,0.01,0.015,0.02,0.03];return steps.map(threshold=>{const above=filtered.filter(s=>(Number(s[ind])||0)>=threshold);const w=above.filter(s=>s.status==='WIN').length;return{threshold,trades:above.length,winrate:above.length>0?(w/above.length)*100:0};}).filter(d=>d.trades>0);},[filtered,distIndicator]);
 
-  // Indicator scatter
   const indScatterData = useMemo(()=>filtered.slice(0,300).map(s=>({x:Number(s[scatterX])||0,y:Number(s[scatterY])||0,label:s.status==='WIN'?1:0,symbol:s.symbol})).filter(d=>d.x>0||d.y>0),[filtered,scatterX,scatterY]);
 
-  // Don't block render — show loading indicator inline
   return(
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white flex items-center gap-2">Indicator Analysis {loading && <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />}</h2>

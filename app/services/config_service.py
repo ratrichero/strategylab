@@ -110,7 +110,7 @@ def update_runtime_config(data: dict):
         db.execute(text("""
             INSERT INTO app_config (key, value, updated_at)
             VALUES (:k, :v, NOW())
-            ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = utc_now()
+            ON CONFLICT (key) DO UPDATE SET value = :v, updated_at = NOW()
         """), {"k": k, "v": str(v)})
     db.commit(); db.close()
     _runtime_cache = None

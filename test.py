@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Generate bootstrap_final.sql
-Bản cuối cùng bao gồm tất cả thay đổi v3.0
+Bản cuối cùng — schema + MV + indexes + config thực tế
 """
 import os
 
@@ -11,9 +11,8 @@ OUT_FILE = os.path.join(OUT_DIR, "bootstrap_final.sql")
 
 def build():
     return """-- ============================================================
---  QUANT RESEARCH LAB v5.0 — FULL BOOTSTRAP (FINAL)
---  Bao gồm: timestamptz, live/testnet fields, MV, indexes,
---  UNIQUE constraints, app_config defaults
+--  QUANT RESEARCH LAB v6.0 — FULL BOOTSTRAP (FINAL)
+--  Schema + MV + Indexes + UNIQUE constraints + Config thực tế
 -- ============================================================
 
 SET timezone = 'UTC';
@@ -415,50 +414,40 @@ CREATE INDEX idx_mv_sf_timeframe ON public.mv_scan_flat (timeframe);
 CREATE INDEX idx_mv_sf_engine ON public.mv_scan_flat (engine_version);
 
 -- ============================================================
--- DEFAULT APP_CONFIG
+-- DEFAULT APP_CONFIG — config thực tế production
 -- ============================================================
 INSERT INTO public.app_config (key, value, updated_at) VALUES
-    ('TIMEFRAME',             '15m',   now()),
-    ('SCORE_THRESHOLD',       '5',     now()),
-    ('BODY_RATIO_THRESHOLD',  '0.35',  now()),
-    ('VOLUME_MULTIPLIER',     '1.15',  now()),
-    ('ATR_RATIO_MIN',         '0.0015', now()),
-    ('COOLDOWN_HOURS',        '4',     now()),
-    ('MTF_ENABLED',           'true',  now()),
-    ('AI_THRESHOLD',          '0.0',   now()),
-    ('TOP_LIMIT',             '400',   now()),
-    ('ENABLE_SCHEDULER',      'true',  now()),
-    ('ENABLE_MONITOR',        'true',  now()),
-    ('ENGINE_VERSION',        '5.0',   now()),
-    ('TRADING_MODE',          'PAPER', now()),
-    ('ACTIVE_STRATEGIES',     'candlestick', now()),
-    ('MAX_OPEN_TRADES',       '50',    now()),
-
-    ('OPEN_TRADE_FILTER', '{"enabled":false}', now()),
-
-    ('PREFILL_CONFIG', '{"enabled":true,"price_context":{"enabled":true,"max_adverse_move_pct":{"15m":1.0,"1h":1.8,"4h":3.0}},"candle_invalidation":{"enabled":true,"adverse_body_atr_mult":1.5},"momentum_check":{"enabled":true,"rsi_reject_long_above":75,"rsi_reject_short_below":25},"volatility_guard":{"enabled":true,"atr_spike_multiplier":2.5},"regime_check":{"enabled":true}}', now()),
-
-    ('STRATEGY_THRESHOLDS', '{"candlestick":5.0,"breakout":6.0,"mean_reversion":5.5,"pullback":5.5,"trend_following":5.5}', now()),
-
-    ('RISK_CONFIG', '{"15m":{"sl_mult":0.02,"tp_mult":0.04},"1h":{"sl_mult":0.025,"tp_mult":0.05},"4h":{"sl_mult":0.03,"tp_mult":0.06}}', now()),
-
-    ('DERIVATIVE_CONFIG', '{"pre_buffer":1,"bias_scale":{"15m":0.6,"1h":0.8,"4h":1.0}}', now()),
-
-    ('PENDING_CONFIG', '{"enabled":true,"atr_entry_multiplier":{"15m":0.4,"1h":0.5,"4h":0.6},"expire_hours":{"15m":0.5,"1h":2,"4h":8}}', now()),
-
-    ('LIMIT_ORDER_CONFIG', '{"enabled":true,"entry_reprice_pct":{"15m":0.01,"1h":0.008,"4h":0.005}}', now()),
-
-    ('POSITION_SIZE_CONFIG', '{"mode":"fixed_usdt","fixed_usdt_per_trade":200,"risk_per_trade_pct":0.01,"default_leverage":3,"max_position_usdt":500}', now()),
-
-    ('CONNECTION_OVERRIDE', 'false', now()),
-    ('BINANCE_API_KEY', '', now()),
-    ('BINANCE_API_SECRET', '', now()),
-    ('BINANCE_TESTNET_API_KEY', '', now()),
-    ('BINANCE_TESTNET_API_SECRET', '', now()),
-    ('TELEGRAM_BOT_TOKEN', '', now()),
-    ('GROQ_API_KEY', '', now()),
-    ('GEMINI_API_KEY', '', now())
-
+    ('ACTIVE_STRATEGIES',         'candlestick',   now()),
+    ('AI_THRESHOLD',              '0.0',           now()),
+    ('ATR_RATIO_MIN',             '0.0015',        now()),
+    ('BINANCE_API_KEY',           '',               now()),
+    ('BINANCE_API_SECRET',        '',               now()),
+    ('BINANCE_TESTNET_API_KEY',   '',               now()),
+    ('BINANCE_TESTNET_API_SECRET','',               now()),
+    ('BODY_RATIO_THRESHOLD',      '0.5',           now()),
+    ('CONNECTION_OVERRIDE',       'false',          now()),
+    ('COOLDOWN_HOURS',            '4',             now()),
+    ('DERIVATIVE_CONFIG',         '{"bias_scale":{"15m":0.6,"1h":0.8,"4h":1},"pre_buffer":1}', now()),
+    ('ENABLE_MONITOR',            'true',          now()),
+    ('ENABLE_SCHEDULER',          'true',          now()),
+    ('ENGINE_VERSION',            '6',             now()),
+    ('GEMINI_API_KEY',            '',               now()),
+    ('GROQ_API_KEY',              '',               now()),
+    ('LIMIT_ORDER_CONFIG',        '{"enabled":true,"entry_reprice_pct":{"15m":0.005,"1h":0.005,"4h":0.005}}', now()),
+    ('MAX_OPEN_TRADES',           '10',            now()),
+    ('MTF_ENABLED',               'true',          now()),
+    ('OPEN_TRADE_FILTER',         '{"enabled":true,"identity":{"strategies":["candlestick"],"timeframes":["15m"]},"score":{"min_overall":6,"min_mtf_score":0.3},"position":{"max_concurrent_trades":10,"max_per_symbol":1,"max_daily_trades":50,"max_daily_loss_pct":30,"pause_after_loss_streak":10}}', now()),
+    ('PENDING_CONFIG',            '{"enabled":true,"atr_entry_multiplier":{"15m":0.4,"1h":0.5,"4h":0.6},"expire_hours":{"15m":1,"1h":4,"4h":8}}', now()),
+    ('POSITION_SIZE_CONFIG',      '{"mode":"fixed_usdt","fixed_usdt_per_trade":1,"risk_per_trade_pct":0.01,"default_leverage":10,"max_position_usdt":10}', now()),
+    ('PREFILL_CONFIG',            '{"enabled":true,"price_context":{"enabled":true,"max_adverse_move_pct":{"15m":1.0,"1h":1.8,"4h":3.0}},"candle_invalidation":{"enabled":true,"adverse_body_atr_mult":1.5},"momentum_check":{"enabled":true,"rsi_reject_long_above":75,"rsi_reject_short_below":25},"volatility_guard":{"enabled":true,"atr_spike_multiplier":2.5},"regime_check":{"enabled":true}}', now()),
+    ('RISK_CONFIG',               '{"15m":{"sl_mult":0.02,"tp_mult":0.04},"1h":{"sl_mult":0.025,"tp_mult":0.05},"4h":{"sl_mult":0.03,"tp_mult":0.06}}', now()),
+    ('SCORE_THRESHOLD',           '6',             now()),
+    ('STRATEGY_THRESHOLDS',       '{"candlestick":5.0,"breakout":6.0,"mean_reversion":5.5,"pullback":5.5,"trend_following":5.5}', now()),
+    ('TELEGRAM_BOT_TOKEN',       '',               now()),
+    ('TIMEFRAME',                '15m',            now()),
+    ('TOP_LIMIT',                '50',             now()),
+    ('TRADING_MODE',             'PAPER',          now()),
+    ('VOLUME_MULTIPLIER',        '1.15',           now())
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================
@@ -502,8 +491,9 @@ def main():
     content = build()
     with open(OUT_FILE, "w", encoding="utf-8") as f:
         f.write(content)
+    lines = content.count("\n")
     print(f"✅ Generated: {OUT_FILE}")
-    print(f"   Lines: {content.count(chr(10)):,}")
+    print(f"   Lines: {lines:,}")
 
 
 if __name__ == "__main__":

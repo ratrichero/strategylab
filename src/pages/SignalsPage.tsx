@@ -11,47 +11,59 @@ import { PercentChangeBadge, StatusBadge } from '../components/ui/Badge';
 import { Heatmap } from '../components/charts/Heatmap';
 import { Filter, Loader2 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, LineChart, Line, ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell, ComposedChart } from 'recharts';
-import { utcToVN, getTodayVN } from '../utils/time';
+import { utcToVN, parseUtcMs, getTodayVN, normalizeSignalDates } from '../utils/time';
 
 const API = '/api';
+const VN_MS = 7 * 3600 * 1000;
 const TABS = [{id:'performance',label:'Performance'},{id:'heatmap',label:'Heatmap Matrix'},{id:'score',label:'Score Analysis'},{id:'correlation',label:'Feature Correlation'},{id:'indicators',label:'Indicator Analysis'},{id:'trades',label:'Trade List'}];
 const COLORS = ['#6366f1','#10b981','#f59e0b','#ef4444','#8b5cf6','#06b6d4','#ec4899'];
 
-function toUtcRange(startDate, endDate) {
-  // Plain dates — backend _parse_vn_date handles VN→UTC conversion
-  return {
-    start_date: startDate || '',
-    end_date: endDate || ''
-  };
+/** Convert exit_time UTC → VN date string "YYYY-MM-DD" */
+function exitToVNDate(exitTime) {
+  if (!exitTime) return '';
+  const ms = parseUtcMs(exitTime);
+  if (!ms) return '';
+  const vn = new Date(ms + VN_MS);
+  return `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,'0')}-${String(vn.getUTCDate()).padStart(2,'0')}`;
 }
-// For /api/signal-analysis endpoint — send plain date, backend _parse_vn handles it
-function toAnalysisRange(startDate, endDate) {
-  return { start_date: startDate || '', end_date: endDate || '' };
-}
+
 function ScoreCell({ value }) { const v = Number(value) || 0; return <span className={`font-mono text-sm ${v >= 8 ? 'text-emerald-400' : v >= 6 ? 'text-yellow-400' : 'text-red-400'}`}>{v.toFixed(2)}</span>; }
 function ChartTT({ active, payload, label }) { if (!active || !payload?.length) return null; return (<div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-sm"><p className="text-yellow-400 font-semibold mb-1">{label}</p>{payload.map((e, i) => (<div key={i} className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: e.color }} /><span className="text-white">{e.name}: <strong>{typeof e.value === 'number' ? e.value.toFixed(2) : e.value}</strong></span></div>))}</div>); }
 async function fetchQ(query, params = {}) { const res = await fetch(`${API}/signal-analysis`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, params }) }); if (!res.ok) return []; const json = await res.json(); return json.data || []; }
 
 export function Signals() {
   const today = getTodayVN();
-  const [tab, setTab] = useState('performance'); const [loading, setLoading] = useState(true); const [signals, setSignals] = useState([]); const [ad, setAd] = useState({}); const [loadedTabs, setLoadedTabs] = useState(new Set());
+  const [tab, setTab] = useState('performance'); const [loading, setLoading] = useState(true); const [allSignals, setAllSignals] = useState([]); const [ad, setAd] = useState({}); const [loadedTabs, setLoadedTabs] = useState(new Set());
   const [strategies, setStrategies] = useState([]); const [patterns, setPatterns] = useState([]); const [engineVersions, setEngineVersions] = useState([]); const [fetchingTop50, setFetchingTop50] = useState(false);
   const [f, setF] = useState({ capital:10000,posSize:1000,startDate:'',endDate:'',symbols:'',symbolMode:'include',scoreMin:0,scoreMax:10,engineVersion:'all',engineMode:'only',timeframes:[],strategies:[],patterns:[],regimes:[],directions:[] });
   const [applied, setApplied] = useState({...f}); const set = (k,v) => setF(prev=>({...prev,[k]:v})); const toggleArr = (k,v) => setF(prev=>{const arr=prev[k]; return {...prev,[k]:arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]};});
-  const getDateParams = useCallback(()=>toUtcRange(applied.startDate, applied.endDate),[applied.startDate,applied.endDate]);
 
-  const getAnalysisParams = useCallback(()=>toAnalysisRange(applied.startDate, applied.endDate),[applied.startDate,applied.endDate]);
-  const loadBase = useCallback(async()=>{setLoading(true);try{const dp=getDateParams();const ap=getAnalysisParams();const p=new URLSearchParams({limit:'2000',date_field:'exit_time'});if(dp.start_date)p.set('start_date',dp.start_date);if(dp.end_date)p.set('end_date',dp.end_date);const[sigRes,versRes,funnel,block_reasons]=await Promise.all([fetch(`${API}/signals?${p}`).then(r=>r.json()).catch(()=>({data:[]})),fetch(`${API}/engine/versions`).then(r=>r.json()).catch(()=>[]),fetchQ('funnel',ap).catch(()=>[]),fetchQ('block_reasons',ap).catch(()=>[])]);const sigs=sigRes.data||[];setSignals(sigs);setStrategies(Array.from(new Set(sigs.map(s=>s.strategy_name).filter(Boolean))).sort());setPatterns(Array.from(new Set(sigs.map(s=>s.pattern).filter(Boolean))).sort());setEngineVersions(versRes.map(v=>String(v.engine_version)).filter(Boolean).sort().reverse());setAd({funnel,block_reasons});setLoadedTabs(new Set(['performance']));}catch(e){console.error(e);}finally{setLoading(false);};},[getDateParams]);
+  // For /api/signal-analysis endpoint — send plain VN date, backend handles conversion
+  const getAnalysisParams = useCallback(()=>{
+    const p = {};
+    if (applied.startDate) p.start_date = applied.startDate;
+    if (applied.endDate) p.end_date = applied.endDate;
+    return p;
+  },[applied.startDate,applied.endDate]);
+
+  const loadBase = useCallback(async()=>{setLoading(true);try{const ap=getAnalysisParams();const[sigRes,versRes,funnel,block_reasons]=await Promise.all([fetch(`${API}/signals?limit=2000`).then(r=>r.json()).catch(()=>({data:[]})),fetch(`${API}/engine/versions`).then(r=>r.json()).catch(()=>[]),fetchQ('funnel',ap).catch(()=>[]),fetchQ('block_reasons',ap).catch(()=>[])]);const sigs=(sigRes.data||[]).map(normalizeSignalDates);setAllSignals(sigs);setStrategies(Array.from(new Set(sigs.map(s=>s.strategy_name).filter(Boolean))).sort());setPatterns(Array.from(new Set(sigs.map(s=>s.pattern).filter(Boolean))).sort());setEngineVersions(versRes.map(v=>String(v.engine_version)).filter(Boolean).sort().reverse());setAd({funnel,block_reasons});setLoadedTabs(new Set(['performance']));}catch(e){console.error(e);}finally{setLoading(false);};},[getAnalysisParams]);
 
   const TAB_QUERIES = {performance:['block_reasons'],heatmap:['score_regime_heatmap','component_heatmap','rsi_vol_heatmap','tf_symbol_heatmap','atr_score_heatmap','mtf_trend_heatmap'],score:['score_histogram','score_scatter','score_calibration','score_threshold_optimizer','score_component_radar','score_quality_trend'],correlation:['feature_correlation','feature_importance_full'],indicators:['exit_reason_breakdown','time_to_exit_dist','mae_mfe_scatter']};
 
-  const loadTabData = useCallback(async(tabId)=>{if(loadedTabs.has(tabId)||tabId==='trades')return;const dp=getAnalysisParams();const queries=TAB_QUERIES[tabId]||[];try{const results=await Promise.all(queries.map(q=>fetchQ(q,dp).catch(err=>{console.error('query fail',q,err);return[];})));const obj={};queries.forEach((q,i)=>{if(q==='mae_mfe_scatter')obj['maeMfe']=results[i];else obj[q]=results[i];});if(tabId==='indicators'){obj['indRsi']=await fetchQ('indicator_bucket',{...dp,indicator:'rsi'}).catch(()=>[]);obj['indVol']=await fetchQ('indicator_bucket',{...dp,indicator:'volume_ratio'}).catch(()=>[]);obj['indAtr']=await fetchQ('indicator_bucket',{...dp,indicator:'atr_percentile'}).catch(()=>[]);}setAd(prev=>({...prev,...obj}));setLoadedTabs(prev=>new Set([...prev,tabId]));}catch(e){console.error('Tab load failed',tabId,e);};},[loadedTabs,getDateParams]);
+  const loadTabData = useCallback(async(tabId)=>{if(loadedTabs.has(tabId)||tabId==='trades')return;const dp=getAnalysisParams();const queries=TAB_QUERIES[tabId]||[];try{const results=await Promise.all(queries.map(q=>fetchQ(q,dp).catch(err=>{console.error('query fail',q,err);return[];})));const obj={};queries.forEach((q,i)=>{if(q==='mae_mfe_scatter')obj['maeMfe']=results[i];else obj[q]=results[i];});if(tabId==='indicators'){obj['indRsi']=await fetchQ('indicator_bucket',{...dp,indicator:'rsi'}).catch(()=>[]);obj['indVol']=await fetchQ('indicator_bucket',{...dp,indicator:'volume_ratio'}).catch(()=>[]);obj['indAtr']=await fetchQ('indicator_bucket',{...dp,indicator:'atr_percentile'}).catch(()=>[]);}setAd(prev=>({...prev,...obj}));setLoadedTabs(prev=>new Set([...prev,tabId]));}catch(e){console.error('Tab load failed',tabId,e);};},[loadedTabs,getAnalysisParams]);
 
   useEffect(()=>{loadBase();},[loadBase]); useEffect(()=>{if(!loading)loadTabData(tab);},[tab,loading,loadTabData]);
 
   const fetchTop50 = async () => { setFetchingTop50(true); try { const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1&sparkline=false', { headers: { 'x-cg-demo-api-key': 'CG-r9KNtFCb794fJuozcK1AMr2W' } }); const coins = await res.json(); set('symbols', coins.map(c => c.symbol.toUpperCase()).join(' ')); } catch (e) { console.error(e); } finally { setFetchingTop50(false); } };
 
-  const filtered = useMemo(()=>{let r=signals.filter(s=>s.status==='WIN'||s.status==='LOSS');const c=applied;if(c.symbols.trim()){const list=c.symbols.replace(/,/g,' ').split(/\s+/).map(s=>s.trim().toUpperCase()).filter(Boolean).map(s=>s.endsWith('USDT')?s:s+'USDT');r=c.symbolMode==='include'?r.filter(s=>list.includes(s.symbol)):r.filter(s=>!list.includes(s.symbol));}r=r.filter(s=>(s.score||0)>=c.scoreMin&&(s.score||0)<=c.scoreMax);if(c.engineVersion!=='all'){if(c.engineMode==='newest')r=r.filter(s=>Number(s.engine_version)>=Number(c.engineVersion));else if(c.engineMode==='older')r=r.filter(s=>Number(s.engine_version)<=Number(c.engineVersion));else r=r.filter(s=>String(s.engine_version)===c.engineVersion);}if(c.timeframes.length)r=r.filter(s=>c.timeframes.includes(s.timeframe));if(c.strategies.length)r=r.filter(s=>c.strategies.includes(s.strategy_name));if(c.patterns.length)r=r.filter(s=>c.patterns.includes(s.pattern));if(c.regimes.length)r=r.filter(s=>c.regimes.includes(s.regime));if(c.directions.length)r=r.filter(s=>c.directions.includes(s.direction));return r;},[signals,applied]);
+  // Local filtering from allSignals — same VN date logic as Dashboard
+  const filtered = useMemo(()=>{return allSignals.filter(s=>{if(s.status!=='WIN'&&s.status!=='LOSS')return false;const c=applied;
+    // VN date range filter
+    if(c.startDate||c.endDate){const vnDate=exitToVNDate(s.exit_time);if(!vnDate)return false;if(c.startDate&&vnDate<c.startDate)return false;if(c.endDate&&vnDate>c.endDate)return false;}
+    if(c.symbols.trim()){const list=c.symbols.replace(/,/g,' ').split(/\s+/).map(s=>s.trim().toUpperCase()).filter(Boolean).map(s=>s.endsWith('USDT')?s:s+'USDT');if(c.symbolMode==='include'){if(!list.includes(s.symbol))return false;}else{if(list.includes(s.symbol))return false;}}
+    if((s.score||0)<c.scoreMin||(s.score||0)>c.scoreMax)return false;
+    if(c.engineVersion!=='all'){if(c.engineMode==='newest'&&Number(s.engine_version)<Number(c.engineVersion))return false;if(c.engineMode==='older'&&Number(s.engine_version)>Number(c.engineVersion))return false;if(c.engineMode==='only'&&String(s.engine_version)!==c.engineVersion)return false;}
+    if(c.timeframes.length&&!c.timeframes.includes(s.timeframe))return false;if(c.strategies.length&&!c.strategies.includes(s.strategy_name))return false;if(c.patterns.length&&!c.patterns.includes(s.pattern))return false;if(c.regimes.length&&!c.regimes.includes(s.regime))return false;if(c.directions.length&&!c.directions.includes(s.direction))return false;return true;});},[allSignals,applied]);
 
   const kpi = useMemo(()=>{if(!filtered.length)return null;const t=filtered.length;const w=filtered.filter(s=>s.status==='WIN').length;const wr=(w/t)*100;const gp=filtered.filter(s=>(s.result_percent||0)>0).reduce((a,s)=>a+(s.result_percent||0),0);const gl=Math.abs(filtered.filter(s=>(s.result_percent||0)<0).reduce((a,s)=>a+(s.result_percent||0),0));const pf=gl>0?gp/gl:gp>0?Infinity:0;const avgW=w>0?gp/w:0;const avgL=(t-w)>0?gl/(t-w):0;const exp=(wr/100)*avgW-((1-wr/100)*avgL);let nav=applied.capital;filtered.forEach(s=>{nav+=applied.posSize*((s.result_percent||0)/100);});const scores=filtered.map(s=>Number(s.score)||0);const rets=filtered.map(s=>Number(s.result_percent)||0);const n=scores.length,avgS=scores.reduce((a,b)=>a+b,0)/n,avgR=rets.reduce((a,b)=>a+b,0)/n;const cov=scores.reduce((s,v,i)=>s+(v-avgS)*(rets[i]-avgR),0)/n;const stdS=Math.sqrt(scores.reduce((s,v)=>s+(v-avgS)**2,0)/n);const stdR=Math.sqrt(rets.reduce((s,v)=>s+(v-avgR)**2,0)/n);const scanned=Number(ad.funnel?.find(r=>r.stage==='Total Scanned')?.count||0);return{nav,total:t,scanned,wr,pf,exp,corr:(stdS&&stdR)?cov/(stdS*stdR):0};},[filtered,applied,ad.funnel]);
 
@@ -79,7 +91,7 @@ export function Signals() {
           <div className="col-span-2"><label className="block text-sm font-medium text-slate-400 mb-1.5">Symbol</label><div className="flex gap-1"><input type="text" value={f.symbols} onChange={e=>set('symbols',e.target.value)} placeholder="BTC ETH SOL..." className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /><button onClick={()=>set('symbolMode',f.symbolMode==='include'?'exclude':'include')} className={`px-3 py-2 rounded-lg text-xs font-bold ${f.symbolMode==='include'?'bg-emerald-600 text-white':'bg-red-600 text-white'}`}>{f.symbolMode==='include'?'Include':'Exclude'}</button><button onClick={fetchTop50} disabled={fetchingTop50} className="px-2 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-xs">{fetchingTop50?'...':'Top50'}</button></div></div>
           <div><label className="block text-sm font-medium text-slate-400 mb-1.5">Engine</label><div className="flex gap-1"><select value={f.engineVersion} onChange={e=>set('engineVersion',e.target.value)} className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm"><option value="all">All</option>{engineVersions.map(v=><option key={v} value={v}>v{v}</option>)}</select><button onClick={()=>set('engineMode',f.engineMode==='only'?'newest':f.engineMode==='newest'?'older':'only')} className={`px-3 py-2 rounded-lg text-xs font-bold ${f.engineMode!=='only'?'bg-indigo-600 text-white':'bg-slate-700 text-slate-400'}`}>{f.engineMode==='only'?'Only':f.engineMode==='newest'?'+New':'+Old'}</button></div></div>
           <div className="col-span-2"><label className="block text-sm font-medium text-slate-400 mb-1.5">Score {f.scoreMin.toFixed(1)} – {f.scoreMax.toFixed(1)}</label><input type="range" min={0} max={10} step={0.5} value={f.scoreMin} onChange={e=>set('scoreMin',Number(e.target.value))} className="w-full accent-indigo-500 h-1.5" /><input type="range" min={0} max={10} step={0.5} value={f.scoreMax} onChange={e=>set('scoreMax',Number(e.target.value))} className="w-full accent-indigo-500 h-1.5" /></div>
-          <div className="flex items-end"><Button variant="primary" className="w-full" onClick={()=>setApplied({...f})}>Apply</Button></div>
+          <div className="flex items-end"><Button variant="primary" className="w-full" onClick={()=>{setApplied({...f});setLoadedTabs(new Set());setAd(prev=>({funnel:prev.funnel,block_reasons:prev.block_reasons}));}}>Apply</Button></div>
         </div>
         <div className="grid grid-cols-12 gap-4 pt-3 border-t border-slate-700">
           <div className="col-span-1"><p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Timeframe</p><div className="flex gap-1">{['15m','1h','4h'].map(tf=><button key={tf} onClick={()=>toggleArr('timeframes',tf)} className={`px-2.5 py-1.5 rounded text-xs ${f.timeframes.includes(tf)?'bg-indigo-600 text-white':'bg-slate-700 text-slate-400'}`}>{tf}</button>)}</div></div>

@@ -507,3 +507,67 @@ async def binance_account(target: str = "live"):
             "message":   f"Connection failed: {str(e)}",
             "balance":   None,
         }
+    
+# ============================================================
+# BTC OVERVIEW
+# ============================================================
+
+@router.get("/api/btc-overview")
+async def btc_overview():
+    from app.services.btc_overview import get_btc_overview
+    return await asyncio.to_thread(get_btc_overview)
+
+
+# ============================================================
+# COINGECKO TOP MC PROXY
+# ============================================================
+
+@router.get("/api/coingecko/top-mc")
+async def coingecko_top_mc(limit: int = 50):
+    """
+    Proxy CoinGecko top market cap.
+    Trả về danh sách symbol dạng BTCUSDT, ETHUSDT...
+    """
+    import aiohttp
+
+    url = "https://api.coingecko.com/api/v3/coins/markets"
+    params = {
+        "vs_currency": "usd",
+        "order": "market_cap_desc",
+        "per_page": min(limit, 250),
+        "page": 1,
+        "x_cg_demo_api_key": "CG-r9KNtFCb794fJuozcK1AMr2W",
+    }
+
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, params=params) as resp:
+                data = await resp.json()
+
+        # Lọc stablecoin + map sang USDT pair
+        STABLE = {"usdt", "usdc", "busd", "dai", "tusd", "usdp", "fdusd"}
+        symbols = []
+        for coin in data:
+            sym = coin.get("symbol", "").lower()
+            if sym in STABLE:
+                continue
+            pair = sym.upper() + "USDT"
+            symbols.append({
+                "symbol": pair,
+                "name": coin.get("name", ""),
+                "market_cap_rank": coin.get("market_cap_rank"),
+            })
+
+        return {
+            "symbols": symbols,
+            "count": len(symbols),
+            "raw_symbols": [s["symbol"] for s in symbols],
+        }
+
+    except Exception as e:
+        return {
+            "symbols": [],
+            "count": 0,
+            "error": str(e),
+        }

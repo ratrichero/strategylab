@@ -10,12 +10,21 @@ async def get_async_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
         db_url = os.getenv("DATABASE_URL", "")
+
         ssl_ctx = ssl.create_default_context()
         ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode    = ssl.CERT_NONE
+        ssl_ctx.verify_mode = ssl.CERT_NONE
+
         _pool = await asyncpg.create_pool(
-            db_url, ssl=ssl_ctx,
-            min_size=2, max_size=10, command_timeout=60
+            db_url,
+            ssl=ssl_ctx,
+            min_size=2,
+            max_size=10,
+            command_timeout=60,
+            server_settings={
+                "timezone": "UTC",
+                "search_path": "public",
+            },
         )
         print("✅ Async DB pool ready")
     return _pool

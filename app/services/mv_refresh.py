@@ -20,7 +20,7 @@ def _do_refresh():
             try:
                 db.execute(text(f"REFRESH MATERIALIZED VIEW CONCURRENTLY {mv}"))
                 db.commit()
-                print(f"  Refreshed: {mv}")
+                #print(f"  Refreshed: {mv}")
             except Exception as e:
                 print(f"  [MV] Skip {mv}: {e}")
                 db.rollback()

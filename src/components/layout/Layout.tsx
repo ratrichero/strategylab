@@ -21,12 +21,13 @@ const nav = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { sidebarCollapsed, toggleSidebar } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, theme } = useAppStore();
   const [searchOpen, setSearchOpen] = useState(false);
   const pageTitle = [...nav, { href: "/settings", name: "Settings" }].find(n => n.href === location.pathname || (n.href !== "/" && location.pathname.startsWith(n.href)))?.name || "Dashboard";
+  const themeClass = theme === "trading" ? "theme-trading" : theme === "light" ? "theme-light-gold" : "";
 
   return (
-    <div className="min-h-screen bg-slate-900 flex">
+    <div className={cn("min-h-screen bg-slate-900 flex", themeClass)}>
       <aside className={cn("fixed left-0 top-0 h-screen z-50 flex flex-col transition-all duration-300 bg-slate-800/50 backdrop-blur-xl border-r border-slate-700/50", sidebarCollapsed ? "w-16" : "w-64")}>
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-700/50 flex-shrink-0">
           {!sidebarCollapsed && (<div className="flex items-center gap-2"><div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center"><FlaskConical className="w-5 h-5 text-white" /></div><span className="font-bold text-white">Quant Lab</span></div>)}

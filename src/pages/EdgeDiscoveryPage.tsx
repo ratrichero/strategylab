@@ -36,19 +36,11 @@ const EDGE_TAB_Q = {
   indicator: ['edge_derivative_bias'],
 };
 
-function toAnalysisDate(dateStr, isEnd = false) {
-  // Backend _parse_vn accepts raw date string like "2026-06-13" or ISO without Z
-  // Simplest: send VN date as-is, let backend handle +07:00 conversion
-  return dateStr;
-}
-
 function buildParams(applied) {
   const fp = {};
-  // Send dates as plain VN date strings — backend _parse_vn handles conversion
   if (applied.startDate) fp.start_date = applied.startDate;
   if (applied.endDate) fp.end_date = applied.endDate;
   if (applied.symbols?.trim()) { fp.symbols = applied.symbols; fp.symbol_mode = applied.symbolMode; }
-  // Send arrays directly — backend _build_sig_filter reads these
   if (applied.timeframes?.length) fp.timeframes = applied.timeframes;
   if (applied.strategies?.length) fp.strategies = applied.strategies;
   if (applied.patterns?.length) fp.patterns = applied.patterns;
@@ -74,7 +66,6 @@ export function EdgeDiscovery() {
   const setFV = (k,v) => setF(prev=>({...prev,[k]:v}));
   const toggleArr = (k,v) => setF(prev=>{const arr=prev[k]; return {...prev,[k]:arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]};});
 
-  // Use ref so refill functions always read latest applied
   const appliedRef = useRef(applied);
   appliedRef.current = applied;
 
@@ -84,7 +75,6 @@ export function EdgeDiscovery() {
   const [atrLimit,setAtrLimit]=useState('0.4');
   const [volLimit,setVolLimit]=useState('2');
 
-  // Track which (tab + filterVersion) combos have loaded
   const [filterVersion, setFilterVersion] = useState(0);
   const loadedRef = useRef({});
 
@@ -94,7 +84,6 @@ export function EdgeDiscovery() {
     catch(e) { console.error(e); } finally { setFetchingTop50(false); }
   };
 
-  // Load filter options once
   useEffect(() => {
     (async () => {
       try {
@@ -110,7 +99,6 @@ export function EdgeDiscovery() {
     })();
   }, []);
 
-  // Main data loader — runs when tab or applied filters change
   useEffect(() => {
     const cacheKey = `${tab}_v${filterVersion}`;
     if (loadedRef.current[cacheKey]) { setLoading(false); return; }
@@ -146,17 +134,15 @@ export function EdgeDiscovery() {
 
   const handleApply = () => {
     const next = { ...f };
-    loadedRef.current = {}; // clear all cache
+    loadedRef.current = {};
     setAd({});
     setFilterVersion(v => v + 1);
-    setApplied(next); // this triggers the useEffect above
+    setApplied(next);
   };
 
-  // Refill functions — always read latest applied from ref
   const refillBaseline = async () => {
     const fp = buildParams(appliedRef.current);
     const params = { ...fp, mtf_min_score: parseFloat(mtfMin) };
-    console.log('[Refill Baseline]', JSON.stringify(params));
     setAd(prev => ({ ...prev, edge_baseline_compare: [] }));
     const d = await fetchQ('edge_baseline_compare', params);
     setAd(prev => ({ ...prev, edge_baseline_compare: d }));
@@ -165,7 +151,6 @@ export function EdgeDiscovery() {
   const refillSweet = async () => {
     const fp = buildParams(appliedRef.current);
     const params = { ...fp, atr_threshold: parseFloat(atrThreshold), mtf_threshold: parseFloat(mtfThreshold) };
-    console.log('[Refill Sweet]', JSON.stringify(params));
     setAd(prev => ({ ...prev, edge_sweet_spot: [] }));
     const d = await fetchQ('edge_sweet_spot', params);
     setAd(prev => ({ ...prev, edge_sweet_spot: d }));
@@ -174,7 +159,6 @@ export function EdgeDiscovery() {
   const refillIndicator = async () => {
     const fp = buildParams(appliedRef.current);
     const params = { ...fp, atr_limit: parseFloat(atrLimit), vol_ratio_limit: parseFloat(volLimit) };
-    console.log('[Refill Indicator]', JSON.stringify(params));
     setAd(prev => ({ ...prev, edge_indicator_discovery: [] }));
     const d = await fetchQ('edge_indicator_discovery', params);
     setAd(prev => ({ ...prev, edge_indicator_discovery: d }));
@@ -189,12 +173,9 @@ export function EdgeDiscovery() {
     return { totalTrades, winrate: avgWR, avgR, expectancy: avgExp };
   })() : null;
 
-  // Don't block render — show loading indicator inline instead
-
   return (
     <div className="space-y-6">
       <div><h2 className="text-2xl font-bold text-white flex items-center gap-2"><Search className="w-6 h-6 text-indigo-400" /> Edge Discovery {loading && <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />}</h2><p className="text-slate-400 mt-1">Find alpha in your trading system</p></div>
-
 
       {kpi && <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Trades</p><p className="text-lg font-bold text-white">{kpi.totalTrades}</p></Card>
@@ -203,7 +184,6 @@ export function EdgeDiscovery() {
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">Avg RR</p><p className={`text-lg font-bold ${kpi.avgR>=0?'text-emerald-400':'text-red-400'}`}>{kpi.avgR.toFixed(3)}</p></Card>
       </div>}
 
-      {/* FILTERS */}
       <Card>
         <div className="flex items-center gap-2 mb-4"><Filter className="w-4 h-4 text-slate-400" /><span className="text-sm font-semibold text-white">Filters</span><span className="text-xs text-slate-500 ml-2">Leave dates empty = all time.</span></div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-4">
