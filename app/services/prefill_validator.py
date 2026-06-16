@@ -35,6 +35,40 @@ class PreFillValidator:
         self.cfg = {**DEFAULT_CONFIG, **config}
         self._data_cache: Dict = {}
 
+    def _check_whitelist(self, pending):
+        """
+        Whitelist check:
+        - Nếu whitelist rỗng hoặc không có → pass tất cả
+        - Nếu có danh sách → chỉ symbol trong list mới pass
+        """
+        info = {}
+        wl = self.cfg.get("whitelist", [])
+
+        # Không có whitelist → pass
+        if not wl:
+            return True, "no_whitelist", info
+
+        # Normalize: "BTC" → "BTCUSDT"
+        normalized = set()
+        for s in wl:
+            s = str(s).strip().upper()
+            if not s:
+                continue
+            if not s.endswith("USDT"):
+                s = s + "USDT"
+            normalized.add(s)
+
+        if not normalized:
+            return True, "empty_whitelist", info
+
+        info["whitelist_size"] = len(normalized)
+        info["symbol"] = pending.symbol
+
+        if pending.symbol in normalized:
+            return True, "whitelisted", info
+
+        return False, f"not_in_whitelist", info
+
     def validate(self, pending, current_price: float) -> ValidationResult:
         if not self.cfg.get("enabled", True):
             return ValidationResult(passed=True, reason="disabled")
@@ -157,36 +191,3 @@ class PreFillValidator:
 def validate_before_fill(pending, current_price: float) -> ValidationResult:
     return PreFillValidator().validate(pending, current_price)
 
-def _check_whitelist(self, pending):
-    """
-    Whitelist check:
-    - Nếu whitelist rỗng hoặc không có → pass tất cả
-    - Nếu có danh sách → chỉ symbol trong list mới pass
-    """
-    info = {}
-    wl = self.cfg.get("whitelist", [])
-
-    # Không có whitelist → pass
-    if not wl:
-        return True, "no_whitelist", info
-
-    # Normalize: "BTC" → "BTCUSDT"
-    normalized = set()
-    for s in wl:
-        s = str(s).strip().upper()
-        if not s:
-            continue
-        if not s.endswith("USDT"):
-            s = s + "USDT"
-        normalized.add(s)
-
-    if not normalized:
-        return True, "empty_whitelist", info
-
-    info["whitelist_size"] = len(normalized)
-    info["symbol"] = pending.symbol
-
-    if pending.symbol in normalized:
-        return True, "whitelisted", info
-
-    return False, f"not_in_whitelist", info
