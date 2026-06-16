@@ -104,10 +104,9 @@ def _calc_order_size(
     max_lev = int(pos_cfg.get("default_leverage", 3))
 
     if mode == "fixed_usdt":
-        # ── FIXED SIZE ────────────────────────────────
-        fixed = float(pos_cfg.get("fixed_usdt_per_trade", 200))
-        notional = min(fixed, max_pos)
+        fixed_margin = float(pos_cfg.get("fixed_usdt_per_trade", 200))
         leverage = max_lev
+        notional = min(fixed_margin * leverage, max_pos)
 
     else:
         # ── RISK BASED ────────────────────────────────
@@ -123,6 +122,28 @@ def _calc_order_size(
 
     return notional, leverage
 
+def _get_min_notional(symbol_info: Optional[Dict]) -> float:
+    """
+    Lấy min notional từ exchangeInfo.
+    Fallback = 5 USDT nếu không đọc được.
+    """
+    if not symbol_info:
+        return 5.0
+
+    for f in symbol_info.get("filters", []):
+        ft = f.get("filterType")
+        if ft == "MIN_NOTIONAL":
+            try:
+                return float(f.get("notional") or f.get("minNotional") or 5.0)
+            except Exception:
+                return 5.0
+        if ft == "NOTIONAL":
+            try:
+                return float(f.get("minNotional") or 5.0)
+            except Exception:
+                return 5.0
+
+    return 5.0
 
 # ============================================================
 # Binance Executor
@@ -690,6 +711,22 @@ def place_limit_entry_order(pending) -> OrderResult:
             float(pending.trigger_price),
             symbol_info
         )
+
+        min_notional = _get_min_notional(symbol_info)
+        actual_notional = float(price) * float(quantity)
+
+        print(
+            f"[LIMIT DEBUG] {pending.symbol} "
+            f"price={price:.8f} qty={quantity:.8f} "
+            f"notional={actual_notional:.4f} min={min_notional:.4f}"
+        )
+
+        if actual_notional < min_notional:
+            return OrderResult(
+                success=False,
+                error=f"Actual notional too small: {actual_notional:.4f} < min {min_notional:.4f}",
+                mode=mode.get_mode().value
+            )
 
         order = executor.limit_order(
             pending.symbol, side, quantity, price
