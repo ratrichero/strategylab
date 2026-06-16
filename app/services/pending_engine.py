@@ -580,13 +580,13 @@ def _process_single_live(db, p, price_map, now):
 
     try:
         otf_dbg = cfg.get("OPEN_TRADE_FILTER", {})
-        print(
+        """print(
             f"[OTF DEBUG][PRE-PLACE] {p.symbol} {p.direction} "
             f"| enabled={otf_dbg.get('enabled')} "
             f"| directions={otf_dbg.get('identity', {}).get('directions')} "
             f"| strategies={otf_dbg.get('identity', {}).get('strategies')} "
             f"| timeframes={otf_dbg.get('identity', {}).get('timeframes')}"
-        )
+        )"""
     except Exception as e:
         print(f"[OTF DEBUG ERR] {e}")
 
