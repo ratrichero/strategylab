@@ -301,6 +301,7 @@ class PendingSignal(Base):
 
     sl_order_id         = Column(String, nullable=True)
     tp_order_id         = Column(String, nullable=True)
+    reprice_applied     = Column(Boolean, nullable=False, default=False)
 
     
     # ── Refs ─────────────────────────────────────────────

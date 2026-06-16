@@ -956,6 +956,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     penalty=components.get("penalty_norm"),
 
                     ml_prob=prob,
+                    reprice_applied=False,
 
                     # ===== SNAPSHOT =====
                     indicators_snapshot=indicators_snapshot,

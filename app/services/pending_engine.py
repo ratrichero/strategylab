@@ -612,26 +612,37 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
             return
 
         # Reprice theo config
-        limit_cfg = cfg.get("LIMIT_ORDER_CONFIG", {})
-        if not limit_cfg.get("enabled", True):
-            reprice_pct = 0.0
-        else:
-            reprice_pct = (
-                limit_cfg.get("entry_reprice_pct", {}).get(p.timeframe, 0.0) or 0.0
+        # Reprice chỉ được áp dụng 1 lần duy nhất
+        if not getattr(p, "reprice_applied", False):
+            limit_cfg = cfg.get("LIMIT_ORDER_CONFIG", {})
+            if not limit_cfg.get("enabled", True):
+                reprice_pct = 0.0
+            else:
+                reprice_pct = (
+                    limit_cfg.get("entry_reprice_pct", {}).get(p.timeframe, 0.0) or 0.0
+                )
+
+            trig_new, sl_new, tp_new = _calc_repriced_triplet(p, reprice_pct)
+            trig_new, sl_new, tp_new = _round_triplet_for_exchange(
+                p.symbol, trig_new, sl_new, tp_new
             )
 
-        trig_new, sl_new, tp_new = _calc_repriced_triplet(p, reprice_pct)
-        trig_new, sl_new, tp_new = _round_triplet_for_exchange(
-            p.symbol, trig_new, sl_new, tp_new
-        )
+            # Overwrite bộ giá thật sẽ dùng trên exchange
+            p.trigger_price = trig_new
+            p.stop_loss = sl_new
+            p.take_profit = tp_new
 
-        # Overwrite bộ giá thật sẽ dùng trên exchange
-        p.trigger_price = trig_new
-        p.stop_loss = sl_new
-        p.take_profit = tp_new
-        db.commit()
+            # ✅ QUAN TRỌNG: đánh dấu đã reprice
+            p.reprice_applied = True
+            db.commit()
 
-        # Place limit entry
+            print(
+                f"🟡 REPRICE APPLIED ONCE: {p.symbol} {p.direction} "
+                f"| trigger={p.trigger_price:.10f} "
+                f"| sl={p.stop_loss:.10f} tp={p.take_profit:.10f}"
+            )
+
+        # Place limit entry (retry được nhiều lần, nhưng không reprice lại)
         exec_result = place_limit_entry_order(p)
         if not exec_result.success:
             # giữ WAIT để retry ở cycle sau
