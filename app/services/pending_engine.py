@@ -3,21 +3,31 @@ Pending Engine — Dual Logic (Paper vs Live/Testnet)
 
 RULES CHỐT:
 1. PAPER:
-   - Giữ gần như nguyên flow cũ:
-     touch trigger -> prefill -> OTF/max_open -> fill local -> create Signal
+   - local touch fill
+   - prefill + OTF tại fill time
+   - fill local -> Signal
 
 2. LIVE / TESTNET:
-   - Scan chỉ tạo pending local, KHÔNG place order ở scan-time
-   - WAIT + exchange_order_id IS NULL:
-       OTF + Prefill + Reprice + Round + Place limit order
-   - WAIT + exchange_order_id IS NOT NULL:
-       Sync ONLY (exchange_status / executed_qty / avg_fill_price / signal create-update)
-   - Không lặp lại OTF / Prefill sau khi order đã place
-   - Partial fill:
-       tạo Signal ngay lần đầu có executed_qty > 0
-       update Signal nếu executed_qty tăng thêm
-   - Pending local vẫn WAIT khi entry order còn active
-   - Pending local chỉ chuyển FILLED khi entry order terminal và đã từng có fill
+   Phase A — PRE-PLACE:
+     WAIT + exchange_order_id IS NULL
+     -> OTF pass
+     -> Prefill pass
+     -> Reprice ONCE
+     -> Round prices
+     -> Place LIMIT entry
+     -> Place algo SL/TP (closePosition=true, MARK_PRICE)
+     -> If protection fail => rollback immediately
+
+   Phase B — POST-PLACE:
+     WAIT + exchange_order_id IS NOT NULL
+     -> SYNC ONLY
+     -> no repeated OTF / no repeated Prefill
+     -> sync exchange_status / executed_qty / avg_fill_price
+     -> create Signal on first fill
+     -> update Signal if executed_qty increases
+     -> pending stays WAIT while entry lifecycle still active
+     -> terminal + fill > 0 => FILLED
+     -> terminal + fill = 0 => CANCELLED
 """
 
 from datetime import timedelta
@@ -32,10 +42,12 @@ from app.core.trading_mode import get_current_mode, TradingMode
 
 from app.services.execution_service import (
     open_position,                      # paper path
-    place_limit_entry_order,           # live/testnet pre-place -> place order
-    place_close_position_exit_orders,  # attempt exits with closePosition=true
-    get_entry_order_status,            # exchange sync
-    cancel_order_by_id,                # explicit cancel by order id
+    place_limit_entry_order,           # live/testnet
+    place_close_position_exit_orders,  # algo SL/TP
+    get_entry_order_status,            # sync LIMIT entry
+    cancel_order_by_id,                # smart cancel (normal + algo)
+    cancel_entry_and_exits,            # composite cleanup
+    get_open_algo_orders,              # algo orders query
     get_executor,
     OrderResult,
 )
@@ -43,7 +55,6 @@ from app.services.execution_service import (
 from app.services.prefill_validator import validate_before_fill
 from app.services.open_trade_filter import get_open_trade_filter
 from app.services.config_service import get_runtime_config
-
 from app.services.btc_context_cache import (
     get_or_build_hourly_snapshot,
     build_event_context,
@@ -55,7 +66,6 @@ from app.services.btc_context_cache import (
 # ============================================================
 
 def _update_pending_heartbeat(db):
-    """Ghi heartbeat của pending worker vào app_config."""
     try:
         from sqlalchemy import text
         now = utc_now()
@@ -80,8 +90,8 @@ def _is_terminal_exchange_status(status: Optional[str]) -> bool:
 
 def _calc_repriced_triplet(p: PendingSignal, reprice_pct: float):
     """
-    Từ trigger/sl/tp hiện tại trên pending -> tính lại bộ trigger/sl/tp mới.
-    Overwrite bộ giá theo rule mới trước khi place limit order thật.
+    Reprice từ bộ giá hiện tại trên pending.
+    Chỉ được gọi 1 lần duy nhất (guard bằng reprice_applied).
     """
     trigger_old = float(p.trigger_price)
     sl_old = float(p.stop_loss)
@@ -109,10 +119,6 @@ def _calc_repriced_triplet(p: PendingSignal, reprice_pct: float):
 
 
 def _round_triplet_for_exchange(symbol: str, trigger_price: float, stop_loss: float, take_profit: float):
-    """
-    Round toàn bộ bộ giá để exchange chấp nhận.
-    Nếu executor chưa sẵn sàng thì giữ nguyên.
-    """
     executor = get_executor()
     if not executor or not executor.ready:
         return trigger_price, stop_loss, take_profit
@@ -122,17 +128,17 @@ def _round_triplet_for_exchange(symbol: str, trigger_price: float, stop_loss: fl
         return trigger_price, stop_loss, take_profit
 
     trigger_price = executor.round_price(symbol, trigger_price, symbol_info)
-    stop_loss = executor.round_price(symbol, stop_loss, symbol_info)
-    take_profit = executor.round_price(symbol, take_profit, symbol_info)
+    stop_loss     = executor.round_price(symbol, stop_loss, symbol_info)
+    take_profit   = executor.round_price(symbol, take_profit, symbol_info)
 
     return trigger_price, stop_loss, take_profit
 
 
 def _check_touch(p: PendingSignal, current: float) -> tuple[bool, float, str]:
     """
-    PAPER mode:
-    - Ưu tiên check current trực tiếp
-    - fallback 1m candle touch để tránh miss intrabar
+    PAPER only:
+    - current snapshot
+    - fallback 1m candle touch
     """
     trigger = float(p.trigger_price)
 
@@ -144,7 +150,6 @@ def _check_touch(p: PendingSignal, current: float) -> tuple[bool, float, str]:
 
     try:
         from app.services.binance_service import get_klines_closed
-
         df1m = get_klines_closed(p.symbol, interval="1m", limit=3)
         if df1m is not None and not df1m.empty:
             for i in [-1, -2]:
@@ -169,13 +174,60 @@ def _mark_rejected(db, p: PendingSignal, reason: str, details: Optional[dict] = 
 
 
 def _cancel_no_fill_pending(db, p: PendingSignal, reason: str):
-    """
-    Dùng cho case pending không có fill nào và kết thúc lifecycle.
-    """
     p.status = "CANCELLED"
     p.rejection_reason = reason
     db.commit()
     print(f"🗑️ PENDING CANCELLED: {p.symbol} | {reason}")
+
+
+def _rollback_on_protection_fail(db, p: PendingSignal, reason: str):
+    """
+    Protection fail policy:
+    - Sync entry state
+    - If no fill yet: cancel entry + exits, mark REJECTED
+    - If already filled: close position immediately, cleanup, mark FILLED
+    """
+    print(f"⚠️ PROTECTION FAIL ROLLBACK: {p.symbol} | {reason}")
+
+    info = get_entry_order_status(p.symbol, p.exchange_order_id)
+    p.exchange_status = info.get("status", p.exchange_status)
+    p.executed_qty = float(info.get("executed_qty") or p.executed_qty or 0)
+    if info.get("avg_price"):
+        p.avg_fill_price = float(info["avg_price"])
+    p.last_exchange_sync_at = utc_now()
+    db.commit()
+
+    executed = float(p.executed_qty or 0)
+
+    if executed <= 0:
+        cancel_entry_and_exits(p)
+        p.status = "REJECTED"
+        p.rejection_reason = f"PROTECTION_SETUP_FAILED::{reason}"
+        db.commit()
+        return
+
+    # Đã có fill -> đóng ngay position để tránh naked risk
+    executor = get_executor()
+    if executor and executor.ready:
+        try:
+            executor.cancel_all_orders(p.symbol)
+        except Exception:
+            pass
+
+        try:
+            from app.services.execution_service import cancel_all_algo_orders
+            cancel_all_algo_orders(p.symbol)
+        except Exception:
+            pass
+
+        try:
+            executor.close_position(p.symbol, p.direction)
+        except Exception as e:
+            print(f"[ROLLBACK CLOSE] {p.symbol}: {e}")
+
+    p.status = "FILLED"
+    p.rejection_reason = f"PROTECTION_SETUP_FAILED::{reason}"
+    db.commit()
 
 
 # ============================================================
@@ -187,7 +239,6 @@ def _finalize_paper_fill(db, p: PendingSignal, now, actual_entry, stop_loss, tak
     PAPER:
     - WAIT -> FILLED ngay khi touch fill
     - create Signal / SignalFeature / link ScanDebug
-    - notify telegram
     """
     updated = db.query(PendingSignal).filter(
         and_(PendingSignal.id == p.id, PendingSignal.status == "WAIT")
@@ -224,6 +275,7 @@ def _finalize_paper_fill(db, p: PendingSignal, now, actual_entry, stop_loss, tak
         atr_ratio=snap.get("atr_ratio"),
         regime=p.regime,
         candle_time=ensure_utc(p.candle_time),
+        evaluated_at=now,
         engine_version=engine_ver,
         market_context={
             "entry": entry_ctx,
@@ -269,7 +321,6 @@ def _finalize_paper_fill(db, p: PendingSignal, now, actual_entry, stop_loss, tak
         if debug:
             debug.signal_id = signal.id
 
-    # paper path nếu model đã có signal_id thì gắn luôn
     if hasattr(p, "signal_id"):
         p.signal_id = signal.id
 
@@ -285,13 +336,13 @@ def _finalize_paper_fill(db, p: PendingSignal, now, actual_entry, stop_loss, tak
 
 
 # ============================================================
-# LIVE / TESTNET SIGNAL HELPERS
+# LIVE SIGNAL HELPERS
 # ============================================================
 
 def _create_live_signal_from_pending(db, p: PendingSignal, now, price_map: dict):
     """
     Create Signal lần đầu khi entry order có executed_qty > 0.
-    Không đổi pending.status ở đây nếu entry order vẫn còn active.
+    Pending local vẫn WAIT nếu entry lifecycle chưa terminal.
     """
     snap = p.indicators_snapshot or {}
     mode = get_current_mode()
@@ -331,6 +382,7 @@ def _create_live_signal_from_pending(db, p: PendingSignal, now, price_map: dict)
         atr_ratio=snap.get("atr_ratio"),
         regime=p.regime,
         candle_time=ensure_utc(p.candle_time),
+        evaluated_at=now,
         engine_version=engine_ver,
         market_context={
             "entry": entry_ctx,
@@ -383,7 +435,6 @@ def _create_live_signal_from_pending(db, p: PendingSignal, now, price_map: dict)
         f"✅ LIVE SIGNAL CREATED: {p.symbol} {p.direction} "
         f"| qty={p.executed_qty} avg={p.avg_fill_price}"
     )
-
     return signal
 
 
@@ -391,7 +442,6 @@ def _update_live_signal_from_pending(db, p: PendingSignal):
     """
     Nếu entry partial tăng thêm trong lúc signal còn OPEN:
     - update entry average / quantity trong market_context
-    - accounted_qty = executed_qty
     """
     if not p.signal_id:
         return
@@ -401,6 +451,9 @@ def _update_live_signal_from_pending(db, p: PendingSignal):
         return
 
     if signal.status != "OPEN":
+        # Theo design hiện tại 1 pending = 1 signal,
+        # nếu signal đã đóng thì pending đáng ra phải được finalize rồi.
+        print(f"⚠️ Signal {signal.id} not OPEN while pending {p.id} still syncing")
         return
 
     if p.avg_fill_price:
@@ -431,17 +484,7 @@ def _update_live_signal_from_pending(db, p: PendingSignal):
 # ============================================================
 
 def _process_single_paper(db, p: PendingSignal, price_map: dict, now):
-    """
-    Giữ tinh thần flow cũ:
-    - expire
-    - touch fill
-    - prefill
-    - max_open
-    - OTF re-check
-    - open_position(PAPER)
-    - create Signal
-    """
-    if p.expire_at < now:
+    if ensure_utc(p.expire_at) < now:
         p.status = "CANCELLED"
         p.rejection_reason = "EXPIRED"
         db.commit()
@@ -452,23 +495,21 @@ def _process_single_paper(db, p: PendingSignal, price_map: dict, now):
         return
     current = float(current)
 
-    # debug log khi gần trigger
-    """try:
+    try:
         dist_pct = (current - float(p.trigger_price)) / float(p.trigger_price) * 100
-        if abs(dist_pct) < 2.0:
+        """if abs(dist_pct) < 2.0:
             print(
                 f"[PENDING CHECK][PAPER] id={p.id} {p.symbol} {p.direction} "
                 f"current={current:.8f} trigger={float(p.trigger_price):.8f} "
                 f"dist={dist_pct:+.4f}%"
-            )
+            )"""
     except Exception:
-        pass"""
+        pass
 
     touched, fill_price, touch_source = _check_touch(p, current)
     if not touched:
         return
 
-    # Pre-fill validation
     result = validate_before_fill(p, current)
     if not result.passed:
         p.status = "REJECTED"
@@ -479,7 +520,6 @@ def _process_single_paper(db, p: PendingSignal, price_map: dict, now):
         print(f"🚫 REJECTED [PAPER]: {p.symbol} {p.direction} | {result.reason}")
         return
 
-    # MAX OPEN TRADES
     cfg = get_runtime_config()
     max_open = cfg.get("MAX_OPEN_TRADES", 10)
     current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
@@ -490,7 +530,6 @@ def _process_single_paper(db, p: PendingSignal, price_map: dict, now):
         )
         return
 
-    # OTF re-check at fill time (paper only)
     otf = get_open_trade_filter(cfg)
     atr_ratio = None
     if p.atr_value and p.trigger_price and float(p.trigger_price) > 0:
@@ -520,7 +559,6 @@ def _process_single_paper(db, p: PendingSignal, price_map: dict, now):
         print(f"⏸️ FILL OTF BLOCK [PAPER]: {p.symbol} {p.direction} | {otf_reason}")
         return
 
-    # Execute paper fill at trigger price
     exec_result = open_position(p, price_map, fill_price=fill_price)
     if not exec_result.success:
         p.status = "REJECTED"
@@ -546,31 +584,19 @@ def _process_single_paper(db, p: PendingSignal, price_map: dict, now):
 # ============================================================
 
 def _process_single_live(db, p: PendingSignal, price_map: dict, now):
-    """
-    LIVE / TESTNET:
-
-    PHASE 1 — PRE-PLACE
-      WAIT + exchange_order_id IS NULL
-      => OTF + PREFILL + REPRICE + ROUND + PLACE
-
-    PHASE 2 — POST-PLACE
-      WAIT + exchange_order_id IS NOT NULL
-      => SYNC ONLY
-    """
     cfg = get_runtime_config()
 
     # --------------------------------------------------------
     # PRE-PLACE
     # --------------------------------------------------------
     if not p.exchange_order_id:
-        if p.expire_at < now:
+        if ensure_utc(p.expire_at) < now:
             p.status = "CANCELLED"
             p.rejection_reason = "EXPIRED_BEFORE_PLACE"
             db.commit()
             return
 
-        # OTF pre-place:
-        # fail thì KHÔNG reject luôn, giữ WAIT để retry cycle sau
+        # OTF pre-place: fail => keep WAIT
         otf = get_open_trade_filter(cfg)
         atr_ratio = None
         if p.atr_value and p.trigger_price and float(p.trigger_price) > 0:
@@ -603,16 +629,13 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
         if current is None:
             return
 
-        # Prefill pre-place:
-        # fail => REJECTED cuối cùng
         result = validate_before_fill(p, float(current))
         if not result.passed:
             _mark_rejected(db, p, result.reason, result.details)
             print(f"🚫 LIVE PREFILL REJECTED: {p.symbol} {p.direction} | {result.reason}")
             return
 
-        # Reprice theo config
-        # Reprice chỉ được áp dụng 1 lần duy nhất
+        # Reprice chỉ 1 lần duy nhất
         if not getattr(p, "reprice_applied", False):
             limit_cfg = cfg.get("LIMIT_ORDER_CONFIG", {})
             if not limit_cfg.get("enabled", True):
@@ -627,25 +650,20 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
                 p.symbol, trig_new, sl_new, tp_new
             )
 
-            # Overwrite bộ giá thật sẽ dùng trên exchange
             p.trigger_price = trig_new
             p.stop_loss = sl_new
             p.take_profit = tp_new
-
-            # ✅ QUAN TRỌNG: đánh dấu đã reprice
             p.reprice_applied = True
             db.commit()
 
             print(
                 f"🟡 REPRICE APPLIED ONCE: {p.symbol} {p.direction} "
-                f"| trigger={p.trigger_price:.10f} "
-                f"| sl={p.stop_loss:.10f} tp={p.take_profit:.10f}"
+                f"| trigger={p.trigger_price:.10f} | sl={p.stop_loss:.10f} tp={p.take_profit:.10f}"
             )
 
-        # Place limit entry (retry được nhiều lần, nhưng không reprice lại)
+        # Place limit entry
         exec_result = place_limit_entry_order(p)
         if not exec_result.success:
-            # giữ WAIT để retry ở cycle sau
             print(f"⚠️ LIMIT PLACE FAILED: {p.symbol} | {exec_result.error}")
             return
 
@@ -654,9 +672,9 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
         p.placed_at = now
         p.order_quantity = exec_result.actual_quantity
         p.last_exchange_sync_at = now
+        db.commit()
 
-        # Đặt thử exits ngay để chống flash crash.
-        # Nếu exchange reject vì chưa có position thì để None, sẽ retry ở first fill.
+        # Place algo exits ngay sau entry
         exit_ids = place_close_position_exit_orders(
             p.symbol,
             p.direction,
@@ -665,12 +683,20 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
         )
         p.sl_order_id = exit_ids.get("sl_order_id")
         p.tp_order_id = exit_ids.get("tp_order_id")
-
         db.commit()
+
+        # Protection fail => rollback ngay
+        if not p.sl_order_id or not p.tp_order_id:
+            _rollback_on_protection_fail(
+                db, p,
+                "algo_exit_place_failed_after_entry_place"
+            )
+            return
 
         print(
             f"🟡 LIMIT ORDER PLACED: {p.symbol} {p.direction} "
-            f"@ {float(p.trigger_price):.6f} | order_id={p.exchange_order_id}"
+            f"@ {float(p.trigger_price):.6f} | order_id={p.exchange_order_id} "
+            f"| sl_algo={p.sl_order_id} tp_algo={p.tp_order_id}"
         )
         return
 
@@ -691,9 +717,9 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
     p.last_exchange_sync_at = now
     db.commit()
 
-    # Nếu entry order active nhưng local expired -> cancel remainder
-    if p.expire_at < now and not _is_terminal_exchange_status(p.exchange_status):
-        cancel_order_by_id(p.symbol, p.exchange_order_id)
+    # Local expiry while entry still active
+    if ensure_utc(p.expire_at) < now and not _is_terminal_exchange_status(p.exchange_status):
+        cancel_entry_and_exits(p)
 
         order_info = get_entry_order_status(p.symbol, p.exchange_order_id)
         p.exchange_status = order_info.get("status", p.exchange_status)
@@ -710,8 +736,7 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
         else:
             p.status = "CANCELLED"
             p.rejection_reason = "EXPIRED_NO_FILL"
-            cancel_order_by_id(p.symbol, p.sl_order_id)
-            cancel_order_by_id(p.symbol, p.tp_order_id)
+            cancel_entry_and_exits(p)
 
         db.commit()
 
@@ -721,34 +746,37 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
         )
         return
 
-    # Nếu đã có fill nhưng exits chưa đặt được ở lúc pre-place -> retry
+    # Nếu đã có fill mà chưa có algo exit IDs thì:
+    # 1) check exchange xem algo orders đã tồn tại chưa
+    # 2) nếu chưa có thì đặt mới
+    # 3) nếu đặt thất bại => rollback protection
     if (p.executed_qty or 0) > 0 and (not p.sl_order_id or not p.tp_order_id):
         should_place = True
 
         try:
-            executor = get_executor()
-            if executor and executor.ready:
-                existing = executor.get_open_orders(p.symbol)
-                has_sl = any(
-                    o.get("type") == "STOP_MARKET"
-                    for o in existing
-                )
-                has_tp = any(
-                    o.get("type") == "TAKE_PROFIT_MARKET"
-                    for o in existing
-                )
+            existing_algo = get_open_algo_orders(p.symbol)
 
-                if has_sl and has_tp:
-                    should_place = False
-                    # Sync order IDs từ exchange
-                    for o in existing:
-                        if o.get("type") == "STOP_MARKET" and not p.sl_order_id:
-                            p.sl_order_id = str(o.get("orderId", ""))
-                        if o.get("type") == "TAKE_PROFIT_MARKET" and not p.tp_order_id:
-                            p.tp_order_id = str(o.get("orderId", ""))
-                    db.commit()
+            has_sl = any(
+                o.get("orderType") == "STOP_MARKET"
+                for o in existing_algo
+            )
+            has_tp = any(
+                o.get("orderType") == "TAKE_PROFIT_MARKET"
+                for o in existing_algo
+            )
+
+            if has_sl and has_tp:
+                should_place = False
+
+                for o in existing_algo:
+                    if o.get("orderType") == "STOP_MARKET" and not p.sl_order_id:
+                        p.sl_order_id = str(o.get("algoId", ""))
+                    if o.get("orderType") == "TAKE_PROFIT_MARKET" and not p.tp_order_id:
+                        p.tp_order_id = str(o.get("algoId", ""))
+                db.commit()
+
         except Exception as e:
-            print(f"[PENDING] Check existing exits error {p.symbol}: {e}")
+            print(f"[PENDING] Check existing algo exits error {p.symbol}: {e}")
 
         if should_place:
             exit_ids = place_close_position_exit_orders(
@@ -757,16 +785,21 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
                 float(p.stop_loss),
                 float(p.take_profit)
             )
-        if not p.sl_order_id:
             p.sl_order_id = exit_ids.get("sl_order_id")
-        if not p.tp_order_id:
             p.tp_order_id = exit_ids.get("tp_order_id")
-        db.commit()
+            db.commit()
 
-    # Xử lý delta fill
-    executed_qty = float(p.executed_qty or 0)
+            if not p.sl_order_id or not p.tp_order_id:
+                _rollback_on_protection_fail(
+                    db, p,
+                    "missing_algo_exit_after_fill"
+                )
+                return
+
+    # Delta fill handling
+    executed_qty  = float(p.executed_qty or 0)
     accounted_qty = float(p.accounted_qty or 0)
-    delta_qty = executed_qty - accounted_qty
+    delta_qty     = executed_qty - accounted_qty
 
     if delta_qty > 0:
         if not p.signal_id:
@@ -774,9 +807,7 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
         else:
             _update_live_signal_from_pending(db, p)
 
-    # Nếu exchange order terminal:
-    # - có fill => pending local = FILLED
-    # - không fill => CANCELLED/REJECTED
+    # Terminal entry lifecycle
     if _is_terminal_exchange_status(p.exchange_status):
         if (p.executed_qty or 0) > 0:
             p.status = "FILLED"
@@ -788,8 +819,7 @@ def _process_single_live(db, p: PendingSignal, price_map: dict, now):
                 p.status = "CANCELLED"
                 p.rejection_reason = f"BINANCE::{p.exchange_status}"
 
-            cancel_order_by_id(p.symbol, p.sl_order_id)
-            cancel_order_by_id(p.symbol, p.tp_order_id)
+            cancel_entry_and_exits(p)
 
         db.commit()
         return
@@ -813,12 +843,10 @@ def process_pending_signals(price_map: Optional[Dict[str, float]] = None):
         if not pendings:
             return
 
-        # PAPER cần current prices để check touch
         if mode == TradingMode.PAPER and not price_map:
             from app.services.binance_service import get_all_prices
             price_map = get_all_prices()
 
-        # LIVE / TESTNET vẫn cần price_map cho prefill pre-place
         if mode != TradingMode.PAPER and not price_map:
             try:
                 from app.services.price_feed import get_all_current_prices
@@ -842,11 +870,6 @@ def process_pending_signals(price_map: Optional[Dict[str, float]] = None):
 # ============================================================
 
 def _notify_fill(p, signal, exec_result):
-    """
-    Giữ nguyên tinh thần notify cũ:
-    - paper/live đều gửi
-    - hiển thị trigger / entry / SL / TP / RR
-    """
     try:
         from app.services.telegram_service import send_telegram
 

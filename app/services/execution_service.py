@@ -5,24 +5,41 @@ Paper:     ghi DB only, fill tại fill_price
 Testnet:   Binance Testnet API
 Live:      Binance Mainnet API
 
+LIVE / TESTNET execution model:
+- Entry: LIMIT order qua /fapi/v1/order
+- Exits: Algo Orders qua /fapi/v1/algoOrder
+         (STOP_MARKET / TAKE_PROFIT_MARKET + closePosition=true)
+- workingType = MARK_PRICE
+
 Position sizing:
-  - Đọc từ POSITION_SIZE_CONFIG trong app_config
-  - 2 mode: fixed_usdt / risk_based
-  - Toggle được từ dashboard, không cần restart
-
-Entry (LIVE/TESTNET):
-  - LIMIT order tại trigger_price (đã reprice)
-  - SL/TP đặt cùng lúc với closePosition=true
-
-Install: pip install binance-futures-connector
+- đọc từ POSITION_SIZE_CONFIG trong app_config
+- 2 mode:
+    + fixed_usdt   -> fixed_usdt_per_trade = margin budget
+                      notional = fixed_usdt_per_trade * leverage
+    + risk_based   -> risk % vốn
 """
 
 import os
+import time
+import hmac
+import hashlib
 import traceback
+import requests
 from dataclasses import dataclass
 from typing import Optional, Dict, Tuple
+from urllib.parse import urlencode
 
 from app.core.trading_mode import get_trading_mode, TradingMode
+
+
+# ============================================================
+# CONSTANTS
+# ============================================================
+
+ALGO_WORKING_TYPE = "MARK_PRICE"   # anh đã chốt dùng MARK_PRICE
+SIGNED_TIMEOUT = 10
+
+_http = requests.Session()
 
 
 # ============================================================
@@ -39,12 +56,12 @@ class OrderResult:
     error:           Optional[str]   = None
     mode:            str             = "PAPER"
     leverage:        int             = 1
-    sl_order_id:     Optional[str]   = None
-    tp_order_id:     Optional[str]   = None
+    sl_order_id:     Optional[str]   = None   # algoId
+    tp_order_id:     Optional[str]   = None   # algoId
 
 
 # ============================================================
-# Position Sizer (risk-based mode)
+# Position Sizer
 # ============================================================
 
 class PositionSizer:
@@ -77,7 +94,7 @@ class PositionSizer:
 
 
 # ============================================================
-# Order Size Calculator — đọc từ POSITION_SIZE_CONFIG
+# Position Size Config
 # ============================================================
 
 def _calc_order_size(
@@ -86,13 +103,14 @@ def _calc_order_size(
     balance: float
 ) -> Tuple[float, int]:
     """
-    Tính notional + leverage theo POSITION_SIZE_CONFIG.
+    Tính notional + leverage theo POSITION_SIZE_CONFIG
 
-    2 mode:
-      fixed_usdt:  cố định $ mỗi lệnh
-      risk_based:  % vốn chịu rủi ro mỗi lệnh
+    fixed_usdt:
+      fixed_usdt_per_trade = margin budget
+      notional = fixed_margin * leverage
 
-    Config đọc từ app_config, toggle được từ dashboard.
+    risk_based:
+      dùng PositionSizer như cũ
     """
     from app.services.config_service import get_runtime_config
 
@@ -107,11 +125,8 @@ def _calc_order_size(
         fixed_margin = float(pos_cfg.get("fixed_usdt_per_trade", 200))
         leverage = max_lev
         notional = min(fixed_margin * leverage, max_pos)
-
     else:
-        # ── RISK BASED ────────────────────────────────
         risk_pct = float(pos_cfg.get("risk_per_trade_pct", 0.01))
-
         sizer = PositionSizer(
             account_balance=balance,
             risk_pct=risk_pct,
@@ -122,21 +137,24 @@ def _calc_order_size(
 
     return notional, leverage
 
+
 def _get_min_notional(symbol_info: Optional[Dict]) -> float:
     """
-    Lấy min notional từ exchangeInfo.
-    Fallback = 5 USDT nếu không đọc được.
+    Đọc min notional từ exchangeInfo.
+    Fallback = 5 USDT.
     """
     if not symbol_info:
         return 5.0
 
     for f in symbol_info.get("filters", []):
         ft = f.get("filterType")
+
         if ft == "MIN_NOTIONAL":
             try:
                 return float(f.get("notional") or f.get("minNotional") or 5.0)
             except Exception:
                 return 5.0
+
         if ft == "NOTIONAL":
             try:
                 return float(f.get("minNotional") or 5.0)
@@ -145,12 +163,74 @@ def _get_min_notional(symbol_info: Optional[Dict]) -> float:
 
     return 5.0
 
+
+# ============================================================
+# Raw Signed Binance HTTP for Algo Orders
+# ============================================================
+
+def _signed_request(method: str, path: str, params: Dict) -> Dict:
+    """
+    Raw signed HTTP request dùng cho algo endpoints.
+    Vì connector hiện tại không xử lý /fapi/v1/algoOrder như mong muốn.
+    """
+    mode = get_trading_mode()
+    cfg = mode.get_binance_config()
+
+    api_key = cfg.get("api_key")
+    api_secret = cfg.get("api_secret")
+    base_url = cfg.get("base_url")
+
+    if not api_key or not api_secret or not base_url:
+        raise RuntimeError("Missing Binance API credentials")
+
+    payload = dict(params or {})
+    payload["timestamp"] = int(time.time() * 1000)
+
+    query = urlencode(payload, doseq=True)
+    signature = hmac.new(
+        api_secret.encode("utf-8"),
+        query.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+
+    full_params = dict(payload)
+    full_params["signature"] = signature
+
+    headers = {
+        "X-MBX-APIKEY": api_key
+    }
+
+    url = f"{base_url}{path}"
+
+    resp = _http.request(
+        method.upper(),
+        url,
+        params=full_params,
+        headers=headers,
+        timeout=SIGNED_TIMEOUT,
+    )
+
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"raw_text": resp.text}
+
+    if not resp.ok:
+        code = data.get("code")
+        msg  = data.get("msg") or str(data)
+        raise RuntimeError(
+            f"Binance signed request failed [{resp.status_code}] code={code} msg={msg}"
+        )
+
+    return data
+
+
 # ============================================================
 # Binance Executor
 # ============================================================
 
 class BinanceExecutor:
-    """Wrapper cho Binance Futures API."""
+    """Wrapper cho Binance Futures API thường."""
 
     def __init__(self, testnet: bool = False):
         self.testnet = testnet
@@ -258,7 +338,7 @@ class BinanceExecutor:
             print(f"[EXEC] Leverage error {symbol}: {e}")
             return False
 
-    # ── Orders ───────────────────────────────────────────
+    # ── Standard Orders ──────────────────────────────────
 
     def market_order(
         self, symbol: str, side: str, quantity: float,
@@ -297,40 +377,6 @@ class BinanceExecutor:
             )
         except Exception as e:
             print(f"[EXEC] Limit order error {symbol} {side}: {e}")
-            return None
-
-    def stop_market(
-        self, symbol: str, side: str, stop_price: float
-    ) -> Optional[Dict]:
-        if not self.ready:
-            return None
-        try:
-            return self._client.new_order(
-                symbol=symbol,
-                side=side,
-                type="STOP_MARKET",
-                stopPrice=stop_price,
-                closePosition="true"
-            )
-        except Exception as e:
-            print(f"[EXEC] Stop order error {symbol}: {e}")
-            return None
-
-    def take_profit_market(
-        self, symbol: str, side: str, stop_price: float
-    ) -> Optional[Dict]:
-        if not self.ready:
-            return None
-        try:
-            return self._client.new_order(
-                symbol=symbol,
-                side=side,
-                type="TAKE_PROFIT_MARKET",
-                stopPrice=stop_price,
-                closePosition="true"
-            )
-        except Exception as e:
-            print(f"[EXEC] TP order error {symbol}: {e}")
             return None
 
     def cancel_order(self, symbol: str, order_id: str) -> bool:
@@ -413,7 +459,6 @@ class BinanceExecutor:
             return None
 
         close_side = "SELL" if direction == "LONG" else "BUY"
-        self.cancel_all_orders(symbol)
         return self.market_order(symbol, close_side, size, reduce_only=True)
 
 
@@ -440,7 +485,7 @@ def reset_executor():
 
 
 # ============================================================
-# PUBLIC: OPEN POSITION (PAPER — backward compatible)
+# Paper / Legacy Entry
 # ============================================================
 
 def open_position(
@@ -449,8 +494,8 @@ def open_position(
     fill_price: Optional[float] = None
 ) -> OrderResult:
     """
-    PAPER: fill local tại fill_price hoặc trigger_price.
-    LIVE/TESTNET legacy: market order (kept for backward compat).
+    PAPER path chính.
+    LIVE/TESTNET legacy market entry giữ lại vì backward compatibility.
     """
     mode = get_trading_mode()
 
@@ -463,7 +508,6 @@ def open_position(
             mode="PAPER"
         )
 
-    # Legacy live/testnet market entry
     executor = get_executor()
     if not executor or not executor.ready:
         return OrderResult(
@@ -474,7 +518,7 @@ def open_position(
 
     try:
         balance = executor.get_balance()
-        if balance <= 10:
+        if balance <= 1:
             return OrderResult(
                 success=False,
                 error=f"Low balance: ${balance:.2f}",
@@ -490,13 +534,9 @@ def open_position(
         symbol_info = executor.get_symbol_info(pending.symbol)
         executor.set_leverage(pending.symbol, leverage)
 
-        current_price = float(
-            price_map.get(pending.symbol, pending.trigger_price)
-        )
+        current_price = float(price_map.get(pending.symbol, pending.trigger_price))
         raw_qty = usdt_notional / current_price
-        quantity = executor.round_quantity(
-            pending.symbol, raw_qty, symbol_info
-        )
+        quantity = executor.round_quantity(pending.symbol, raw_qty, symbol_info)
 
         if quantity <= 0:
             return OrderResult(
@@ -506,14 +546,6 @@ def open_position(
             )
 
         entry_side = "BUY"  if pending.direction == "LONG" else "SELL"
-        close_side = "SELL" if pending.direction == "LONG" else "BUY"
-
-        sl_price = executor.round_price(
-            pending.symbol, float(pending.stop_loss), symbol_info
-        )
-        tp_price = executor.round_price(
-            pending.symbol, float(pending.take_profit), symbol_info
-        )
 
         entry_order = executor.market_order(
             pending.symbol, entry_side, quantity
@@ -525,26 +557,10 @@ def open_position(
                 mode=mode.get_mode().value
             )
 
-        actual_entry = (
-            float(entry_order.get("avgPrice", current_price))
-            or current_price
-        )
+        actual_entry = float(entry_order.get("avgPrice", current_price)) or current_price
         order_id = str(entry_order.get("orderId", ""))
 
-        sl_order = executor.stop_market(
-            pending.symbol, close_side, sl_price
-        )
-        tp_order = executor.take_profit_market(
-            pending.symbol, close_side, tp_price
-        )
-
         fee = quantity * actual_entry * 0.0004
-
-        print(
-            f"💰 LIVE ENTRY: {pending.symbol} {pending.direction} "
-            f"@ {actual_entry:.4f} | Qty={quantity} | Lev={leverage}x | "
-            f"SL={sl_price} TP={tp_price} | Fee=${fee:.2f}"
-        )
 
         return OrderResult(
             success=True,
@@ -554,8 +570,6 @@ def open_position(
             fee=fee,
             mode=mode.get_mode().value,
             leverage=leverage,
-            sl_order_id=str(sl_order.get("orderId", "")) if sl_order else None,
-            tp_order_id=str(tp_order.get("orderId", "")) if tp_order else None,
         )
 
     except Exception as e:
@@ -568,99 +582,14 @@ def open_position(
 
 
 # ============================================================
-# PUBLIC: CLOSE POSITION
-# ============================================================
-
-def close_position(trade, reason: str) -> OrderResult:
-    mode = get_trading_mode()
-
-    if mode.is_paper:
-        return OrderResult(success=True, mode="PAPER")
-
-    executor = get_executor()
-    if not executor or not executor.ready:
-        return OrderResult(
-            success=False,
-            error="Executor not ready",
-            mode=mode.get_mode().value
-        )
-
-    try:
-        executor.cancel_all_orders(trade.symbol)
-
-        result = executor.close_position(
-            symbol=trade.symbol,
-            direction=trade.direction
-        )
-
-        if result:
-            actual_exit = float(result.get("avgPrice", 0)) or 0
-            fee = float(result.get("commission", 0))
-            print(
-                f"💰 LIVE CLOSE: {trade.symbol} {trade.direction} "
-                f"| Reason={reason} | Exit={actual_exit:.4f}"
-            )
-            return OrderResult(
-                success=True,
-                order_id=str(result.get("orderId", "")),
-                actual_entry=actual_exit,
-                fee=fee,
-                mode=mode.get_mode().value
-            )
-        else:
-            pos = executor.get_position_size(trade.symbol)
-            if pos == 0:
-                print(f"⚠️ Position already closed: {trade.symbol}")
-                return OrderResult(success=True, mode=mode.get_mode().value)
-            return OrderResult(
-                success=False,
-                error="Close failed",
-                mode=mode.get_mode().value
-            )
-
-    except Exception as e:
-        traceback.print_exc()
-        return OrderResult(
-            success=False,
-            error=str(e),
-            mode=mode.get_mode().value
-        )
-
-
-# ============================================================
-# PUBLIC: SYNC POSITION
-# ============================================================
-
-def sync_position(trade) -> Optional[Dict]:
-    mode = get_trading_mode()
-    if mode.is_paper:
-        return None
-    executor = get_executor()
-    if not executor or not executor.ready:
-        return None
-    return executor.get_position_info(trade.symbol)
-
-
-def check_position_closed(trade) -> bool:
-    mode = get_trading_mode()
-    if mode.is_paper:
-        return False
-    executor = get_executor()
-    if not executor or not executor.ready:
-        return False
-    size = executor.get_position_size(trade.symbol)
-    return size == 0
-
-
-# ============================================================
-# LIMIT ENTRY FLOW — LIVE / TESTNET
+# LIMIT ENTRY — LIVE / TESTNET
 # ============================================================
 
 def place_limit_entry_order(pending) -> OrderResult:
     """
-    Place LIMIT entry order on exchange.
-    trigger_price / stop_loss / take_profit trong pending
-    phải đã được reprice + round TRƯỚC khi gọi hàm này.
+    Place LIMIT entry order.
+    pending.trigger_price / stop_loss / take_profit
+    phải đã được reprice + round trước khi vào đây.
     """
     mode = get_trading_mode()
 
@@ -677,7 +606,7 @@ def place_limit_entry_order(pending) -> OrderResult:
 
     try:
         balance = executor.get_balance()
-        if balance <= 10:
+        if balance <= 1:
             return OrderResult(
                 success=False,
                 error=f"Low balance: ${balance:.2f}",
@@ -743,8 +672,7 @@ def place_limit_entry_order(pending) -> OrderResult:
 
         print(
             f"💰 LIMIT ENTRY PLACED: {pending.symbol} {pending.direction} "
-            f"@ {price:.6f} | Qty={quantity} | Lev={leverage}x "
-            f"| OrderID={order_id}"
+            f"@ {price:.6f} | Qty={quantity} | Lev={leverage}x | OrderID={order_id}"
         )
 
         return OrderResult(
@@ -765,15 +693,78 @@ def place_limit_entry_order(pending) -> OrderResult:
         )
 
 
-def place_close_position_exit_orders(
-    symbol: str,
-    direction: str,
-    stop_loss: float,
-    take_profit: float
-) -> Dict:
+# ============================================================
+# ALGO ORDERS — SL / TP
+# ============================================================
+
+def _build_client_algo_id(prefix: str, symbol: str) -> str:
     """
-    Place STOP_MARKET + TAKE_PROFIT_MARKET with closePosition=true.
-    Nếu exchange reject vì chưa có position: trả None IDs.
+    clientAlgoId <= 36 chars.
+    """
+    ts = int(time.time())
+    # ví dụ: QRL_SL_HOMEUSDT_17123456
+    return f"QRL_{prefix}_{symbol}_{ts}"[:36]
+
+
+def place_algo_stop_market_close_position(symbol: str, direction: str, trigger_price: float) -> Optional[Dict]:
+    """
+    Place SL algo order:
+      algoType=CONDITIONAL
+      type=STOP_MARKET
+      triggerPrice
+      closePosition=true
+      workingType=MARK_PRICE
+    """
+    close_side = "SELL" if direction == "LONG" else "BUY"
+
+    params = {
+        "algoType": "CONDITIONAL",
+        "symbol": symbol,
+        "side": close_side,
+        "type": "STOP_MARKET",
+        "triggerPrice": trigger_price,
+        "workingType": ALGO_WORKING_TYPE,
+        "closePosition": "true",
+        "priceProtect": "false",
+        "clientAlgoId": _build_client_algo_id("SL", symbol),
+    }
+
+    return _signed_request("POST", "/fapi/v1/algoOrder", params)
+
+
+def place_algo_take_profit_market_close_position(symbol: str, direction: str, trigger_price: float) -> Optional[Dict]:
+    """
+    Place TP algo order:
+      algoType=CONDITIONAL
+      type=TAKE_PROFIT_MARKET
+      triggerPrice
+      closePosition=true
+      workingType=MARK_PRICE
+    """
+    close_side = "SELL" if direction == "LONG" else "BUY"
+
+    params = {
+        "algoType": "CONDITIONAL",
+        "symbol": symbol,
+        "side": close_side,
+        "type": "TAKE_PROFIT_MARKET",
+        "triggerPrice": trigger_price,
+        "workingType": ALGO_WORKING_TYPE,
+        "closePosition": "true",
+        "priceProtect": "false",
+        "clientAlgoId": _build_client_algo_id("TP", symbol),
+    }
+
+    return _signed_request("POST", "/fapi/v1/algoOrder", params)
+
+
+def place_close_position_exit_orders(symbol: str, direction: str, stop_loss: float, take_profit: float) -> Dict:
+    """
+    Place 2 algo orders:
+      - SL STOP_MARKET closePosition=true
+      - TP TAKE_PROFIT_MARKET closePosition=true
+
+    Returns algoIds.
     """
     mode = get_trading_mode()
     if mode.is_paper:
@@ -784,22 +775,136 @@ def place_close_position_exit_orders(
         return {"sl_order_id": None, "tp_order_id": None}
 
     symbol_info = executor.get_symbol_info(symbol)
-    close_side = "SELL" if direction == "LONG" else "BUY"
-
     sl_price = executor.round_price(symbol, float(stop_loss), symbol_info)
     tp_price = executor.round_price(symbol, float(take_profit), symbol_info)
 
-    sl_order = executor.stop_market(symbol, close_side, sl_price)
-    tp_order = executor.take_profit_market(symbol, close_side, tp_price)
+    sl_order = None
+    tp_order = None
+
+    try:
+        sl_order = place_algo_stop_market_close_position(
+            symbol=symbol,
+            direction=direction,
+            trigger_price=sl_price
+        )
+    except Exception as e:
+        print(f"[EXEC] Algo SL order error {symbol}: {e}")
+
+    try:
+        tp_order = place_algo_take_profit_market_close_position(
+            symbol=symbol,
+            direction=direction,
+            trigger_price=tp_price
+        )
+    except Exception as e:
+        print(f"[EXEC] Algo TP order error {symbol}: {e}")
 
     return {
-        "sl_order_id": str(sl_order.get("orderId", "")) if sl_order else None,
-        "tp_order_id": str(tp_order.get("orderId", "")) if tp_order else None,
+        "sl_order_id": str(sl_order.get("algoId", "")) if sl_order else None,
+        "tp_order_id": str(tp_order.get("algoId", "")) if tp_order else None,
     }
 
 
+def get_algo_order_status(algo_id: str) -> Dict:
+    """
+    Query single algo order.
+    """
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return {
+            "algo_status": "UNKNOWN",
+            "actual_order_id": None,
+            "actual_price": None,
+            "actual_qty": None,
+        }
+
+    try:
+        data = _signed_request("GET", "/fapi/v1/algoOrder", {
+            "algoId": algo_id
+        })
+        return {
+            "algo_status": data.get("algoStatus"),
+            "actual_order_id": data.get("actualOrderId"),
+            "actual_price": float(data.get("actualPrice", 0) or 0),
+            "actual_qty": float(data.get("actualQty", 0) or 0),
+            "trigger_price": float(data.get("triggerPrice", 0) or 0),
+            "working_type": data.get("workingType"),
+            "trigger_time": data.get("triggerTime"),
+            "raw": data,
+        }
+    except Exception as e:
+        print(f"[EXEC] get_algo_order_status error algoId={algo_id}: {e}")
+        return {
+            "algo_status": "UNKNOWN",
+            "actual_order_id": None,
+            "actual_price": None,
+            "actual_qty": None,
+        }
+
+
+def get_open_algo_orders(symbol: Optional[str] = None) -> list:
+    """
+    Query all OPEN algo orders.
+    """
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return []
+
+    try:
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        data = _signed_request("GET", "/fapi/v1/openAlgoOrders", params)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        print(f"[EXEC] get_open_algo_orders error {symbol}: {e}")
+        return []
+
+
+def cancel_algo_order(algo_id: str) -> bool:
+    """
+    Cancel single algo order by algoId.
+    """
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return True
+
+    try:
+        _signed_request("DELETE", "/fapi/v1/algoOrder", {
+            "algoId": algo_id
+        })
+        return True
+    except Exception as e:
+        print(f"[EXEC] cancel_algo_order warning algoId={algo_id}: {e}")
+        return False
+
+
+def cancel_all_algo_orders(symbol: str) -> bool:
+    """
+    Cancel all OPEN algo orders for a symbol.
+    """
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return True
+
+    try:
+        _signed_request("DELETE", "/fapi/v1/algoOpenOrders", {
+            "symbol": symbol
+        })
+        return True
+    except Exception as e:
+        print(f"[EXEC] cancel_all_algo_orders warning {symbol}: {e}")
+        return False
+
+
+# ============================================================
+# ENTRY ORDER STATUS
+# ============================================================
+
 def get_entry_order_status(symbol: str, order_id: str) -> Dict:
-    """Query exchange entry LIMIT order status."""
+    """
+    Query exchange entry LIMIT order status.
+    """
     mode = get_trading_mode()
     if mode.is_paper:
         return {
@@ -844,7 +949,19 @@ def get_entry_order_status(symbol: str, order_id: str) -> Dict:
         }
 
 
+# ============================================================
+# CANCEL HELPERS
+# ============================================================
+
 def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
+    """
+    Smart cancel:
+    1. thử cancel normal order trước
+    2. nếu fail thì thử cancel algo order
+
+    Vì sl_order_id / tp_order_id hiện giờ lưu algoId,
+    còn exchange_order_id là normal orderId.
+    """
     if not order_id:
         return False
 
@@ -856,37 +973,144 @@ def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
     if not executor or not executor.ready:
         return False
 
-    return executor.cancel_order(symbol, order_id)
+    # thử normal
+    if executor.cancel_order(symbol, order_id):
+        return True
 
+    # fallback algo
+    return cancel_algo_order(order_id)
 
-# ============================================================
-# CONVENIENCE HELPERS
-# ============================================================
 
 def cancel_exit_orders(pending) -> bool:
-    ok1 = cancel_order_by_id(
-        pending.symbol,
-        getattr(pending, "sl_order_id", None)
-    )
-    ok2 = cancel_order_by_id(
-        pending.symbol,
-        getattr(pending, "tp_order_id", None)
-    )
+    """
+    Cancel 2 algo exits theo id.
+    """
+    ok1 = cancel_order_by_id(pending.symbol, getattr(pending, "sl_order_id", None))
+    ok2 = cancel_order_by_id(pending.symbol, getattr(pending, "tp_order_id", None))
     return ok1 or ok2
 
 
 def cancel_entry_and_exits(pending) -> bool:
+    """
+    Cancel:
+    - entry normal order
+    - exit algo orders
+    """
     ok = False
+
+    # entry normal
     ok = cancel_order_by_id(
         pending.symbol,
         getattr(pending, "exchange_order_id", None)
     ) or ok
+
+    # exits algo
     ok = cancel_order_by_id(
         pending.symbol,
         getattr(pending, "sl_order_id", None)
     ) or ok
+
     ok = cancel_order_by_id(
         pending.symbol,
         getattr(pending, "tp_order_id", None)
     ) or ok
+
     return ok
+
+
+# ============================================================
+# CLOSE POSITION
+# ============================================================
+
+def close_position(trade, reason: str) -> OrderResult:
+    """
+    Close live/testnet position:
+    - cancel ALL normal orders
+    - cancel ALL algo orders
+    - market close position
+    """
+    mode = get_trading_mode()
+
+    if mode.is_paper:
+        return OrderResult(success=True, mode="PAPER")
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return OrderResult(
+            success=False,
+            error="Executor not ready",
+            mode=mode.get_mode().value
+        )
+
+    try:
+        # cleanup all normal + algo orders
+        executor.cancel_all_orders(trade.symbol)
+        cancel_all_algo_orders(trade.symbol)
+
+        result = executor.close_position(
+            symbol=trade.symbol,
+            direction=trade.direction
+        )
+
+        if result:
+            actual_exit = float(result.get("avgPrice", 0)) or 0
+            fee = float(result.get("commission", 0))
+            print(
+                f"💰 LIVE CLOSE: {trade.symbol} {trade.direction} "
+                f"| Reason={reason} | Exit={actual_exit:.4f}"
+            )
+            return OrderResult(
+                success=True,
+                order_id=str(result.get("orderId", "")),
+                actual_entry=actual_exit,
+                fee=fee,
+                mode=mode.get_mode().value
+            )
+        else:
+            pos = executor.get_position_size(trade.symbol)
+            if pos == 0:
+                print(f"⚠️ Position already closed: {trade.symbol}")
+                return OrderResult(success=True, mode=mode.get_mode().value)
+
+            return OrderResult(
+                success=False,
+                error="Close failed",
+                mode=mode.get_mode().value
+            )
+
+    except Exception as e:
+        traceback.print_exc()
+        return OrderResult(
+            success=False,
+            error=str(e),
+            mode=mode.get_mode().value
+        )
+
+
+# ============================================================
+# POSITION SYNC
+# ============================================================
+
+def sync_position(trade) -> Optional[Dict]:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return None
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return None
+
+    return executor.get_position_info(trade.symbol)
+
+
+def check_position_closed(trade) -> bool:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return False
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return False
+
+    size = executor.get_position_size(trade.symbol)
+    return size == 0

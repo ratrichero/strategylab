@@ -1,25 +1,20 @@
 """
 Crash Recovery
 ==============
-Chạy khi server startup.
+PAPER:
+  - Pending WAIT → CANCELLED + SYSTEM_CRASH
+  - Signals OPEN → MANUAL + SYSTEM_CRASH
 
-RULE:
-  PAPER:
-    - Pending WAIT → CANCELLED + SYSTEM_CRASH
-    - Signals OPEN → MANUAL + SYSTEM_CRASH
-
-  LIVE / TESTNET:
-    - TH1: order chưa khớp → cancel + CANCELLED
-    - TH2: có fill + position còn sống → KỆ, để engine+monitor xử lý
-    - TH3: khớp 100% + TP/SL chờ → KỆ
-    - TH4: position=0 (TP/SL đã trigger) → cancel remainder + FILLED
-    - Signal OPEN + position=0 → để monitor close khi chạy lại
-    - Signal OPEN + position>0 → KỆ, monitor tiếp
+LIVE / TESTNET:
+  TH1: order chưa khớp -> cancel + CANCELLED
+  TH2: có fill + position còn sống -> KỆ, để engine+monitor xử lý
+  TH3: full fill + TP/SL chờ -> KỆ
+  TH4: position=0 -> cancel remainder + FILLED
+  Signal OPEN: để monitor xử lý sau restart
 """
 
 import os
 import json
-import time as time_module
 
 from app.core.time_utils import utc_now, ensure_utc
 from app.core.trading_mode import get_current_mode, TradingMode
@@ -50,7 +45,7 @@ def update_heartbeat():
 
 
 # ============================================================
-# RECOVERY
+# MAIN RECOVERY
 # ============================================================
 
 def check_and_recover():
@@ -88,16 +83,16 @@ def check_and_recover():
             print("  🔄 Recovering state...")
 
             results = {
-                "downtime_seconds":   round(downtime_seconds),
-                "last_heartbeat":     last_hb.isoformat(),
-                "recovery_time":      now.isoformat(),
-                "mode":               mode.value,
-                "pending_cancelled":  0,
-                "pending_filled":     0,
-                "pending_kept":       0,
-                "signals_closed":     0,
-                "signals_kept":       0,
-                "errors":             [],
+                "downtime_seconds":  round(downtime_seconds),
+                "last_heartbeat":    last_hb.isoformat(),
+                "recovery_time":     now.isoformat(),
+                "mode":              mode.value,
+                "pending_cancelled": 0,
+                "pending_filled":    0,
+                "pending_kept":      0,
+                "signals_closed":    0,
+                "signals_kept":      0,
+                "errors":            [],
             }
 
             if mode == TradingMode.PAPER:
@@ -105,7 +100,6 @@ def check_and_recover():
             else:
                 _recover_live(db, now, results)
 
-            # Audit log
             db.execute(text(
                 "INSERT INTO audit_logs (event_type, message, metadata, created_at) "
                 "VALUES ('CRASH_RECOVERY', :msg, :meta, :now)"
@@ -128,15 +122,10 @@ def check_and_recover():
 
 
 # ============================================================
-# PAPER RECOVERY — giữ nguyên logic cũ
+# PAPER RECOVERY
 # ============================================================
 
 def _recover_paper(db, now, results):
-    """
-    PAPER: dọn sạch DB.
-    - Pending WAIT → CANCELLED
-    - Signals OPEN → MANUAL
-    """
     pending_count = db.query(PendingSignal).filter(
         PendingSignal.status == "WAIT"
     ).update({
@@ -157,68 +146,64 @@ def _recover_paper(db, now, results):
 
 
 # ============================================================
-# LIVE / TESTNET RECOVERY — logic mới
+# LIVE / TESTNET RECOVERY
 # ============================================================
 
 def _recover_live(db, now, results):
-    """
-    LIVE / TESTNET crash recovery:
-    - TH1: chưa khớp → cancel + CANCELLED
-    - TH2: có fill + position còn → KỆ
-    - TH3: khớp 100% + TP/SL chờ → KỆ
-    - TH4: position=0 → cancel remainder + FILLED
-    - Signal: để monitor xử lý khi restart
-    """
-    from app.services.execution_service import (
-        get_executor,
-        get_entry_order_status,
-        cancel_entry_and_exits,
-    )
-
-    executor = get_executor()
-
     pending_wait = db.query(PendingSignal).filter(
         PendingSignal.status == "WAIT"
     ).all()
 
     for p in pending_wait:
         try:
-            action = _handle_live_pending(db, p, now, executor, results)
+            action = _handle_live_pending(db, p, now, results)
             print(f"  [PENDING {p.id}] {p.symbol} → {action}")
         except Exception as e:
             results["errors"].append(f"Pending [{p.id}] {p.symbol}: {e}")
             print(f"  ❌ Pending [{p.id}] {p.symbol}: {e}")
 
-    # Signal OPEN: không đụng, để monitor xử lý
+    # Signals OPEN: không đụng vào, để monitor xử lý
     open_count = db.query(Signal).filter(
         Signal.status == "OPEN"
     ).count()
 
     results["signals_kept"] = open_count
-
     if open_count > 0:
-        print(f"  ℹ️  {open_count} signals OPEN — monitor sẽ xử lý sau khi restart")
+        print(f"  ℹ️  {open_count} signals OPEN — monitor sẽ xử lý sau restart")
 
 
-def _handle_live_pending(db, p, now, executor, results):
+def _handle_live_pending(db, p, now, results):
     """
-    Xử lý 1 pending WAIT trong crash recovery LIVE/TESTNET.
+    LIVE / TESTNET crash recovery logic:
 
-    Returns: action string cho logging
+    TH0: chưa place order
+      -> CANCELLED
+
+    TH1: order tồn tại nhưng executed_qty=0
+      -> cancel entry + algo exits
+      -> CANCELLED
+
+    TH4: executed_qty>0 nhưng position_size=0
+      -> cancel remainder + algo exits
+      -> FILLED
+
+    TH2/TH3: executed_qty>0 và position_size>0
+      -> KỆ, để pending_engine + monitor xử lý
     """
     from app.services.execution_service import (
         get_entry_order_status,
         cancel_entry_and_exits,
+        get_executor,
     )
 
-    # Nếu chưa place order → cancel local
+    # TH0
     if not p.exchange_order_id:
         p.status = "CANCELLED"
         p.rejection_reason = "SYSTEM_CRASH"
         results["pending_cancelled"] += 1
         return "cancelled_no_order"
 
-    # Sync trạng thái từ exchange
+    # Sync latest state
     info = get_entry_order_status(p.symbol, p.exchange_order_id)
     p.exchange_status = info.get("status", p.exchange_status)
     p.executed_qty = float(info.get("executed_qty") or p.executed_qty or 0)
@@ -230,7 +215,7 @@ def _handle_live_pending(db, p, now, executor, results):
 
     executed = float(p.executed_qty or 0)
 
-    # TH1: Chưa khớp gì
+    # TH1: chưa fill gì
     if executed == 0:
         cancel_entry_and_exits(p)
         p.status = "CANCELLED"
@@ -238,22 +223,21 @@ def _handle_live_pending(db, p, now, executor, results):
         results["pending_cancelled"] += 1
         return "cancelled_no_fill"
 
-    # Đã có fill → check position thật trên exchange
-    position_size = 0
+    # Có fill -> kiểm tra position thật
+    executor = get_executor()
+    position_size = 0.0
     if executor and executor.ready:
         position_size = executor.get_position_size(p.symbol)
 
+    # TH4: position đã đóng xong trước khi system quay lại
     if position_size == 0:
-        # TH4: Position đã về 0 (TP/SL đã trigger)
-        # Cancel remainder entry nếu còn
         cancel_entry_and_exits(p)
         p.status = "FILLED"
         p.rejection_reason = "SYSTEM_CRASH_POSITION_CLOSED"
         results["pending_filled"] += 1
         return "filled_position_closed"
 
-    # TH2/TH3: Position vẫn còn sống → KỆ
-    # Pending engine + monitor sẽ tiếp tục xử lý sau restart
+    # TH2 / TH3: position vẫn còn sống -> kệ
     results["pending_kept"] += 1
     return f"kept_active (pos={position_size}, filled={executed})"
 
@@ -280,10 +264,9 @@ def _notify(results):
     try:
         from app.services.telegram_service import send_telegram
 
-        mode = results["mode"]
         msg = (
             f"⚠️ <b>SYSTEM CRASH RECOVERY</b>\n\n"
-            f"<b>Mode:</b> {mode}\n"
+            f"<b>Mode:</b> {results['mode']}\n"
             f"<b>Downtime:</b> {results['downtime_seconds']}s\n"
             f"<b>Pending cancelled:</b> {results['pending_cancelled']}\n"
             f"<b>Pending filled:</b> {results.get('pending_filled', 0)}\n"
