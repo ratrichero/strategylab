@@ -1,0 +1,678 @@
+@import "tailwindcss";
+
+/* ============================================================
+   TRADING PRO THEME — Bloomberg / TradingView / Binance Pro
+   ============================================================ */
+
+.theme-trading {
+  --tp-bg-base: #0a0e17;
+  --tp-bg-surface: #111827;
+  --tp-bg-elevated: #1a2235;
+  --tp-bg-sidebar: #0d1321;
+  --tp-bg-hover: #1e293b;
+  --tp-bg-input: #0f172a;
+
+  --tp-border: #1e293b;
+  --tp-border-light: #1a2235;
+  --tp-border-focus: #2196f3;
+
+  --tp-text-primary: #e8eaed;
+  --tp-text-secondary: #9aa0a6;
+  --tp-text-muted: #5f6368;
+
+  --tp-green: #00c853;
+  --tp-green-dim: #00c85333;
+  --tp-red: #ff1744;
+  --tp-red-dim: #ff174433;
+  --tp-blue: #2196f3;
+  --tp-blue-dim: #2196f333;
+  --tp-yellow: #ffc107;
+  --tp-yellow-dim: #ffc10733;
+  --tp-purple: #7c4dff;
+
+  --tp-radius: 8px;
+  --tp-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  --tp-shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+}
+
+/* ── Base ─────────────────────────────────── */
+.theme-trading {
+  background-color: var(--tp-bg-base);
+  color: var(--tp-text-primary);
+  font-feature-settings: "tnum";
+}
+
+/* ── Sidebar ──────────────────────────────── */
+.theme-trading aside {
+  background: linear-gradient(180deg, var(--tp-bg-sidebar) 0%, #080c14 100%) !important;
+  border-color: var(--tp-border) !important;
+  backdrop-filter: none !important;
+}
+
+/* ── Header ───────────────────────────────── */
+.theme-trading header {
+  background: var(--tp-bg-sidebar) !important;
+  border-color: var(--tp-border) !important;
+  backdrop-filter: none !important;
+}
+
+/* ── Cards ────────────────────────────────── */
+.theme-trading .bg-slate-800\/50 {
+  background: var(--tp-bg-surface) !important;
+  border-color: var(--tp-border) !important;
+  border-radius: var(--tp-radius) !important;
+  backdrop-filter: none !important;
+}
+
+/* ── Tables ───────────────────────────────── */
+.theme-trading .bg-slate-800\/80 {
+  background: var(--tp-bg-elevated) !important;
+}
+.theme-trading table {
+  border-color: var(--tp-border) !important;
+}
+.theme-trading thead tr {
+  background: var(--tp-bg-elevated) !important;
+  border-color: var(--tp-border) !important;
+}
+.theme-trading tbody tr {
+  border-color: var(--tp-border-light) !important;
+}
+.theme-trading tbody tr:hover {
+  background: var(--tp-bg-hover) !important;
+}
+
+/* ── Inputs ───────────────────────────────── */
+.theme-trading input,
+.theme-trading select,
+.theme-trading textarea {
+  background: var(--tp-bg-input) !important;
+  border-color: var(--tp-border) !important;
+  border-radius: var(--tp-radius) !important;
+  color: var(--tp-text-primary) !important;
+}
+.theme-trading input:focus,
+.theme-trading select:focus,
+.theme-trading textarea:focus {
+  border-color: var(--tp-border-focus) !important;
+  box-shadow: 0 0 0 2px var(--tp-blue-dim) !important;
+}
+
+/* ── Buttons — Primary ────────────────────── */
+.theme-trading .bg-indigo-600 {
+  background: var(--tp-blue) !important;
+  border-color: var(--tp-blue) !important;
+}
+.theme-trading .bg-indigo-600:hover {
+  background: #1976d2 !important;
+}
+
+/* ── Green / Red overrides ────────────────── */
+.theme-trading .text-emerald-400 {
+  color: var(--tp-green) !important;
+}
+.theme-trading .text-red-400 {
+  color: var(--tp-red) !important;
+}
+.theme-trading .bg-emerald-500\/20,
+.theme-trading .bg-emerald-500\/15 {
+  background: var(--tp-green-dim) !important;
+}
+.theme-trading .bg-red-500\/20,
+.theme-trading .bg-red-500\/15 {
+  background: var(--tp-red-dim) !important;
+}
+
+/* ── Badge colors ─────────────────────────── */
+.theme-trading .bg-emerald-500\/20.text-emerald-400 {
+  color: var(--tp-green) !important;
+  background: var(--tp-green-dim) !important;
+  border-color: rgba(0, 200, 83, 0.3) !important;
+}
+.theme-trading .bg-red-500\/20.text-red-400 {
+  color: var(--tp-red) !important;
+  background: var(--tp-red-dim) !important;
+  border-color: rgba(255, 23, 68, 0.3) !important;
+}
+.theme-trading .bg-yellow-500\/20 {
+  background: var(--tp-yellow-dim) !important;
+}
+.theme-trading .text-yellow-400 {
+  color: var(--tp-yellow) !important;
+}
+.theme-trading .bg-blue-500\/20 {
+  background: var(--tp-blue-dim) !important;
+}
+.theme-trading .text-blue-400 {
+  color: var(--tp-blue) !important;
+}
+
+/* ── KPI icon backgrounds ─────────────────── */
+.theme-trading .bg-indigo-500\/20 {
+  background: var(--tp-blue-dim) !important;
+}
+.theme-trading .text-indigo-400 {
+  color: var(--tp-blue) !important;
+}
+.theme-trading .bg-cyan-500\/20 {
+  background: rgba(0, 188, 212, 0.15) !important;
+}
+.theme-trading .bg-purple-500\/20 {
+  background: rgba(124, 77, 255, 0.15) !important;
+}
+.theme-trading .text-purple-400 {
+  color: var(--tp-purple) !important;
+}
+.theme-trading .bg-orange-500\/20 {
+  background: rgba(255, 152, 0, 0.15) !important;
+}
+
+/* ── Sidebar nav ──────────────────────────── */
+.theme-trading .bg-indigo-600\/20 {
+  background: var(--tp-blue-dim) !important;
+  border-color: rgba(33, 150, 243, 0.3) !important;
+}
+.theme-trading .text-indigo-400 {
+  color: var(--tp-blue) !important;
+}
+.theme-trading .bg-indigo-500 {
+  background: var(--tp-blue) !important;
+}
+
+/* ── Tabs underline ───────────────────────── */
+.theme-trading .after\:bg-indigo-400::after {
+  background: var(--tp-blue) !important;
+}
+
+/* ── Charts — Recharts overrides ──────────── */
+.theme-trading .recharts-cartesian-grid line {
+  stroke: var(--tp-border) !important;
+}
+.theme-trading .recharts-text {
+  fill: var(--tp-text-muted) !important;
+}
+
+/* ── Scrollbar ────────────────────────────── */
+.theme-trading ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.theme-trading ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theme-trading ::-webkit-scrollbar-thumb {
+  background: var(--tp-border);
+  border-radius: 3px;
+}
+.theme-trading ::-webkit-scrollbar-thumb:hover {
+  background: var(--tp-text-muted);
+}
+
+/* ── Status badges ────────────────────────── */
+.theme-trading .bg-blue-900\/50 {
+  background: var(--tp-blue-dim) !important;
+  border-color: rgba(33, 150, 243, 0.3) !important;
+}
+.theme-trading .text-blue-300 {
+  color: var(--tp-blue) !important;
+}
+.theme-trading .bg-yellow-900\/50 {
+  background: var(--tp-yellow-dim) !important;
+  border-color: rgba(255, 193, 7, 0.3) !important;
+}
+.theme-trading .text-yellow-300 {
+  color: var(--tp-yellow) !important;
+}
+.theme-trading .bg-red-900\/50 {
+  background: var(--tp-red-dim) !important;
+  border-color: rgba(255, 23, 68, 0.3) !important;
+}
+.theme-trading .text-red-300 {
+  color: var(--tp-red) !important;
+}
+
+/* ── Gradient overlays on cards ────────────── */
+.theme-trading .bg-gradient-to-br.from-indigo-500\/10 {
+  background: linear-gradient(135deg, var(--tp-blue-dim), transparent) !important;
+}
+.theme-trading .bg-gradient-to-br.from-indigo-500.to-purple-600 {
+  background: linear-gradient(135deg, var(--tp-blue), var(--tp-purple)) !important;
+}
+
+/* ── Kill switch ──────────────────────────── */
+.theme-trading .bg-red-600 {
+  background: var(--tp-red) !important;
+}
+.theme-trading .bg-red-600:hover {
+  background: #d50000 !important;
+}
+
+/* ── Green toggle ─────────────────────────── */
+.theme-trading .bg-green-500 {
+  background: var(--tp-green) !important;
+}
+
+/* ── Heatmap cells ────────────────────────── */
+.theme-trading .min-h-12 {
+  border-radius: var(--tp-radius) !important;
+}
+
+/* ── Monospace numbers ────────────────────── */
+.theme-trading .font-mono,
+.theme-trading .font-bold {
+  font-feature-settings: "tnum";
+  letter-spacing: 0.01em;
+}
+
+
+/* ============================================================
+   LIGHT GOLD THEME — Warm / Premium / Finance
+   Tông vàng chủ đạo, nền sáng ấm, chữ tối
+   ============================================================ */
+
+.theme-light-gold {
+  --lg-gold: #b8860b;
+  --lg-gold-light: #daa520;
+  --lg-gold-dim: rgba(184, 134, 11, 0.12);
+  --lg-gold-ring: rgba(218, 165, 32, 0.25);
+
+  --lg-bg-base: #faf8f4;
+  --lg-bg-surface: #ffffff;
+  --lg-bg-elevated: #f5f0e8;
+  --lg-bg-sidebar: #1c1a16;
+  --lg-bg-sidebar-hover: #2a2722;
+  --lg-bg-header: rgba(255, 255, 255, 0.85);
+  --lg-bg-hover: #f0ebe0;
+  --lg-bg-input: #ffffff;
+
+  --lg-border: #e0d9c8;
+  --lg-border-light: #ebe5d6;
+  --lg-border-focus: var(--lg-gold);
+
+  --lg-text-primary: #1a1710;
+  --lg-text-secondary: #6b6354;
+  --lg-text-muted: #9a9184;
+  --lg-text-inverse: #ffffff;
+
+  --lg-green: #16a34a;
+  --lg-green-bg: #f0fdf4;
+  --lg-green-border: rgba(22, 163, 74, 0.2);
+  --lg-red: #dc2626;
+  --lg-red-bg: #fef2f2;
+  --lg-red-border: rgba(220, 38, 38, 0.2);
+  --lg-blue: #2563eb;
+  --lg-blue-bg: #eff6ff;
+  --lg-yellow-bg: #fffbeb;
+
+  --lg-radius: 10px;
+  --lg-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --lg-shadow-md: 0 4px 12px rgba(0,0,0,0.06);
+}
+
+/* ── Base ─────────────────────────────────── */
+.theme-light-gold {
+  background-color: var(--lg-bg-base) !important;
+  color: var(--lg-text-primary) !important;
+  font-feature-settings: "tnum";
+}
+
+/* ── Sidebar — keep dark for contrast ─────── */
+.theme-light-gold aside {
+  background: linear-gradient(180deg, var(--lg-bg-sidebar) 0%, #141210 100%) !important;
+  border-color: #33302a !important;
+  backdrop-filter: none !important;
+}
+.theme-light-gold aside .font-bold {
+  color: var(--lg-gold-light) !important;
+}
+/* Sidebar nav items */
+.theme-light-gold aside a.text-slate-400,
+.theme-light-gold aside a span {
+  color: #a09888 !important;
+}
+.theme-light-gold aside a:hover {
+  background: var(--lg-bg-sidebar-hover) !important;
+}
+.theme-light-gold aside a:hover span {
+  color: #e8e0d0 !important;
+}
+/* Sidebar active nav */
+.theme-light-gold aside .bg-indigo-600\/20 {
+  background: var(--lg-gold-dim) !important;
+  border-color: rgba(184, 134, 11, 0.3) !important;
+}
+.theme-light-gold aside .bg-indigo-600\/20 span,
+.theme-light-gold aside .text-indigo-400 {
+  color: var(--lg-gold-light) !important;
+}
+/* Sidebar logo gradient */
+.theme-light-gold aside .bg-gradient-to-br.from-indigo-500.to-purple-600 {
+  background: linear-gradient(135deg, var(--lg-gold), #c6930a) !important;
+}
+/* Sidebar borders */
+.theme-light-gold aside .border-slate-700\/50 {
+  border-color: #33302a !important;
+}
+/* Sidebar toggle & settings */
+.theme-light-gold aside button.text-slate-400 {
+  color: #a09888 !important;
+}
+.theme-light-gold aside button.text-slate-400:hover {
+  color: var(--lg-gold-light) !important;
+}
+
+/* ── Header ───────────────────────────────── */
+.theme-light-gold header {
+  background: var(--lg-bg-header) !important;
+  border-color: var(--lg-border) !important;
+  backdrop-filter: blur(12px) !important;
+}
+.theme-light-gold header h1 {
+  color: var(--lg-text-primary) !important;
+}
+.theme-light-gold header button.text-slate-400 {
+  color: var(--lg-text-secondary) !important;
+}
+.theme-light-gold header button.text-slate-400:hover {
+  color: var(--lg-text-primary) !important;
+  background: var(--lg-bg-hover) !important;
+}
+.theme-light-gold header .bg-indigo-500 {
+  background: var(--lg-gold) !important;
+}
+/* Avatar */
+.theme-light-gold header .bg-gradient-to-br.from-indigo-500.to-purple-600 {
+  background: linear-gradient(135deg, var(--lg-gold), #c6930a) !important;
+}
+
+/* ── Main content area ────────────────────── */
+.theme-light-gold main {
+  background: var(--lg-bg-base) !important;
+}
+
+/* ── Cards ────────────────────────────────── */
+.theme-light-gold .bg-slate-800\/50 {
+  background: var(--lg-bg-surface) !important;
+  border-color: var(--lg-border) !important;
+  border-radius: var(--lg-radius) !important;
+  box-shadow: var(--lg-shadow) !important;
+  backdrop-filter: none !important;
+}
+.theme-light-gold .bg-slate-800\/50:hover {
+  box-shadow: var(--lg-shadow-md) !important;
+}
+
+/* ── Card gradient overlay — hide ─────────── */
+.theme-light-gold .bg-gradient-to-br.from-indigo-500\/10 {
+  background: linear-gradient(135deg, var(--lg-gold-dim), transparent) !important;
+}
+
+/* ── Text overrides ───────────────────────── */
+.theme-light-gold .text-white {
+  color: var(--lg-text-primary) !important;
+}
+.theme-light-gold .text-slate-400,
+.theme-light-gold .text-slate-500 {
+  color: var(--lg-text-secondary) !important;
+}
+.theme-light-gold .text-slate-300 {
+  color: var(--lg-text-primary) !important;
+}
+.theme-light-gold .text-slate-600 {
+  color: var(--lg-text-muted) !important;
+}
+
+/* ── Tables ───────────────────────────────── */
+.theme-light-gold table {
+  border-color: var(--lg-border) !important;
+}
+.theme-light-gold .bg-slate-800\/80 {
+  background: var(--lg-bg-elevated) !important;
+}
+.theme-light-gold thead tr {
+  background: var(--lg-bg-elevated) !important;
+}
+.theme-light-gold thead th {
+  color: var(--lg-text-secondary) !important;
+  border-color: var(--lg-border) !important;
+}
+.theme-light-gold tbody tr {
+  border-color: var(--lg-border-light) !important;
+}
+.theme-light-gold tbody tr:hover {
+  background: var(--lg-bg-hover) !important;
+}
+.theme-light-gold td {
+  color: var(--lg-text-primary) !important;
+}
+/* Pagination buttons */
+.theme-light-gold .bg-slate-700 {
+  background: var(--lg-bg-elevated) !important;
+  color: var(--lg-text-primary) !important;
+}
+.theme-light-gold .bg-slate-700:hover {
+  background: var(--lg-bg-hover) !important;
+}
+
+/* ── Inputs ───────────────────────────────── */
+.theme-light-gold input,
+.theme-light-gold select,
+.theme-light-gold textarea {
+  background: var(--lg-bg-input) !important;
+  border-color: var(--lg-border) !important;
+  border-radius: var(--lg-radius) !important;
+  color: var(--lg-text-primary) !important;
+}
+.theme-light-gold input::placeholder,
+.theme-light-gold textarea::placeholder {
+  color: var(--lg-text-muted) !important;
+}
+.theme-light-gold input:focus,
+.theme-light-gold select:focus,
+.theme-light-gold textarea:focus {
+  border-color: var(--lg-border-focus) !important;
+  box-shadow: 0 0 0 3px var(--lg-gold-ring) !important;
+}
+
+/* ── Primary buttons — Gold ───────────────── */
+.theme-light-gold .bg-indigo-600 {
+  background: linear-gradient(135deg, var(--lg-gold), var(--lg-gold-light)) !important;
+  border-color: var(--lg-gold) !important;
+  color: white !important;
+  box-shadow: 0 1px 3px rgba(184, 134, 11, 0.3) !important;
+}
+.theme-light-gold .bg-indigo-600:hover {
+  background: linear-gradient(135deg, #9a7209, var(--lg-gold)) !important;
+  box-shadow: 0 4px 12px rgba(184, 134, 11, 0.35) !important;
+}
+/* Secondary buttons */
+.theme-light-gold .bg-slate-700.border-slate-600 {
+  background: var(--lg-bg-surface) !important;
+  border-color: var(--lg-border) !important;
+  color: var(--lg-text-primary) !important;
+}
+
+/* ── Green / Red ──────────────────────────── */
+.theme-light-gold .text-emerald-400 {
+  color: var(--lg-green) !important;
+}
+.theme-light-gold .text-red-400 {
+  color: var(--lg-red) !important;
+}
+.theme-light-gold .bg-emerald-500\/20,
+.theme-light-gold .bg-emerald-500\/15 {
+  background: var(--lg-green-bg) !important;
+}
+.theme-light-gold .bg-red-500\/20,
+.theme-light-gold .bg-red-500\/15 {
+  background: var(--lg-red-bg) !important;
+}
+
+/* ── Badges ───────────────────────────────── */
+.theme-light-gold .bg-emerald-500\/20.text-emerald-400 {
+  color: var(--lg-green) !important;
+  background: var(--lg-green-bg) !important;
+  border-color: var(--lg-green-border) !important;
+}
+.theme-light-gold .bg-red-500\/20.text-red-400 {
+  color: var(--lg-red) !important;
+  background: var(--lg-red-bg) !important;
+  border-color: var(--lg-red-border) !important;
+}
+.theme-light-gold .bg-yellow-500\/20 {
+  background: var(--lg-yellow-bg) !important;
+}
+.theme-light-gold .text-yellow-400 {
+  color: #d97706 !important;
+}
+.theme-light-gold .bg-blue-500\/20 {
+  background: var(--lg-blue-bg) !important;
+}
+.theme-light-gold .text-blue-400 {
+  color: var(--lg-blue) !important;
+}
+
+/* ── KPI icon backgrounds ─────────────────── */
+.theme-light-gold .bg-indigo-500\/20 {
+  background: var(--lg-gold-dim) !important;
+}
+.theme-light-gold .text-indigo-400 {
+  color: var(--lg-gold) !important;
+}
+.theme-light-gold .bg-cyan-500\/20 {
+  background: rgba(6, 182, 212, 0.08) !important;
+}
+.theme-light-gold .text-cyan-400 {
+  color: #0891b2 !important;
+}
+.theme-light-gold .bg-purple-500\/20 {
+  background: rgba(139, 92, 246, 0.08) !important;
+}
+.theme-light-gold .text-purple-400 {
+  color: #7c3aed !important;
+}
+.theme-light-gold .bg-orange-500\/20 {
+  background: rgba(249, 115, 22, 0.08) !important;
+}
+.theme-light-gold .text-orange-400 {
+  color: #ea580c !important;
+}
+
+/* ── Nav active in sidebar (gold) ─────────── */
+.theme-light-gold .bg-indigo-500 {
+  background: var(--lg-gold) !important;
+}
+
+/* ── Tabs ─────────────────────────────────── */
+.theme-light-gold .after\:bg-indigo-400::after {
+  background: var(--lg-gold) !important;
+}
+.theme-light-gold .border-slate-700 {
+  border-color: var(--lg-border) !important;
+}
+.theme-light-gold .border-slate-700\/50 {
+  border-color: var(--lg-border-light) !important;
+}
+
+/* ── Tab bar background ───────────────────── */
+.theme-light-gold .bg-slate-800\/50.p-1\.5 {
+  background: var(--lg-bg-elevated) !important;
+}
+.theme-light-gold .bg-slate-800\/50.p-1 {
+  background: var(--lg-bg-elevated) !important;
+}
+
+/* ── Settings inner panels ────────────────── */
+.theme-light-gold .bg-slate-900\/30 {
+  background: var(--lg-bg-elevated) !important;
+}
+.theme-light-gold .bg-slate-900\/50 {
+  background: var(--lg-bg-elevated) !important;
+}
+.theme-light-gold .bg-slate-900 {
+  background: var(--lg-bg-surface) !important;
+}
+.theme-light-gold .bg-slate-800 {
+  background: var(--lg-bg-surface) !important;
+}
+.theme-light-gold .bg-slate-800\/30 {
+  background: var(--lg-bg-surface) !important;
+}
+
+/* ── Charts ───────────────────────────────── */
+.theme-light-gold .recharts-cartesian-grid line {
+  stroke: var(--lg-border-light) !important;
+}
+.theme-light-gold .recharts-text {
+  fill: var(--lg-text-muted) !important;
+}
+
+/* ── Status bar mode badges ───────────────── */
+.theme-light-gold .bg-blue-900\/50 {
+  background: var(--lg-blue-bg) !important;
+  border-color: rgba(37, 99, 235, 0.2) !important;
+}
+.theme-light-gold .text-blue-300 {
+  color: var(--lg-blue) !important;
+}
+.theme-light-gold .bg-yellow-900\/50 {
+  background: var(--lg-yellow-bg) !important;
+  border-color: rgba(217, 119, 6, 0.2) !important;
+}
+.theme-light-gold .text-yellow-300 {
+  color: #d97706 !important;
+}
+.theme-light-gold .bg-red-900\/50 {
+  background: var(--lg-red-bg) !important;
+  border-color: var(--lg-red-border) !important;
+}
+.theme-light-gold .text-red-300 {
+  color: var(--lg-red) !important;
+}
+
+/* ── Kill Switch ──────────────────────────── */
+.theme-light-gold .bg-red-600 {
+  background: var(--lg-red) !important;
+}
+
+/* ── Green toggle ─────────────────────────── */
+.theme-light-gold .bg-green-500 {
+  background: var(--lg-green) !important;
+}
+
+/* ── Indigo toggle ────────────────────────── */
+.theme-light-gold .bg-indigo-600:not(button) {
+  background: var(--lg-gold) !important;
+}
+
+/* ── Heatmap ──────────────────────────────── */
+.theme-light-gold .min-h-12 {
+  border-radius: var(--lg-radius) !important;
+}
+
+/* ── Search modal ─────────────────────────── */
+.theme-light-gold .bg-slate-900\/80 {
+  background: rgba(26, 23, 16, 0.6) !important;
+}
+
+/* ── Scrollbar ────────────────────────────── */
+.theme-light-gold ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.theme-light-gold ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.theme-light-gold ::-webkit-scrollbar-thumb {
+  background: var(--lg-border);
+  border-radius: 3px;
+}
+.theme-light-gold ::-webkit-scrollbar-thumb:hover {
+  background: var(--lg-text-muted);
+}
+
+/* ── Monospace numbers ────────────────────── */
+.theme-light-gold .font-mono,
+.theme-light-gold .font-bold {
+  font-feature-settings: "tnum";
+}
