@@ -81,6 +81,7 @@ export function SettingsPage() {
   const [modeInfo,setModeInfo]=useState(null); const [feedInfo,setFeedInfo]=useState(null); const [mlInfo,setMlInfo]=useState(null);
   const [retraining,setRetraining]=useState(false); const [retainResult,setRetainResult]=useState(null);
   const [activeTheme,setActiveTheme]=useState("dark");
+  const [scanning, setScanning] = useState(false)
 
   // Connection
   const [connOverride,setConnOverride]=useState(false);
@@ -153,7 +154,30 @@ export function SettingsPage() {
       <div className="flex gap-1.5 bg-slate-800/50 p-1.5 rounded-xl overflow-x-auto">{TABS.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap rounded-lg transition-all ${tab===t.id?"bg-indigo-600 text-white shadow-lg shadow-indigo-500/20":"text-slate-400 hover:text-white hover:bg-slate-700/50"}`}><t.icon className="w-4 h-4"/>{t.label}</button>))}</div>
 
       {/* ===================== SCAN ===================== */}
-      {tab==="scan"&&(<Card padding="lg"><CardHeader title="Scan Runtime Config" subtitle="Scanner engine parameters" action={<Radar className="w-5 h-5 text-cyan-400"/>}/>
+      {tab==="scan"&&(<Card padding="lg"><CardHeader title="Scan Runtime Config" subtitle="Scanner engine parameters" action={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={scanning}
+              onClick={async () => {
+                setScanning(true);
+                try {
+                  const res = await fetch("/scan", { method: "POST" });
+                  const data = await res.json();
+                  toast.success("Scan triggered");
+                } catch (e: any) {
+                  toast.error(`Scan failed: ${e.message}`);
+                } finally {
+                  setScanning(false);
+                }
+              }}
+            >
+              {scanning ? "Scanning..." : "🔍 Scan Now"}
+            </Button>
+            <Radar className="w-5 h-5 text-cyan-400"/>
+          </div>
+        }/>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"><NumField label="ENGINE_VERSION" value={engVer} onChange={setEngVer} hint="Engine version" step="0.01"/><NumField label="TOP_LIMIT" value={topLimit} onChange={setTopLimit} hint="Max symbols to scan" step="1"/><Field label="TIMEFRAME" hint="Scan timeframe"><Select value={timeframe} onChange={setTimeframe} options={[{value:"15m",label:"15m"},{value:"1h",label:"1h"},{value:"4h",label:"4h"}]}/></Field><BoolField label="ENABLE_SCHEDULER" value={scheduler} onChange={setScheduler} hint="Auto scan"/><BoolField label="ENABLE_MONITOR" value={monitor} onChange={setMonitor} hint="Monitor trades"/></div>
         <SaveRow saving={s2} saved={sv2} onSave={saveScanConfig} onCancel={()=>applyConfig(orig)}/></Card>)}
 
