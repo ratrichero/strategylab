@@ -323,3 +323,88 @@ def _notify_close(trade, mode):
 
     except Exception as e:
         print(f"[CLOSE NOTIFY] {e}")
+
+# ============================================================
+# PROFIT PROTECTION (BREAK-EVEN)
+# ============================================================
+
+def apply_profit_protection(db, trade, new_sl_price: float) -> bool:
+    """
+    Hủy lệnh SL cũ và đặt lại lệnh SL mới (Break-even).
+    Nếu lỗi, đóng Market toàn bộ vị thế ngay lập tức.
+    """
+    from app.services.execution_service import (
+        cancel_order_by_id,
+        place_algo_stop_market_close_position,
+        get_executor
+    )
+    from app.core.trading_mode import get_current_mode
+
+    mode = get_current_mode()
+    if mode.is_paper:
+        # Paper mode chỉ cần update DB
+        trade.stop_loss = new_sl_price
+        db.commit()
+        return True
+
+    ctx = dict(trade.market_context or {})
+    exec_ctx = dict(ctx.get("execution") or {})
+    old_sl_id = exec_ctx.get("sl_order_id")
+
+    # 1. Hủy SL cũ
+    if old_sl_id:
+        cancel_order_by_id(trade.symbol, old_sl_id)
+        print(f"🗑️ [PROFIT PROTECTION] Cancelled old SL: {old_sl_id}")
+
+    # 2. Đặt SL mới (Algo)
+    executor = get_executor()
+    if not executor or not executor.ready:
+        print("⚠️ [PROFIT PROTECTION] Executor not ready.")
+        _emergency_close_protection(db, trade, "EXECUTOR_NOT_READY")
+        return False
+
+    symbol_info = executor.get_symbol_info(trade.symbol)
+    rounded_sl = executor.round_price(trade.symbol, new_sl_price, symbol_info)
+
+    try:
+        new_sl_order = place_algo_stop_market_close_position(
+            symbol=trade.symbol,
+            direction=trade.direction,
+            trigger_price=rounded_sl
+        )
+
+        new_sl_id = str(new_sl_order.get("algoId", "")) if new_sl_order else None
+
+        if new_sl_id:
+            # Thành công: Cập nhật DB
+            trade.stop_loss = rounded_sl
+            exec_ctx["sl_order_id"] = new_sl_id
+            ctx["execution"] = exec_ctx
+            trade.market_context = ctx
+            db.commit()
+            print(f"✅ [PROFIT PROTECTION] Placed NEW SL: {new_sl_id} @ {rounded_sl}")
+            return True
+        else:
+            # Thất bại nhưng không văng Exception
+            _emergency_close_protection(db, trade, "PLACE_NEW_SL_FAILED")
+            return False
+
+    except Exception as e:
+        print(f"❌ [PROFIT PROTECTION] Error placing new SL: {e}")
+        _emergency_close_protection(db, trade, "PLACE_NEW_SL_ERROR")
+        return False
+
+
+def _emergency_close_protection(db, trade, sub_reason: str):
+    """
+    Khi dời SL thất bại -> Vị thế đang trần trụi không có SL bảo vệ.
+    Phải Market Close ngay lập tức để giữ an toàn.
+    """
+    print(f"🚨 [PROFIT PROTECTION EMERGENCY] Closing {trade.symbol} because {sub_reason}")
+    from app.services.price_feed import get_current_price
+    
+    # Lấy giá để ghi log
+    current_price = get_current_price(trade.symbol) or float(trade.entry_price)
+    
+    # Kích hoạt flow đóng lệnh chuẩn
+    close_trade(db, trade, current_price, f"PROTECTION_REPLACE_FAILED::{sub_reason}")

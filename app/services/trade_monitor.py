@@ -1,48 +1,43 @@
 """
-Trade Monitor — Event-driven SL/TP check
-
-PAPER:
-  - check price from feed
-  - simulate close locally
-
-LIVE / TESTNET:
-  - Binance handles entry / TP / SL on exchange
-  - monitor chỉ sync position status và xử lý edge cases
-  - close_trade() sẽ lo cleanup remainder entry + sibling exits
+Trade Monitor — Event-driven SL/TP check & Profit Protection (Break-Even)
 """
 
 from typing import Dict, Optional
-
 from app.db.session import SessionLocal
 from app.db.models import Signal
-from app.services.trade_close_service import close_trade
+from app.services.trade_close_service import close_trade, apply_profit_protection
 from app.core.trading_mode import get_current_mode, TradingMode
 
-
-# ============================================================
-# MAIN
-# ============================================================
+# --- CẤU HÌNH HARDCODE CHO PROFIT PROTECTION ---
+PROFIT_PROTECTION_CONFIG = {
+    "enabled": True,
+    "mode": "breakeven",
+    "trigger_r": {
+        "15m": 1.0,
+        "1h": 1.0,
+        "4h": 1.0
+    },
+    "buffer_pct": {
+        "15m": 0.001,
+        "1h": 0.0015,
+        "4h": 0.002
+    },
+    "once_only": True
+}
+# -----------------------------------------------
 
 def monitor_open_trades(price_map: Optional[Dict[str, float]] = None):
-    """
-    Monitor all OPEN signals.
-
-    PAPER:
-      - local check current vs SL/TP
-
-    LIVE / TESTNET:
-      - sync exchange position status
-      - nếu position gone -> close local signal
-      - nếu position vẫn còn nhưng giá vượt sâu qua SL -> safety close
-    """
     with SessionLocal() as db:
         open_trades = db.query(Signal).filter(Signal.status == "OPEN").all()
         if not open_trades:
             return
 
         if not price_map:
-            from app.services.price_feed import get_all_current_prices
-            price_map = get_all_current_prices()
+            try:
+                from app.services.price_feed import get_all_current_prices
+                price_map = get_all_current_prices()
+            except Exception:
+                price_map = {}
 
         if not price_map:
             return
@@ -62,14 +57,7 @@ def monitor_open_trades(price_map: Optional[Dict[str, float]] = None):
         db.commit()
 
 
-# ============================================================
-# PAPER MODE
-# ============================================================
-
 def _check_paper(db, trade, price_map):
-    """
-    Paper mode: check current price vs SL/TP manually.
-    """
     current = price_map.get(trade.symbol)
     if current is None:
         return
@@ -93,21 +81,7 @@ def _check_paper(db, trade, price_map):
         print(f"[PAPER CLOSE] {trade.symbol} {trade.direction} TP @ {tp:.4f}")
 
 
-# ============================================================
-# LIVE / TESTNET MODE
-# ============================================================
-
 def _check_live_testnet(db, trade, price_map, mode):
-    """
-    LIVE / TESTNET monitor logic.
-
-    LIFECYCLE MỚI:
-    - pending_engine lo sync entry order / partial fill / create-update signal
-    - trade_monitor chỉ nhìn signal OPEN + position thật trên exchange
-    - khi position đóng xong:
-        close_trade() sẽ lo reconcile pending, cleanup exits,
-        cancel remainder entry nếu còn, finalize pending lifecycle
-    """
     from app.services.execution_service import check_position_closed
 
     current = price_map.get(trade.symbol)
@@ -116,81 +90,99 @@ def _check_live_testnet(db, trade, price_map, mode):
     current = float(current)
 
     # 1) Position đã bị exchange đóng rồi?
-    #    (TP/SL/manual/external close)
     if check_position_closed(trade):
         reason, exit_price = _infer_exchange_close_reason(trade, current)
         close_trade(db, trade, exit_price, reason)
-        print(
-            f"[LIVE SYNC] {trade.symbol} {trade.direction} "
-            f"{reason} @ {exit_price:.4f}"
-        )
+        print(f"[LIVE SYNC] {trade.symbol} {trade.direction} {reason} @ {exit_price:.4f}")
         return
 
-    # 2) Position vẫn còn mở — safety net
+    # 2) Kiểm tra Break-even / Profit Protection
+    if PROFIT_PROTECTION_CONFIG.get("enabled", False):
+        _check_profit_protection(db, trade, current)
+
+    # 3) Safety net
     _check_live_safety_net(db, trade, current)
 
 
-# ============================================================
-# LIVE HELPERS
-# ============================================================
+def _check_profit_protection(db, trade, current_price: float):
+    """
+    Kiểm tra xem giá đã chạy đủ R để dời SL về Break-even chưa.
+    """
+    ctx = trade.market_context or {}
+    # Nếu đã dời SL rồi và config yêu cầu once_only -> bỏ qua
+    if ctx.get("breakeven_applied") and PROFIT_PROTECTION_CONFIG.get("once_only", True):
+        return
+
+    entry = float(trade.entry_price)
+    original_sl = float(trade.stop_loss)
+    tf = trade.timeframe
+
+    if entry <= 0 or original_sl <= 0:
+        return
+
+    # Tính khoảng cách 1R gốc
+    r_distance = abs(entry - original_sl)
+    if r_distance == 0:
+        return
+
+    # Tính R hiện tại đang đạt được
+    if trade.direction == "LONG":
+        current_r = (current_price - entry) / r_distance
+    else:
+        current_r = (entry - current_price) / r_distance
+
+    # Lấy ngưỡng kích hoạt từ config
+    trigger_r = PROFIT_PROTECTION_CONFIG.get("trigger_r", {}).get(tf, 1.0)
+    
+    # Nếu giá chạy đạt mốc R yêu cầu -> Tiến hành dời SL
+    if current_r >= trigger_r:
+        buffer_pct = PROFIT_PROTECTION_CONFIG.get("buffer_pct", {}).get(tf, 0.001)
+        
+        # Tính giá SL mới (Hòa vốn + phí/buffer)
+        if trade.direction == "LONG":
+            new_sl = entry * (1 + buffer_pct)
+        else:
+            new_sl = entry * (1 - buffer_pct)
+        
+        # Ngăn chặn việc dời SL ngược hoặc dời khi giá đang ở sai vị trí
+        if trade.direction == "LONG" and new_sl >= current_price:
+            return
+        if trade.direction == "SHORT" and new_sl <= current_price:
+            return
+
+        print(f"🛡️ [PROFIT PROTECTION] {trade.symbol} hit {current_r:.2f}R. Moving SL to Break-even.")
+        
+        # Gọi sang Trade Close Service để xử lý dời lệnh trên sàn
+        success = apply_profit_protection(db, trade, new_sl)
+        
+        # Đánh dấu đã dời vào market_context
+        if success:
+            ctx["breakeven_applied"] = True
+            trade.market_context = ctx
+            db.commit()
+
 
 def _infer_exchange_close_reason(trade, current_price: float):
-    """
-    Suy luận reason khi exchange position đã biến mất.
-
-    Vì exchange có thể đã đóng bởi TP/SL, nhưng local chỉ nhìn thấy:
-      - position size = 0
-      - current price hiện tại
-    Nên ta suy luận mềm:
-      - gần SL => SL
-      - gần TP => TP
-      - còn lại => BINANCE_CLOSE
-    """
     sl = float(trade.stop_loss)
     tp = float(trade.take_profit)
     current = float(current_price)
 
-    # Tolerance mềm để bắt trường hợp giá đã chạy qua một chút
-    # hoặc current snapshot đến chậm
     sl_tol = 0.01   # 1%
     tp_tol = 0.01   # 1%
 
     if trade.direction == "LONG":
-        if current <= sl * (1 + sl_tol):
-            return "SL", sl
-        elif current >= tp * (1 - tp_tol):
-            return "TP", tp
-        else:
-            return "BINANCE_CLOSE", current
+        if current <= sl * (1 + sl_tol): return "SL", sl
+        elif current >= tp * (1 - tp_tol): return "TP", tp
+        else: return "BINANCE_CLOSE", current
     else:
-        if current >= sl * (1 - sl_tol):
-            return "SL", sl
-        elif current <= tp * (1 + tp_tol):
-            return "TP", tp
-        else:
-            return "BINANCE_CLOSE", current
+        if current >= sl * (1 - sl_tol): return "SL", sl
+        elif current <= tp * (1 + tp_tol): return "TP", tp
+        else: return "BINANCE_CLOSE", current
 
 
 def _check_live_safety_net(db, trade, current: float):
-    """
-    Safety net cho LIVE/TESTNET.
-
-    Trong điều kiện bình thường:
-      - Binance tự lo SL/TP
-    Nhưng nếu vì lý do nào đó:
-      - giá đã xuyên sâu qua SL
-      - mà position vẫn chưa đóng
-    thì bot sẽ chủ động close để bảo vệ tài khoản.
-
-    Lưu ý:
-      - close_trade() bên dưới sẽ gọi execution_service.close_position()
-      - và sau đó cleanup remainder entry / pending lifecycle đúng rule mới
-    """
     sl = float(trade.stop_loss)
-    tp = float(trade.take_profit)
-
     if trade.direction == "LONG":
-        # Safety close nếu giá đã đi sâu dưới SL mà Binance chưa close
         if current <= sl * 0.995:
             print(f"⚠️ [LIVE SAFETY] {trade.symbol} LONG below SL deeply, force close")
             close_trade(db, trade, current, "SL_SAFETY")
