@@ -19,14 +19,13 @@ Position sizing:
     + risk_based   -> risk % vốn
 """
 
-import os
 import time
 import hmac
 import hashlib
 import traceback
 import requests
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 from urllib.parse import urlencode
 
 from app.core.trading_mode import get_trading_mode, TradingMode
@@ -36,7 +35,7 @@ from app.core.trading_mode import get_trading_mode, TradingMode
 # CONSTANTS
 # ============================================================
 
-ALGO_WORKING_TYPE = "MARK_PRICE"   # anh đã chốt dùng MARK_PRICE
+ALGO_WORKING_TYPE = "MARK_PRICE"
 SIGNED_TIMEOUT = 10
 
 _http = requests.Session()
@@ -56,8 +55,8 @@ class OrderResult:
     error:           Optional[str]   = None
     mode:            str             = "PAPER"
     leverage:        int             = 1
-    sl_order_id:     Optional[str]   = None   # algoId
-    tp_order_id:     Optional[str]   = None   # algoId
+    sl_order_id:     Optional[str]   = None
+    tp_order_id:     Optional[str]   = None
 
 
 # ============================================================
@@ -102,16 +101,6 @@ def _calc_order_size(
     stop_loss: float,
     balance: float
 ) -> Tuple[float, int]:
-    """
-    Tính notional + leverage theo POSITION_SIZE_CONFIG
-
-    fixed_usdt:
-      fixed_usdt_per_trade = margin budget
-      notional = fixed_margin * leverage
-
-    risk_based:
-      dùng PositionSizer như cũ
-    """
     from app.services.config_service import get_runtime_config
 
     cfg = get_runtime_config()
@@ -139,10 +128,6 @@ def _calc_order_size(
 
 
 def _get_min_notional(symbol_info: Optional[Dict]) -> float:
-    """
-    Đọc min notional từ exchangeInfo.
-    Fallback = 5 USDT.
-    """
     if not symbol_info:
         return 5.0
 
@@ -169,10 +154,6 @@ def _get_min_notional(symbol_info: Optional[Dict]) -> float:
 # ============================================================
 
 def _signed_request(method: str, path: str, params: Dict) -> Dict:
-    """
-    Raw signed HTTP request dùng cho algo endpoints.
-    Vì connector hiện tại không xử lý /fapi/v1/algoOrder như mong muốn.
-    """
     mode = get_trading_mode()
     cfg = mode.get_binance_config()
 
@@ -384,7 +365,7 @@ class BinanceExecutor:
         except Exception as e:
             err_str = str(e)
             if "-2011" in err_str or "Unknown order" in err_str:
-                return True  # đã không còn = coi như cancel thành công
+                return True
             print(f"[EXEC] Cancel order error {symbol}/{order_id}: {e}")
             return False
 
@@ -406,6 +387,15 @@ class BinanceExecutor:
         except Exception as e:
             print(f"[EXEC] Query order error {symbol}/{order_id}: {e}")
             return None
+
+    def get_open_orders(self, symbol: str) -> List[Dict]:
+        if not self.ready:
+            return []
+        try:
+            return self._client.get_orders(symbol=symbol)
+        except Exception as e:
+            print(f"[EXEC] Get open orders error {symbol}: {e}")
+            return []
 
     # ── Position ─────────────────────────────────────────
 
@@ -440,6 +430,28 @@ class BinanceExecutor:
         except Exception as e:
             print(f"[EXEC] Position info error: {e}")
         return None
+
+    def list_open_positions(self) -> List[Dict]:
+        if not self.ready:
+            return []
+        out = []
+        try:
+            positions = self._client.get_position_risk()
+            for p in positions or []:
+                amt = float(p.get("positionAmt", 0) or 0)
+                if amt == 0:
+                    continue
+                out.append({
+                    "symbol":           p.get("symbol"),
+                    "positionAmt":      amt,
+                    "entryPrice":       float(p.get("entryPrice", 0)),
+                    "unrealizedProfit": float(p.get("unRealizedProfit", 0)),
+                    "leverage":         int(p.get("leverage", 1)),
+                    "direction":        "LONG" if amt > 0 else "SHORT",
+                })
+        except Exception as e:
+            print(f"[EXEC] list_open_positions error: {e}")
+        return out
 
     def close_position(
         self, symbol: str, direction: str
@@ -483,10 +495,6 @@ def open_position(
     price_map: Dict,
     fill_price: Optional[float] = None
 ) -> OrderResult:
-    """
-    PAPER path chính.
-    LIVE/TESTNET legacy market entry giữ lại vì backward compatibility.
-    """
     mode = get_trading_mode()
 
     if mode.is_paper:
@@ -576,11 +584,6 @@ def open_position(
 # ============================================================
 
 def place_limit_entry_order(pending) -> OrderResult:
-    """
-    Place LIMIT entry order.
-    pending.trigger_price / stop_loss / take_profit
-    phải đã được reprice + round trước khi vào đây.
-    """
     mode = get_trading_mode()
 
     if mode.is_paper:
@@ -689,23 +692,11 @@ def place_limit_entry_order(pending) -> OrderResult:
 # ============================================================
 
 def _build_client_algo_id(prefix: str, symbol: str) -> str:
-    """
-    clientAlgoId <= 36 chars.
-    """
     ts = int(time.time())
-    # ví dụ: QRL_SL_HOMEUSDT_17123456
     return f"QRL_{prefix}_{symbol}_{ts}"[:36]
 
 
 def place_algo_stop_market_close_position(symbol: str, direction: str, trigger_price: float) -> Optional[Dict]:
-    """
-    Place SL algo order:
-      algoType=CONDITIONAL
-      type=STOP_MARKET
-      triggerPrice
-      closePosition=true
-      workingType=MARK_PRICE
-    """
     close_side = "SELL" if direction == "LONG" else "BUY"
 
     params = {
@@ -724,14 +715,6 @@ def place_algo_stop_market_close_position(symbol: str, direction: str, trigger_p
 
 
 def place_algo_take_profit_market_close_position(symbol: str, direction: str, trigger_price: float) -> Optional[Dict]:
-    """
-    Place TP algo order:
-      algoType=CONDITIONAL
-      type=TAKE_PROFIT_MARKET
-      triggerPrice
-      closePosition=true
-      workingType=MARK_PRICE
-    """
     close_side = "SELL" if direction == "LONG" else "BUY"
 
     params = {
@@ -750,13 +733,6 @@ def place_algo_take_profit_market_close_position(symbol: str, direction: str, tr
 
 
 def place_close_position_exit_orders(symbol: str, direction: str, stop_loss: float, take_profit: float) -> Dict:
-    """
-    Place 2 algo orders:
-      - SL STOP_MARKET closePosition=true
-      - TP TAKE_PROFIT_MARKET closePosition=true
-
-    Returns algoIds.
-    """
     mode = get_trading_mode()
     if mode.is_paper:
         return {"sl_order_id": None, "tp_order_id": None}
@@ -797,9 +773,6 @@ def place_close_position_exit_orders(symbol: str, direction: str, stop_loss: flo
 
 
 def get_algo_order_status(algo_id: str) -> Dict:
-    """
-    Query single algo order.
-    """
     mode = get_trading_mode()
     if mode.is_paper:
         return {
@@ -834,9 +807,6 @@ def get_algo_order_status(algo_id: str) -> Dict:
 
 
 def get_open_algo_orders(symbol: Optional[str] = None) -> list:
-    """
-    Query all OPEN algo orders.
-    """
     mode = get_trading_mode()
     if mode.is_paper:
         return []
@@ -853,9 +823,6 @@ def get_open_algo_orders(symbol: Optional[str] = None) -> list:
 
 
 def cancel_algo_order(algo_id: str) -> bool:
-    """
-    Cancel single algo order by algoId.
-    """
     mode = get_trading_mode()
     if mode.is_paper:
         return True
@@ -872,9 +839,6 @@ def cancel_algo_order(algo_id: str) -> bool:
 
 
 def cancel_all_algo_orders(symbol: str) -> bool:
-    """
-    Cancel all OPEN algo orders for a symbol.
-    """
     mode = get_trading_mode()
     if mode.is_paper:
         return True
@@ -894,9 +858,6 @@ def cancel_all_algo_orders(symbol: str) -> bool:
 # ============================================================
 
 def get_entry_order_status(symbol: str, order_id: str) -> Dict:
-    """
-    Query exchange entry LIMIT order status.
-    """
     mode = get_trading_mode()
     if mode.is_paper:
         return {
@@ -946,14 +907,6 @@ def get_entry_order_status(symbol: str, order_id: str) -> Dict:
 # ============================================================
 
 def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
-    """
-    Smart cancel:
-    1. thử cancel normal order trước
-    2. nếu fail thì thử cancel algo order
-
-    Vì sl_order_id / tp_order_id hiện giờ lưu algoId,
-    còn exchange_order_id là normal orderId.
-    """
     if not order_id:
         return False
 
@@ -965,38 +918,26 @@ def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
     if not executor or not executor.ready:
         return False
 
-    # thử normal
     if executor.cancel_order(symbol, order_id):
         return True
 
-    # fallback algo
     return cancel_algo_order(order_id)
 
 
 def cancel_exit_orders(pending) -> bool:
-    """
-    Cancel 2 algo exits theo id.
-    """
     ok1 = cancel_order_by_id(pending.symbol, getattr(pending, "sl_order_id", None))
     ok2 = cancel_order_by_id(pending.symbol, getattr(pending, "tp_order_id", None))
     return ok1 or ok2
 
 
 def cancel_entry_and_exits(pending) -> bool:
-    """
-    Cancel:
-    - entry normal order
-    - exit algo orders
-    """
     ok = False
 
-    # entry normal
     ok = cancel_order_by_id(
         pending.symbol,
         getattr(pending, "exchange_order_id", None)
     ) or ok
 
-    # exits algo
     ok = cancel_order_by_id(
         pending.symbol,
         getattr(pending, "sl_order_id", None)
@@ -1015,12 +956,6 @@ def cancel_entry_and_exits(pending) -> bool:
 # ============================================================
 
 def close_position(trade, reason: str) -> OrderResult:
-    """
-    Close live/testnet position:
-    - cancel ALL normal orders
-    - cancel ALL algo orders
-    - market close position
-    """
     mode = get_trading_mode()
 
     if mode.is_paper:
@@ -1035,7 +970,6 @@ def close_position(trade, reason: str) -> OrderResult:
         )
 
     try:
-        # cleanup all normal + algo orders
         executor.cancel_all_orders(trade.symbol)
         cancel_all_algo_orders(trade.symbol)
 
@@ -1095,6 +1029,30 @@ def sync_position(trade) -> Optional[Dict]:
     return executor.get_position_info(trade.symbol)
 
 
+def get_position_info_by_symbol(symbol: str) -> Optional[Dict]:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return None
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return None
+
+    return executor.get_position_info(symbol)
+
+
+def list_open_positions() -> List[Dict]:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return []
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return []
+
+    return executor.list_open_positions()
+
+
 def check_position_closed(trade) -> bool:
     mode = get_trading_mode()
     if mode.is_paper:
@@ -1106,6 +1064,7 @@ def check_position_closed(trade) -> bool:
 
     size = executor.get_position_size(trade.symbol)
     return size == 0
+
 
 def get_open_orders(symbol: str) -> list:
     mode = get_trading_mode()

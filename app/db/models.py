@@ -47,7 +47,7 @@ def _dt_server(**kw):
 class Signal(Base):
     __tablename__ = "signals"
 
-    id             = Column(BigInteger, primary_key=True)   # ← fix: Integer → BigInteger
+    id             = Column(BigInteger, primary_key=True)
     symbol         = Column(String(20),  nullable=False)
     timeframe      = Column(String(10),  nullable=False)
     pattern        = Column(String(50))
@@ -56,6 +56,7 @@ class Signal(Base):
     entry_price    = Column(Numeric)
     stop_loss      = Column(Numeric)
     take_profit    = Column(Numeric)
+    quantity       = Column(Float,       nullable=True)
     rsi            = Column(Numeric)
     volume_ratio   = Column(Numeric)
     atr_ratio      = Column(Numeric)
@@ -145,10 +146,10 @@ class TradeOutcomeAnalytics(Base):
     rr_planned            = Column(Numeric)
     rr_realized           = Column(Numeric)
     trade_return          = Column(Numeric)
-    label                 = Column(Integer)       # 1=WIN, 0=LOSS
+    label                 = Column(Integer)
     max_drawdown          = Column(Numeric)
     max_favorable         = Column(Numeric)
-    time_to_exit          = Column(Integer)       # seconds
+    time_to_exit          = Column(Integer)
     time_to_mae           = Column(Integer,  nullable=True)
     time_to_mfe           = Column(Integer,  nullable=True)
     volatility_at_entry   = Column(Numeric)
@@ -194,7 +195,7 @@ class ScanRun(Base):
 
     id              = Column(Integer, primary_key=True)
     timeframe       = Column(String)
-    scan_time       = _dt(nullable=False)        # ← fix: app tự set explicit, không dùng default
+    scan_time       = _dt(nullable=False)
     config_id       = Column(Integer, ForeignKey("scan_config.id", ondelete="SET NULL"), nullable=True)
     created_at      = _dt_now(nullable=False)
     engine_metadata = Column(JSON, nullable=True)
@@ -213,12 +214,12 @@ class ScanDebug(Base):
     id                  = Column(Integer, primary_key=True)
     scan_id             = Column(
         Integer,
-        ForeignKey("scan_run.id", ondelete="CASCADE"),   # ← fix: thêm ondelete
+        ForeignKey("scan_run.id", ondelete="CASCADE"),
         nullable=True,
     )
     signal_id           = Column(
         BigInteger,
-        ForeignKey("signals.id", ondelete="SET NULL"),   # ← fix: thêm ondelete
+        ForeignKey("signals.id", ondelete="SET NULL"),
         nullable=True,
     )
     symbol              = Column(String)
@@ -243,7 +244,7 @@ class ScanDebug(Base):
     created_at          = _dt_now(nullable=False)
 
     __table_args__ = (
-        Index("idx_scan_debug_scan_id",       "scan_id"),
+        Index("idx_scan_debug_scan_id",        "scan_id"),
         Index("idx_scan_debug_symbol_created", "symbol", "created_at"),
     )
 
@@ -274,9 +275,9 @@ class PendingSignal(Base):
     ml_prob          = Column(Float)
 
     # ── Snapshot at scan time ─────────────────────────────
-    indicators_snapshot = Column(JSON)
-    candle_time         = _dt(nullable=True)
-    engine_version      = Column(Numeric, nullable=True)  # ← version lúc scan, không đổi khi fill
+    indicators_snapshot   = Column(JSON)
+    candle_time           = _dt(nullable=True)
+    engine_version        = Column(Numeric, nullable=True)
 
     # ── Entry params ─────────────────────────────────────
     trigger_price    = Column(Float,  nullable=False)
@@ -287,32 +288,31 @@ class PendingSignal(Base):
     atr_mult_entry   = Column(Float)
     regime           = Column(String)
 
-    # ── live/testnet execution tracking params ─────────────────────────────────────
-    exchange_order_id   = Column(String, nullable=True)
-    exchange_status     = Column(String, nullable=True)
-    placed_at           = _dt(nullable=True)
-    order_quantity      = Column(Float, nullable=True)
-    executed_qty        = Column(Float, nullable=True, default=0)
-    accounted_qty       = Column(Float, nullable=True, default=0)
-    avg_fill_price      = Column(Float, nullable=True)
+    # ── live/testnet execution tracking params ───────────
+    exchange_order_id     = Column(String, nullable=True)
+    exchange_status       = Column(String, nullable=True)
+    placed_at             = _dt(nullable=True)
+    order_quantity        = Column(Float, nullable=True)
+    executed_qty          = Column(Float, nullable=True, default=0)
+    accounted_qty         = Column(Float, nullable=True, default=0)
+    avg_fill_price        = Column(Float, nullable=True)
     last_exchange_sync_at = _dt(nullable=True)
 
-    signal_id           = Column(BigInteger, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True)
+    signal_id             = Column(BigInteger, ForeignKey("signals.id", ondelete="SET NULL"), nullable=True)
 
-    sl_order_id         = Column(String, nullable=True)
-    tp_order_id         = Column(String, nullable=True)
-    reprice_applied     = Column(Boolean, nullable=False, default=False)
+    sl_order_id           = Column(String, nullable=True)
+    tp_order_id           = Column(String, nullable=True)
+    reprice_applied       = Column(Boolean, nullable=False, default=False)
 
-    
     # ── Refs ─────────────────────────────────────────────
     scan_id       = Column(
         Integer,
-        ForeignKey("scan_run.id", ondelete="SET NULL"),   # ← fix: thêm ondelete
+        ForeignKey("scan_run.id", ondelete="SET NULL"),
         nullable=True,
     )
     scan_debug_id = Column(
         Integer,
-        ForeignKey("scan_debug.id", ondelete="SET NULL"), # ← fix: thêm ondelete
+        ForeignKey("scan_debug.id", ondelete="SET NULL"),
         nullable=True,
     )
 
@@ -330,10 +330,51 @@ class PendingSignal(Base):
         Index(
             "idx_pending_status_expire",
             "status", "expire_at",
-            postgresql_where=("status = 'WAIT'"),   # partial index
+            postgresql_where=("status = 'WAIT'"),
         ),
         Index("idx_pending_symbol_tf_status", "symbol", "timeframe", "status"),
         Index("idx_pending_created_at",       "created_at"),
+    )
+
+
+# ============================================================
+# ExecutionCommand
+# ============================================================
+class ExecutionCommand(Base):
+    __tablename__ = "execution_commands"
+
+    id              = Column(BigInteger, primary_key=True)
+    symbol          = Column(String, nullable=False)
+    command_type    = Column(String, nullable=False)
+    status          = Column(String, nullable=False, default="REQUESTED")
+
+    pending_id      = Column(
+        BigInteger,
+        ForeignKey("pending_signals.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    signal_id       = Column(
+        BigInteger,
+        ForeignKey("signals.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    requested_at    = _dt_now(nullable=False)
+    sent_at         = _dt(nullable=True)
+    confirmed_at    = _dt(nullable=True)
+
+    request_payload = Column(JSON, nullable=True)
+    result_payload  = Column(JSON, nullable=True)
+    error_message   = Column(Text, nullable=True)
+
+    created_at      = _dt_now(nullable=False)
+    updated_at      = _dt_now_update(nullable=False)
+
+    __table_args__ = (
+        Index("idx_execution_commands_symbol_status", "symbol", "status"),
+        Index("idx_execution_commands_type_status",   "command_type", "status"),
+        Index("idx_execution_commands_pending_id",    "pending_id"),
+        Index("idx_execution_commands_signal_id",     "signal_id"),
     )
 
 
@@ -374,7 +415,7 @@ class AppConfig(Base):
 
     key        = Column(String, primary_key=True)
     value      = Column(Text,   nullable=False)
-    updated_at = _dt_now_update(nullable=False)   # ← fix: tự update khi UPDATE row
+    updated_at = _dt_now_update(nullable=False)
 
 
 # ============================================================
@@ -395,7 +436,7 @@ class StrategyStats(Base):
     avg_loss       = Column(Numeric)
     sharpe         = Column(Numeric)
     max_drawdown   = Column(Numeric)
-    last_updated   = _dt_now_update(nullable=False)   # ← fix: tự update
+    last_updated   = _dt_now_update(nullable=False)
 
     __table_args__ = (
         UniqueConstraint(
@@ -445,7 +486,7 @@ class AuditLog(Base):
     id         = Column(BigInteger, primary_key=True)
     event_type = Column(String)
     message    = Column(Text)
-    meta_json  = Column("metadata", JSON)   # ← "metadata" = tên cột DB, meta_json = tên Python
+    meta_json  = Column("metadata", JSON)
     created_at = _dt_now(nullable=False)
 
     __table_args__ = (

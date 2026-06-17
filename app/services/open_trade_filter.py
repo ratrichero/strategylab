@@ -7,11 +7,18 @@ QUAN TRỌNG:
 - get_open_trade_filter() phải nhận đúng OTF config block
 - KHÔNG được truyền full runtime_cfg vào
 - Nếu lỡ truyền full runtime_cfg, function sẽ tự bóc OPEN_TRADE_FILTER ra
+
+LIVE NOTE:
+- LIVE dùng cùng ConflictRule với scanner:
+    + open signal block = symbol + status=OPEN
+    + pending block     = symbol + status=WAIT
+- Hỗ trợ exclude current pending/signal để tránh self-block
+  khi check ở intent phase / command phase.
 """
 
 from datetime import timedelta
 from typing import Tuple, Optional, Dict
-from app.core.trading_mode import get_current_mode, TradingMode
+from app.core.trading_mode import get_current_mode, TradingMode, get_trading_mode
 from app.core.time_utils import utc_now, vn_now
 
 
@@ -25,7 +32,8 @@ class OpenTradeFilter:
 
     def check(self, symbol, direction, strategy_name, pattern,
                timeframe, regime, score, ml_prob, components,
-               atr_ratio=None, db=None) -> Tuple[bool, str]:
+               atr_ratio=None, db=None,
+               exclude_pending_id=None, exclude_signal_id=None) -> Tuple[bool, str]:
 
         # 1. Bật / Tắt Filter
         if not self.cfg.get("enabled", False):
@@ -111,7 +119,11 @@ class OpenTradeFilter:
         # ========================================================
 
         if db is not None:
-            ok, reason = self._check_position(db, symbol, strategy_name, timeframe)
+            ok, reason = self._check_position(
+                db, symbol, strategy_name, timeframe,
+                exclude_pending_id=exclude_pending_id,
+                exclude_signal_id=exclude_signal_id,
+            )
             if not ok:
                 return False, reason
 
@@ -127,32 +139,56 @@ class OpenTradeFilter:
 
         return True, "passed"
 
-    def _check_position(self, db, symbol, strategy_name, timeframe):
+    def _check_position(self, db, symbol, strategy_name, timeframe,
+                        exclude_pending_id=None, exclude_signal_id=None):
         from app.db.models import Signal, PendingSignal
         from sqlalchemy import func
 
         pos = self.cfg.get("position", {})
         mode = get_current_mode()
+        mode_manager = get_trading_mode()
+        rule = mode_manager.get_conflict_rule()
 
         max_conc = pos.get("max_concurrent_trades", 999)
         if db.query(Signal).filter(Signal.status == "OPEN").count() >= max_conc:
             return False, "max_concurrent_reached"
 
-        if mode != TradingMode.PAPER:
-            if db.query(Signal).filter(
-                    Signal.symbol == symbol, Signal.status == "OPEN").count():
+        # ── Conflict checks dùng cùng rule với scanner ───────
+        open_cond = rule.get_open_signal_block_condition(
+            symbol, strategy_name, timeframe, mode
+        )
+        open_q = db.query(Signal).filter_by(**open_cond)
+
+        if exclude_signal_id is not None:
+            open_q = open_q.filter(Signal.id != exclude_signal_id)
+
+        if open_q.count() > 0:
+            if mode != TradingMode.PAPER:
                 return False, "live_symbol_occupied"
-            if db.query(PendingSignal).filter(
-                    PendingSignal.symbol == symbol,
-                    PendingSignal.status == "WAIT").count():
+            return False, "max_per_symbol"
+
+        pending_cond = rule.get_pending_block_condition(
+            symbol, strategy_name, timeframe, mode
+        )
+        pending_q = db.query(PendingSignal).filter_by(**pending_cond)
+
+        if exclude_pending_id is not None:
+            pending_q = pending_q.filter(PendingSignal.id != exclude_pending_id)
+
+        if pending_q.count() > 0:
+            if mode != TradingMode.PAPER:
                 return False, "live_symbol_pending_exists"
-        else:
+
+        # ── PAPER-specific max per symbol ────────────────────
+        if mode == TradingMode.PAPER:
             max_sym = pos.get("max_per_symbol", 1)
-            if db.query(Signal).filter(
-                    Signal.symbol == symbol,
-                    Signal.strategy_name == strategy_name,
-                    Signal.timeframe == timeframe,
-                    Signal.status == "OPEN").count() >= max_sym:
+            paper_open_count = db.query(Signal).filter(
+                Signal.symbol == symbol,
+                Signal.strategy_name == strategy_name,
+                Signal.timeframe == timeframe,
+                Signal.status == "OPEN"
+            ).count()
+            if paper_open_count >= max_sym:
                 return False, "max_per_symbol"
 
         max_tf_cfg = pos.get("max_per_timeframe", {})
@@ -219,7 +255,6 @@ class OpenTradeFilter:
         if blackout > 0:
             now_utc = utc_now()
             for fh in [0, 8, 16]:
-                from datetime import timedelta
                 ft = now_utc.replace(hour=fh, minute=0, second=0, microsecond=0)
                 if ft <= now_utc:
                     ft += timedelta(days=1)

@@ -48,7 +48,44 @@ DEFAULTS = {
         "default_leverage": 3,
         "max_position_usdt": 500,
     }),
-    "CONNECTION_OVERRIDE": "false"
+    "CONNECTION_OVERRIDE": "false",
+    "STRATEGY_CONFIG": json.dumps({
+        "candlestick": {
+            "threshold": 7.5,
+            "patterns": {
+                "Bullish Engulfing": 8.0,
+                "Hammer": 8.5,
+                "Bearish Engulfing": 99.0,
+                "Morning Star": 8.0,
+                "Evening Star": 8.5,
+                "Bullish Marubozu": 7.5,
+                "Bearish Marubozu": 99.0
+            }
+        },
+        "pullback": {
+            "threshold": 8.0,
+            "patterns": {
+                "Bullish Pullback": 8.0,
+                "Bearish Pullback": 8.2
+            }
+        },
+        "breakout": {
+            "threshold": 8.0,
+            "patterns": {
+                "Bullish Breakout": 8.0,
+                "Bearish Breakout": 8.2
+            }
+        },
+        "mean_reversion": {
+            "threshold": 99.0,
+            "patterns": {
+                "Mean Reversion": 99.0
+            }
+        },
+        "trend_following": {
+            "threshold": 8.0
+        }
+    }),
 }
 
 _runtime_cache = None
@@ -91,8 +128,9 @@ def get_runtime_config(force_reload=False):
         "STRATEGY_THRESHOLDS":   parse_json("STRATEGY_THRESHOLDS"),
         "MAX_OPEN_TRADES":       int(config.get("MAX_OPEN_TRADES", DEFAULTS["MAX_OPEN_TRADES"])),
         "LIMIT_ORDER_CONFIG":    parse_json("LIMIT_ORDER_CONFIG"),
-        "POSITION_SIZE_CONFIG":   parse_json("POSITION_SIZE_CONFIG"),
-        "CONNECTION_OVERRIDE":    config.get("CONNECTION_OVERRIDE", DEFAULTS["CONNECTION_OVERRIDE"]),
+        "POSITION_SIZE_CONFIG":  parse_json("POSITION_SIZE_CONFIG"),
+        "CONNECTION_OVERRIDE":   config.get("CONNECTION_OVERRIDE", DEFAULTS["CONNECTION_OVERRIDE"]),
+        "STRATEGY_CONFIG":       parse_json("STRATEGY_CONFIG"),
         
     }
     return _runtime_cache
@@ -104,7 +142,7 @@ def update_runtime_config(data: dict):
     for k, v in data.items():
         if k in ["RISK_CONFIG","DERIVATIVE_CONFIG","PENDING_CONFIG",
                  "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS",
-                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG"]:
+                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG","STRATEGY_CONFIG"]:
             try: json.loads(v)
             except: db.close(); raise ValueError(f"{k} is invalid JSON")
         db.execute(text("""

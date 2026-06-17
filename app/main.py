@@ -11,8 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import TELEGRAM_TOKEN
-#from app.core.config import get_telegram_token
-from app.core.trading_mode import get_trading_mode
+from app.core.trading_mode import get_trading_mode, get_current_mode, TradingMode
 from app.core.time_utils import utc_now, vn_now_str
 from app.services.price_feed import (
     start_price_feed, stop_price_feed,
@@ -73,27 +72,32 @@ _monitor_running = False
 _monitor_lock = threading.Lock()
 
 
-# ── Price Callback — FIXED ───────────────────────────────────
+# ── Price Callback — PAPER ONLY ──────────────────────────────
 
 def on_price_update(price_map: dict):
     """
     Callback từ price feed thread.
-    PHẢI là sync function để tránh cross-loop coroutine issue.
-    Dùng run_coroutine_threadsafe để dispatch sang main loop.
+    PAPER mode: dispatch sang paper monitor.
+    LIVE mode: chỉ cache giá, KHÔNG chạy monitor/pending.
     """
     global _main_loop
     if _main_loop is None or _main_loop.is_closed():
         return
+
+    # LIVE mode: price callback không trigger monitor
+    if get_current_mode() != TradingMode.PAPER:
+        return
+
     try:
         asyncio.run_coroutine_threadsafe(
-            _process_price_update(price_map),
+            _process_price_update_paper(price_map),
             _main_loop
         )
     except Exception as e:
         print(f"[PRICE CALLBACK] {e}")
 
 
-async def _process_price_update(price_map: dict):
+async def _process_price_update_paper(price_map: dict):
     import time
     global _last_monitor_run
 
@@ -107,16 +111,16 @@ async def _process_price_update(price_map: dict):
         return
 
     try:
-        await asyncio.to_thread(_run_monitor, price_map)
+        await asyncio.to_thread(_run_paper_monitor, price_map)
     except Exception as e:
-        print(f"[MONITOR ERROR] {e}")
+        print(f"[PAPER MONITOR ERROR] {e}")
         traceback.print_exc()
 
 
-def _run_monitor(price_map: dict):
+def _run_paper_monitor(price_map: dict):
     """
-    Chỉ cho phép 1 monitor cycle chạy tại 1 thời điểm.
-    Tránh overlap gây double fill / double close.
+    PAPER ONLY monitor cycle.
+    Chỉ cho phép 1 cycle chạy tại 1 thời điểm.
     """
     global _monitor_running
 
@@ -132,13 +136,13 @@ def _run_monitor(price_map: dict):
         try:
             process_pending_signals(price_map=price_map)
         except Exception as e:
-            print(f"[PENDING ENGINE ERROR] {type(e).__name__}: {e}")
+            print(f"[PAPER PENDING ERROR] {type(e).__name__}: {e}")
             traceback.print_exc()
 
         try:
             monitor_open_trades(price_map=price_map)
         except Exception as e:
-            print(f"[TRADE MONITOR ERROR] {type(e).__name__}: {e}")
+            print(f"[PAPER MONITOR ERROR] {type(e).__name__}: {e}")
             traceback.print_exc()
 
     finally:
@@ -253,21 +257,22 @@ async def lifespan(app: FastAPI):
         print("✅ Schema valid")
     except Exception as e:
         print(f"❌ CRITICAL ERROR: {e}")
-        # Raising Exception ở đây sẽ làm FastAPI dừng việc khởi động (Startup)
         raise e
-    
+
     global _main_loop
 
     # Set main loop TRƯỚC KHI start price feed
-    _main_loop = asyncio.get_running_loop()   # ← dùng get_running_loop thay vì get_event_loop
+    _main_loop = asyncio.get_running_loop()
 
     print("=" * 60)
     print("🚀 STRATEGY LAB RESEARCH v5.0")
     print("=" * 60)
 
-    # Crash recovery
+    mode = get_current_mode()
+
+    # Crash recovery — mode-aware
     from app.services.crash_recovery import check_and_recover
-    await asyncio.to_thread(check_and_recover)   # ← chạy trong thread, không block loop
+    await asyncio.to_thread(check_and_recover)
 
     # Async pool
     from app.db.async_pool import get_async_pool
@@ -276,11 +281,11 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Async pool: {e}")
 
-    print(f"  Mode: {get_trading_mode().get_mode().value}")
+    print(f"  Mode: {mode.value}")
 
     # Price Feed — đăng ký callback TRƯỚC khi start
     print("\n📡 Price Feed...")
-    add_price_callback(on_price_update)   # sync callback
+    add_price_callback(on_price_update)
     start_price_feed()
 
     feed = get_price_feed()
@@ -289,7 +294,7 @@ async def lifespan(app: FastAPI):
     else:
         print("⚠️ Feed: timeout, running in fallback mode")
 
-    # Background tasks
+    # Background tasks — common
     print("⚙️  Background tasks...")
     tasks = [
         asyncio.create_task(heartbeat_loop(),        name="heartbeat"),
@@ -300,23 +305,26 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
     ]
 
+    # LIVE mode: thêm live loops riêng
+    if mode != TradingMode.PAPER:
+        from app.services.live.runtime import (
+            live_intent_loop,
+            live_reconcile_loop,
+            live_advisory_loop,
+        )
+        tasks.append(asyncio.create_task(live_intent_loop(),     name="live_intent"))
+        tasks.append(asyncio.create_task(live_reconcile_loop(),  name="live_reconcile"))
+        tasks.append(asyncio.create_task(live_advisory_loop(),   name="live_advisory"))
+        print("  ✅ LIVE loops registered (intent + reconcile + advisory)")
+    else:
+        print("  📋 PAPER mode — using price callback monitor")
+
     def start_bot():
         try:
             from app.bot.telegram_bot import run_bot
             run_bot(TELEGRAM_TOKEN)
         except Exception as e:
             print(f"[BOT] {e}")
-    
-    """def start_bot():
-        try:
-            from app.bot.telegram_bot import run_bot
-            token = get_telegram_token()
-            if not token:
-                print("[BOT] Missing TELEGRAM_BOT_TOKEN — bot disabled")
-                return
-            run_bot(token)
-        except Exception as e:
-            print(f"[BOT] {e}")"""
 
     threading.Thread(target=start_bot, daemon=True, name="Bot").start()
 
