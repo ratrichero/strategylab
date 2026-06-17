@@ -4,13 +4,14 @@ import { cn } from "../../utils/cn";
 import { useAppStore } from "../../store/appStore";
 import { StatusBar } from "../StatusBar";
 import { KillSwitch } from "../KillSwitch";
-import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Code2, Settings, Microscope, ChevronLeft, ChevronRight, Bell, Search } from "lucide-react";
+import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Code2, Settings, Microscope, ChevronLeft, ChevronRight, Bell, Search, Clock } from "lucide-react";
 
 const nav = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Strategy Research", href: "/research", icon: Microscope },
   { name: "Market", href: "/market", icon: TrendingUp },
   { name: "Signals", href: "/signals", icon: Zap },
+  { name: "Pending Signals", href: "/pending-signals", icon: Clock },
   { name: "Edge Discovery", href: "/edge-discovery", icon: TrendingUp },
   { name: "Indicators", href: "/indicators", icon: BarChart3 },
   { name: "Engine", href: "/engine", icon: Cpu },

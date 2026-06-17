@@ -124,7 +124,7 @@ export function Indicators() {
         setLoadedVersionTabs(prev => ({ ...prev, [cacheKey]: true }));
       } catch (e) { console.error(e); }
     })();
-  }, [tab, loading, filterVersion]);
+  }, [tab, loading, filterVersion, applied]);
 
   // Local filtering from allSignals — same VN date logic as Dashboard
   const filtered = useMemo(() => {

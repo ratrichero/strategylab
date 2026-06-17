@@ -31,7 +31,8 @@ export function PendingSignalsPage() {
   const [allRegimes, setAllRegimes] = useState([]);
 
   const [f, setF] = useState({
-    startDate: '', endDate: '', status: 'all', symbols: '', symbolMode: 'include',
+    startDate: '', endDate: '', status: 'all', rejectReason: 'all', exchangeStatus: 'all',
+    symbols: '', symbolMode: 'include',
     timeframes: [], strategies: [], patterns: [], regimes: [], directions: [],
     engineVersion: 'all', engineMode: 'only', scoreMin: 0, scoreMax: 10
   });
@@ -78,6 +79,15 @@ export function PendingSignalsPage() {
       }
       // Status filter
       if (c.status !== 'all' && s.status !== c.status) return false;
+      // Reject reason filter (match prefix)
+      if (c.rejectReason !== 'all' && s.rejection_reason) {
+        const prefix = s.rejection_reason.split('::')[0];
+        if (prefix !== c.rejectReason) return false;
+      } else if (c.rejectReason !== 'all' && !s.rejection_reason) {
+        return false;
+      }
+      // Exchange status filter
+      if (c.exchangeStatus !== 'all' && s.exchange_status !== c.exchangeStatus) return false;
       // Symbol filter
       if (c.symbols?.trim()) {
         const list = c.symbols.replace(/,/g, ' ').split(/\s+/).map(s => s.trim().toUpperCase()).filter(Boolean).map(s => s.endsWith('USDT') ? s : s + 'USDT');
@@ -115,6 +125,28 @@ export function PendingSignalsPage() {
     return { total: pendingSignals.length, ...counts };
   }, [pendingSignals]);
 
+  // Get unique rejection reasons (grouped by prefix)
+  const allRejectReasons = useMemo(() => {
+    const reasons = new Set();
+    pendingSignals.forEach(s => {
+      if (s.rejection_reason) {
+        // Group by prefix (e.g., "PREFILL:" from "PREFILL::whitelist::not_in_whitelist")
+        const parts = s.rejection_reason.split('::');
+        reasons.add(parts[0]);
+      }
+    });
+    return Array.from(reasons).sort();
+  }, [pendingSignals]);
+
+  // Get unique exchange statuses
+  const allExchangeStatuses = useMemo(() => {
+    const statuses = new Set();
+    pendingSignals.forEach(s => {
+      if (s.exchange_status) statuses.add(s.exchange_status);
+    });
+    return Array.from(statuses).sort();
+  }, [pendingSignals]);
+
   const handleApply = () => setApplied({ ...f });
 
   const columns = [
@@ -128,6 +160,8 @@ export function PendingSignalsPage() {
     { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'status', header: 'Status', sortable: true, render: v => <StatusBadge status={v} /> },
+    { key: 'rejection_reason', header: 'Reason', render: v => v ? <span className="text-xs text-slate-400" title={v}>{v.split('::')[0]}</span> : '-' },
+    { key: 'signal_score', header: 'Score', sortable: true, render: v => v ? <span className={`font-mono text-sm ${v >= 8 ? 'text-emerald-400' : v >= 6 ? 'text-yellow-400' : 'text-red-400'}`}>{v.toFixed(2)}</span> : '-' },
     { key: 'exchange_status', header: 'EStatus', render: v => v || '-' },
     { key: 'placed_at', header: 'OrderAt', sortable: true, render: v => v ? utcToVN(v) : '-' },
   ];
@@ -177,6 +211,14 @@ export function PendingSignalsPage() {
             { value: 'FILLED', label: 'FILLED' },
             { value: 'REJECTED', label: 'REJECTED' },
             { value: 'CANCELLED', label: 'CANCELLED' }
+          ]} />
+          <Select label="Reject Reason" value={f.rejectReason} onChange={v => set('rejectReason', v)} options={[
+            { value: 'all', label: 'All' },
+            ...allRejectReasons.map(r => ({ value: r, label: r }))
+          ]} />
+          <Select label="Exchange Status" value={f.exchangeStatus} onChange={v => set('exchangeStatus', v)} options={[
+            { value: 'all', label: 'All' },
+            ...allExchangeStatuses.map(s => ({ value: s, label: s }))
           ]} />
           <div className="col-span-2">
             <label className="block text-sm font-medium text-slate-400 mb-1.5">Symbol</label>
