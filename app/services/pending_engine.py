@@ -666,6 +666,17 @@ def _process_single_live(db, p, price_map, now):
                 f"| trigger={p.trigger_price:.10f} | sl={p.stop_loss:.10f} tp={p.take_profit:.10f}"
             )
 
+        # --- THÊM ĐOẠN NÀY ĐỂ ĐẢM BẢO CHẶN MAX OPEN ---
+        max_open = cfg.get("MAX_OPEN_TRADES", 10)
+        current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
+        if current_open >= max_open:
+            # Nếu đã đầy thì không đặt thêm lệnh mới lên sàn nữa
+            return
+        # ---------------------
+
+        # Place limit entry
+        exec_result = place_limit_entry_order(p)
+
         # Place LIMIT entry ONLY (không đặt SL/TP ở đây)
         exec_result = place_limit_entry_order(p)
 
@@ -725,6 +736,18 @@ def _process_single_live(db, p, price_map, now):
         p.order_quantity = float(order_info["orig_qty"])
     p.last_exchange_sync_at = now
     db.commit()
+
+    max_open = cfg.get("MAX_OPEN_TRADES", 10)
+    current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
+    
+    # Nếu hệ thống đã đầy (>=10) và lệnh này vẫn là lệnh NEW (chưa khớp tí nào)
+    if current_open >= max_open and p.exchange_status == "NEW" and float(p.executed_qty or 0) == 0:
+        print(f"🚨 CAPACITY FULL ({current_open}/{max_open}): Cancelling resting order {p.symbol}")
+        cancel_entry_and_exits(p)
+        p.status = "CANCELLED"
+        p.rejection_reason = "CAPACITY_FULL"
+        db.commit()
+        return
 
     # Local expiry
     if ensure_utc(p.expire_at) < now and not _is_terminal_exchange_status(p.exchange_status):
