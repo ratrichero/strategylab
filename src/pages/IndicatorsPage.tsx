@@ -129,7 +129,7 @@ export function Indicators() {
   // Local filtering from allSignals — same VN date logic as Dashboard
   const filtered = useMemo(() => {
     return allSignals.filter(s => {
-      if (s.status !== 'WIN' && s.status !== 'LOSS') return false;
+      if (s.status !== 'WIN' && s.status !== 'LOSS' && s.status !== 'MANUAL') return false;
       const c = applied;
       // VN date range filter
       if (c.startDate || c.endDate) {

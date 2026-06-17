@@ -15,7 +15,8 @@ export function Badge({ children, variant = "default", size = "md", className }:
 
 export function StatusBadge({ status, className }: { status: string; className?: string }) {
   const map: Record<string, { variant: BadgeProps["variant"]; label: string }> = {
-    WIN: { variant: "success", label: "WIN" }, LOSS: { variant: "danger", label: "LOSS" }, OPEN: { variant: "info", label: "OPEN" }, CLOSED: { variant: "default", label: "CLOSED" },
+    WIN: { variant: "success", label: "WIN" }, LOSS: { variant: "danger", label: "LOSS" }, MANUAL: { variant: "warning", label: "MANUAL" }, OPEN: { variant: "info", label: "OPEN" }, CLOSED: { variant: "default", label: "CLOSED" },
+    WAIT: { variant: "warning", label: "WAIT" }, FILLED: { variant: "success", label: "FILLED" }, CANCELLED: { variant: "default", label: "CANCELLED" }, REJECTED: { variant: "danger", label: "REJECTED" },
     LONG: { variant: "success", label: "LONG" }, SHORT: { variant: "danger", label: "SHORT" },
     BULL: { variant: "success", label: "BULL" }, BEAR: { variant: "danger", label: "BEAR" }, SIDEWAYS: { variant: "warning", label: "SIDEWAYS" }, RANGING: { variant: "warning", label: "RANGING" }, VOLATILE: { variant: "info", label: "VOLATILE" },
   };

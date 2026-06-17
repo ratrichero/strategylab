@@ -140,7 +140,7 @@ export function Dashboard() {
 
   // ========== DATA SPLITS ==========
   const allOpen = useMemo(() => allSignals.filter(s => s.status === 'OPEN').sort((a, b) => new Date(b.candle_time || 0).getTime() - new Date(a.candle_time || 0).getTime()), [allSignals]);
-  const allClosed = useMemo(() => allSignals.filter(s => s.status === 'WIN' || s.status === 'LOSS').sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || '')), [allSignals]);
+  const allClosed = useMemo(() => allSignals.filter(s => s.status === 'WIN' || s.status === 'LOSS' || s.status === 'MANUAL').sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || '')), [allSignals]);
 
   // VN date range filtering is done locally from allSignals (single source of truth)
   const metricClosed = useMemo(() => {
@@ -148,7 +148,7 @@ export function Dashboard() {
     const startVN = appliedFilters.startDate;
     const endVN = appliedFilters.endDate;
     return allSignals.filter(s => {
-      if (s.status !== 'WIN' && s.status !== 'LOSS') return false;
+      if (s.status !== 'WIN' && s.status !== 'LOSS' && s.status !== 'MANUAL') return false;
       if (!s.exit_time) return false;
       const exitMs = parseUtcMs(s.exit_time);
       if (!exitMs) return false;

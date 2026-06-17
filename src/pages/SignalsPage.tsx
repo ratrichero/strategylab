@@ -57,7 +57,7 @@ export function Signals() {
   const fetchTop50 = async () => { setFetchingTop50(true); try { const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=50&page=1&sparkline=false', { headers: { 'x-cg-demo-api-key': 'CG-r9KNtFCb794fJuozcK1AMr2W' } }); const coins = await res.json(); set('symbols', coins.map(c => c.symbol.toUpperCase()).join(' ')); } catch (e) { console.error(e); } finally { setFetchingTop50(false); } };
 
   // Local filtering from allSignals — same VN date logic as Dashboard
-  const filtered = useMemo(()=>{return allSignals.filter(s=>{if(s.status!=='WIN'&&s.status!=='LOSS')return false;const c=applied;
+  const filtered = useMemo(()=>{return allSignals.filter(s=>{if(s.status!=='WIN'&&s.status!=='LOSS'&&s.status!=='MANUAL')return false;const c=applied;
     // VN date range filter
     if(c.startDate||c.endDate){const vnDate=exitToVNDate(s.exit_time);if(!vnDate)return false;if(c.startDate&&vnDate<c.startDate)return false;if(c.endDate&&vnDate>c.endDate)return false;}
     if(c.symbols.trim()){const list=c.symbols.replace(/,/g,' ').split(/\s+/).map(s=>s.trim().toUpperCase()).filter(Boolean).map(s=>s.endsWith('USDT')?s:s+'USDT');if(c.symbolMode==='include'){if(!list.includes(s.symbol))return false;}else{if(list.includes(s.symbol))return false;}}
