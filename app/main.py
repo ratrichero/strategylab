@@ -19,6 +19,7 @@ from app.services.price_feed import (
     get_price_feed, add_price_callback
 )
 from app.services.config_service import get_runtime_config
+from app.api.account import router as account_router
 
 # ── Routers ───────────────────────────────────────────────────
 from app.api.health import router as health_router
@@ -362,7 +363,7 @@ for r in [
     retrain_router, signal_analysis_router, system_router,
     dash_signals_router, dash_research_router, dash_analysis_router,
     dash_edge_router, dash_config_router, dash_perf_router,
-    dash_pending_router, price_feed_status_router,
+    dash_pending_router, price_feed_status_router, account_router,
 ]:
     app.include_router(r)
 

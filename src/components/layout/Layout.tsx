@@ -8,17 +8,17 @@ import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Co
 
 const nav = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
-  { name: "Strategy Research", href: "/research", icon: Microscope },
-  { name: "Market", href: "/market", icon: TrendingUp },
-  { name: "Signals", href: "/signals", icon: Zap },
-  { name: "Pending Signals", href: "/pending-signals", icon: Clock },
   { name: "Account", href: "/account", icon: Wallet },
+  { name: "Pending", href: "/pending-signals", icon: Clock },
+  { name: "Strategy", href: "/research", icon: Microscope },
+  { name: "Signals", href: "/signals", icon: Zap },
   { name: "Edge Discovery", href: "/edge-discovery", icon: TrendingUp },
   { name: "Indicators", href: "/indicators", icon: BarChart3 },
-  { name: "Engine", href: "/engine", icon: Cpu },
   { name: "Blocked", href: "/blocked", icon: Ban },
+  { name: "Market", href: "/market", icon: TrendingUp },
   { name: "Simulation", href: "/simulation", icon: FlaskConical },
   { name: "Query Lab", href: "/query-lab", icon: Code2 },
+  { name: "Engine", href: "/engine", icon: Cpu },
 ];
 
 export function Layout({ children }: { children: React.ReactNode }) {

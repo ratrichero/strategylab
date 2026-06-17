@@ -173,11 +173,11 @@ def _infer_exchange_close_reason(trade, current_price: float):
     if trade.direction == "LONG":
         if current <= sl * (1 + sl_tol): return "SL", sl
         elif current >= tp * (1 - tp_tol): return "TP", tp
-        else: return "BINANCE_CLOSE", current
+        else: return "Urgent", current
     else:
         if current >= sl * (1 - sl_tol): return "SL", sl
         elif current <= tp * (1 + tp_tol): return "TP", tp
-        else: return "BINANCE_CLOSE", current
+        else: return "Urgent", current
 
 
 def _check_live_safety_net(db, trade, current: float):

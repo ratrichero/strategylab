@@ -10,84 +10,96 @@ class OpenTradeFilter:
         self.cfg = config
 
     def check(self, symbol, direction, strategy_name, pattern,
-           timeframe, regime, score, ml_prob, components,
-           atr_ratio=None, db=None) -> Tuple[bool, str]:
+               timeframe, regime, score, ml_prob, components,
+               atr_ratio=None, db=None) -> Tuple[bool, str]:
 
+        # 1. Bật / Tắt Filter
         if not self.cfg.get("enabled", False):
             return True, "filter_disabled"
 
         identity = self.cfg.get("identity", {})
 
-        # Direction check
+        # ========================================================
+        # A. KHỐI IDENTITY (Fix triệt để lỗi fallback lọt lưới)
+        # ========================================================
+
+        # 2. Kiểm tra Direction
         allowed_dirs = identity.get("directions")
-        if allowed_dirs and direction not in allowed_dirs:
-            return False, f"direction_blocked_{direction}"
+        if allowed_dirs is not None and len(allowed_dirs) > 0:
+            if direction not in allowed_dirs:
+                return False, f"direction_blocked_{direction}"
 
-        # Strategy check
-        strats = identity.get("strategies", [])
-        if strats and strategy_name not in strats:
-            return False, f"strategy_blocked_{strategy_name}"
+        # 3. Kiểm tra Strategy
+        allowed_strats = identity.get("strategies")
+        if allowed_strats is not None and len(allowed_strats) > 0:
+            if strategy_name not in allowed_strats:
+                return False, f"strategy_blocked_{strategy_name}"
 
-        # Pattern check
-        patterns = identity.get("patterns", [])
-        if patterns and pattern not in patterns:
-            return False, "pattern_blocked"
+        # 4. Kiểm tra Pattern
+        allowed_patterns = identity.get("patterns")
+        if allowed_patterns is not None and len(allowed_patterns) > 0:
+            if pattern not in allowed_patterns:
+                return False, f"pattern_blocked_{pattern}"
 
-        # Timeframe check
-        tfs = identity.get("timeframes", ["15m", "1h", "4h"])
-        if timeframe not in tfs:
-            return False, "timeframe_blocked"
+        # 5. Kiểm tra Timeframe
+        allowed_tfs = identity.get("timeframes")
+        if allowed_tfs is not None and len(allowed_tfs) > 0:
+            if timeframe not in allowed_tfs:
+                return False, f"timeframe_blocked_{timeframe}"
 
-        # Symbol whitelist/blacklist
+        # 6. Kiểm tra Symbol Whitelist / Blacklist
         sym_mode = identity.get("symbol_mode", "all")
         if sym_mode == "whitelist":
-            wl = identity.get("symbol_whitelist", [])
-            if wl and symbol not in wl:
+            wl = identity.get("symbol_whitelist")
+            if wl and len(wl) > 0 and symbol not in wl:
                 return False, "symbol_not_whitelisted"
         elif sym_mode == "blacklist":
-            if symbol in identity.get("symbol_blacklist", []):
+            bl = identity.get("symbol_blacklist")
+            if bl and len(bl) > 0 and symbol in bl:
                 return False, "symbol_blacklisted"
 
-        # Market condition
+        # ========================================================
+        # B. KHỐI MARKET CONDITION & SCORE
+        # ========================================================
+
         mkt = self.cfg.get("market_condition", {})
-        allowed_regimes = mkt.get("allowed_regimes", ["BULL", "BEAR", "SIDEWAYS"])
-        if regime not in allowed_regimes:
-            return False, f"regime_blocked_{regime}"
+        allowed_regimes = mkt.get("allowed_regimes")
+        if allowed_regimes is not None and len(allowed_regimes) > 0:
+            if regime not in allowed_regimes:
+                return False, f"regime_blocked_{regime}"
 
         if atr_ratio is not None:
             min_atr = mkt.get("min_atr_pct", 0)
             max_atr = mkt.get("max_atr_pct", 0)
-            if min_atr > 0 and atr_ratio < min_atr:
-                return False, "atr_too_low"
-            if max_atr > 0 and atr_ratio > max_atr:
-                return False, "atr_too_high"
+            if min_atr > 0 and atr_ratio < min_atr: return False, "atr_too_low"
+            if max_atr > 0 and atr_ratio > max_atr: return False, "atr_too_high"
 
-        # Score check
         sc = self.cfg.get("score", {})
-        if score < sc.get("min_overall", 0):
-            return False, "score_below_filter"
+        if score < sc.get("min_overall", 0): return False, "score_below_filter"
+        
         if ml_prob is not None and sc.get("min_ml_prob", 0) > 0:
-            if ml_prob < sc["min_ml_prob"]:
-                return False, "ml_prob_below_filter"
-        if sc.get("min_trend_score", 0) > 0:
-            if (components or {}).get("trend_score", 0) < sc["min_trend_score"]:
-                return False, "trend_below_filter"
-        if sc.get("min_mtf_score", 0) > 0:
-            if (components or {}).get("mtf_score", 0) < sc["min_mtf_score"]:
-                return False, "mtf_below_filter"
+            if ml_prob < sc["min_ml_prob"]: return False, "ml_prob_below_filter"
+            
+        if components:
+            if sc.get("min_trend_score", 0) > 0:
+                if components.get("trend_score", 0) < sc["min_trend_score"]:
+                    return False, "trend_below_filter"
+            if sc.get("min_mtf_score", 0) > 0:
+                if components.get("mtf_score", 0) < sc["min_mtf_score"]:
+                    return False, "mtf_below_filter"
 
-        # Position check
+        # ========================================================
+        # C. KHỐI POSITION & TIME
+        # ========================================================
+
         if db is not None:
             ok, reason = self._check_position(db, symbol, strategy_name, timeframe)
-            if not ok:
-                return False, reason
+            if not ok: return False, reason
 
-        # Time check
         time_cfg = self.cfg.get("time", {})
         if time_cfg.get("enabled", False):
             ok, reason = self._check_time(time_cfg)
-            if not ok:
-                return False, reason
+            if not ok: return False, reason
 
         return True, "passed"
 
