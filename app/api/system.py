@@ -571,3 +571,32 @@ async def coingecko_top_mc(limit: int = 50):
             "count": 0,
             "error": str(e),
         }
+    
+@router.post("/api/admin/cancel-all-active")
+async def close_all_active():
+    """
+    Close tất cả signal OPEN bằng cách gọi manual_close_signal() cho từng cái.
+    """
+    from app.db.session import SessionLocal
+    from app.db.models import Signal
+    from app.services.manual_close_service import manual_close_signal
+
+    results = {"closed": 0, "failed": 0, "errors": []}
+
+    with SessionLocal() as db:
+        open_signals = db.query(Signal).filter(Signal.status == "OPEN").all()
+        ids = [s.id for s in open_signals]
+
+    for signal_id in ids:
+        try:
+            result = await asyncio.to_thread(manual_close_signal, signal_id)
+            if result.get("success"):
+                results["closed"] += 1
+            else:
+                results["failed"] += 1
+                results["errors"].append(f"Signal {signal_id}: {result.get('error')}")
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"Signal {signal_id}: {str(e)}")
+
+    return results

@@ -484,16 +484,21 @@ export function Dashboard() {
 
   // Handle Cancel Pending
   const handleCancelPending = async (id) => {
-    if (!confirm('Cancel this pending?')) return;
-    try {
-      const res = await fetch(`${API}/pending/${id}/cancel`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed');
-      toast.success('Pending cancelled');
-      window.location.reload();
-    } catch (e) {
-      toast.error('Failed to cancel pending');
+  if (!confirm("Cancel this pending?")) return;
+  try {
+    const res = await fetch(`${API}/pending/${id}/cancel`, { method: "POST" });
+    const data = await res.json();
+
+    if (!res.ok || !data.success) {
+      throw new Error(data?.detail || data?.error || "Failed");
     }
-  };
+
+    toast.success(`Pending cancelled: ${data.symbol}`);
+    setTimeout(() => window.location.reload(), 800);
+  } catch (e: any) {
+    toast.error(e.message || "Failed to cancel pending");
+  }
+};
 
   // Handle Cancel All Pending
   const handleCancelAllPending = async () => {

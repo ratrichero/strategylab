@@ -9,28 +9,26 @@ PAPER:
 LIVE / TESTNET:
   Phase A — PRE-PLACE:
     WAIT + exchange_order_id IS NULL
-    -> OTF pass
+    -> Lock row (FOR UPDATE)
+    -> Re-verify exchange_order_id chưa có
+    -> OTF pass (đúng config block)
     -> Prefill pass
-    -> Reprice ONCE (reprice_applied flag)
-    -> Round prices
-    -> Place LIMIT entry ONLY (không đặt SL/TP ở đây)
+    -> MAX_OPEN_TRADES check
+    -> Reprice ONCE
+    -> Duplicate entry guard (check exchange open orders)
+    -> Place LIMIT entry ONLY
 
   Phase B — POST-PLACE SYNC:
     WAIT + exchange_order_id IS NOT NULL
-    -> SYNC ONLY (no OTF / no Prefill repeat)
-    -> sync exchange_status / executed_qty / avg_fill_price
-    -> FIRST FILL detected (executed_qty > 0):
-       + create Signal
-       + ĐẶT ALGO SL/TP lúc này (vì position đã tồn tại)
-       + closePosition=true → bảo vệ toàn bộ position hiện có
-       + nếu algo fail → rollback ngay (close position + cancel all)
-    -> subsequent fills: update Signal entry_price / qty
-    -> terminal + fill > 0 => FILLED
-    -> terminal + fill = 0 => CANCELLED
+    -> Lock row
+    -> SYNC ONLY
+    -> Capacity check (cancel resting NEW nếu quá MAX_OPEN)
+    -> FIRST FILL: place algo SL/TP
+    -> subsequent fills: update Signal
+    -> terminal: finalize pending
 
   DETERMINISTIC FAILURES:
-    Qty too small / notional too small / low balance
-    -> REJECTED ngay, không retry mãi
+    -> REJECTED ngay, không retry
 """
 
 from datetime import timedelta
@@ -52,6 +50,7 @@ from app.services.execution_service import (
     cancel_entry_and_exits,
     cancel_all_algo_orders,
     get_open_algo_orders,
+    get_open_orders,
     get_executor,
     OrderResult,
 )
@@ -65,7 +64,6 @@ from app.services.btc_context_cache import (
 )
 
 
-# Lỗi deterministic — reject luôn, không retry
 DETERMINISTIC_ERRORS = [
     "Qty too small",
     "Actual notional too small",
@@ -78,7 +76,18 @@ DETERMINISTIC_ERRORS = [
 # HEARTBEAT
 # ============================================================
 
+_last_pending_hb = 0
+PENDING_HB_INTERVAL = 30
+
 def _update_pending_heartbeat(db):
+    global _last_pending_hb
+    import time as _time
+
+    now_ts = _time.time()
+    if now_ts - _last_pending_hb < PENDING_HB_INTERVAL:
+        return
+    _last_pending_hb = now_ts
+
     try:
         from sqlalchemy import text
         now = utc_now()
@@ -94,7 +103,7 @@ def _update_pending_heartbeat(db):
 
 
 # ============================================================
-# SHARED HELPERS
+# HELPERS
 # ============================================================
 
 def _is_terminal_exchange_status(status: Optional[str]) -> bool:
@@ -108,6 +117,16 @@ def _is_deterministic_error(error_msg: str) -> bool:
         if pattern in error_msg:
             return True
     return False
+
+
+def _lock_pending_row(db, pending_id: int) -> PendingSignal:
+    """Lock row pending chống race condition."""
+    return (
+        db.query(PendingSignal)
+        .filter(PendingSignal.id == pending_id)
+        .with_for_update()
+        .one()
+    )
 
 
 def _calc_repriced_triplet(p: PendingSignal, reprice_pct: float):
@@ -184,12 +203,6 @@ def _mark_rejected(db, p, reason, details=None):
 
 
 def _rollback_on_protection_fail(db, p: PendingSignal, reason: str):
-    """
-    Protection fail = SL/TP algo không đặt được sau khi đã có fill.
-    -> Close position ngay
-    -> Cancel all orders
-    -> Finalize pending
-    """
     print(f"⚠️ PROTECTION FAIL ROLLBACK: {p.symbol} | {reason}")
 
     info = get_entry_order_status(p.symbol, p.exchange_order_id)
@@ -310,22 +323,10 @@ def _finalize_paper_fill(db, p, now, actual_entry, stop_loss, take_profit, exec_
 # ============================================================
 
 def _create_live_signal_from_pending(db, p, now, price_map):
-    """
-    Create Signal lần đầu khi entry order có executed_qty > 0.
-    Có row lock để chống duplicate signal khi 2 monitor cycles đụng nhau.
-    """
-    # Lock row pending hiện tại
-    locked = (
-        db.query(PendingSignal)
-        .filter(PendingSignal.id == p.id)
-        .with_for_update()
-        .one()
-    )
+    locked = _lock_pending_row(db, p.id)
 
-    # Nếu session khác vừa tạo signal xong thì dùng luôn, không tạo nữa
     if locked.signal_id:
-        existing_signal = db.query(Signal).get(locked.signal_id)
-        return existing_signal
+        return db.query(Signal).get(locked.signal_id)
 
     snap = locked.indicators_snapshot or {}
     mode = get_current_mode()
@@ -351,28 +352,19 @@ def _create_live_signal_from_pending(db, p, now, price_map):
     )
 
     signal = Signal(
-        symbol=locked.symbol,
-        timeframe=locked.timeframe,
-        pattern=locked.pattern,
-        strategy_name=locked.strategy_name,
-        direction=locked.direction,
+        symbol=locked.symbol, timeframe=locked.timeframe, pattern=locked.pattern,
+        strategy_name=locked.strategy_name, direction=locked.direction,
         score=locked.signal_score,
         entry_price=float(locked.avg_fill_price or locked.trigger_price),
-        stop_loss=float(locked.stop_loss),
-        take_profit=float(locked.take_profit),
-        rsi=snap.get("rsi"),
-        volume_ratio=snap.get("volume_ratio"),
-        atr_ratio=snap.get("atr_ratio"),
-        regime=locked.regime,
-        candle_time=ensure_utc(locked.candle_time),
-        evaluated_at=now,
+        stop_loss=float(locked.stop_loss), take_profit=float(locked.take_profit),
+        rsi=snap.get("rsi"), volume_ratio=snap.get("volume_ratio"),
+        atr_ratio=snap.get("atr_ratio"), regime=locked.regime,
+        candle_time=ensure_utc(locked.candle_time), evaluated_at=now,
         engine_version=engine_ver,
         market_context={
-            "entry": entry_ctx,
-            "pending_id": locked.id,
+            "entry": entry_ctx, "pending_id": locked.id,
             "execution": {
-                "mode": mode.value,
-                "order_id": locked.exchange_order_id,
+                "mode": mode.value, "order_id": locked.exchange_order_id,
                 "quantity": float(locked.executed_qty or 0),
                 "entry_exchange_status": locked.exchange_status,
                 "sl_order_id": locked.sl_order_id,
@@ -386,19 +378,12 @@ def _create_live_signal_from_pending(db, p, now, price_map):
 
     feature = SignalFeature(
         signal_id=signal.id,
-        rsi=snap.get("rsi"),
-        volume_ratio=snap.get("volume_ratio"),
-        atr_ratio=snap.get("atr_ratio"),
-        ema_distance=snap.get("ema_distance"),
-        regime=locked.regime,
-        trend_score=locked.trend_score,
-        momentum_score=locked.momentum_score,
-        volume_score=locked.volume_score,
-        pattern_score=locked.pattern_score,
-        mtf_score=locked.mtf_score,
-        penalty_norm=locked.penalty,
-        total_score=locked.signal_score,
-        rr=locked.rr
+        rsi=snap.get("rsi"), volume_ratio=snap.get("volume_ratio"),
+        atr_ratio=snap.get("atr_ratio"), ema_distance=snap.get("ema_distance"),
+        regime=locked.regime, trend_score=locked.trend_score,
+        momentum_score=locked.momentum_score, volume_score=locked.volume_score,
+        pattern_score=locked.pattern_score, mtf_score=locked.mtf_score,
+        penalty_norm=locked.penalty, total_score=locked.signal_score, rr=locked.rr
     )
     db.add(feature)
 
@@ -409,11 +394,9 @@ def _create_live_signal_from_pending(db, p, now, price_map):
 
     locked.signal_id = signal.id
     locked.accounted_qty = float(locked.executed_qty or 0)
-
     db.commit()
 
     _notify_fill(locked, signal, exec_result)
-
     print(
         f"✅ LIVE SIGNAL CREATED: {locked.symbol} {locked.direction} "
         f"| qty={locked.executed_qty} avg={locked.avg_fill_price}"
@@ -422,16 +405,7 @@ def _create_live_signal_from_pending(db, p, now, price_map):
 
 
 def _update_live_signal_from_pending(db, p):
-    """
-    Update signal nếu executed_qty tăng thêm.
-    Có row lock để serialize updates.
-    """
-    locked = (
-        db.query(PendingSignal)
-        .filter(PendingSignal.id == p.id)
-        .with_for_update()
-        .one()
-    )
+    locked = _lock_pending_row(db, p.id)
 
     if not locked.signal_id:
         return
@@ -456,32 +430,7 @@ def _update_live_signal_from_pending(db, p):
     locked.accounted_qty = float(locked.executed_qty or 0)
     db.commit()
 
-    print(
-        f"🔄 LIVE SIGNAL UPDATED: {locked.symbol} "
-        f"| qty={locked.executed_qty} avg={locked.avg_fill_price}"
-    )
-
-    """signal = db.query(Signal).get(p.signal_id)
-    if not signal or signal.status != "OPEN":
-        return
-
-    if p.avg_fill_price:
-        signal.entry_price = float(p.avg_fill_price)"""
-
-    ctx = dict(signal.market_context or {})
-    exec_ctx = dict(ctx.get("execution") or {})
-    exec_ctx["order_id"] = p.exchange_order_id
-    exec_ctx["quantity"] = float(p.executed_qty or 0)
-    exec_ctx["entry_exchange_status"] = p.exchange_status
-    exec_ctx["sl_order_id"] = p.sl_order_id
-    exec_ctx["tp_order_id"] = p.tp_order_id
-    ctx["execution"] = exec_ctx
-    signal.market_context = ctx
-
-    p.accounted_qty = float(p.executed_qty or 0)
-    db.commit()
-
-    print(f"🔄 LIVE SIGNAL UPDATED: {p.symbol} | qty={p.executed_qty} avg={p.avg_fill_price}")
+    print(f"🔄 LIVE SIGNAL UPDATED: {locked.symbol} | qty={locked.executed_qty} avg={locked.avg_fill_price}")
 
 
 # ============================================================
@@ -499,17 +448,6 @@ def _process_single_paper(db, p, price_map, now):
     if current is None:
         return
     current = float(current)
-
-    try:
-        dist_pct = (current - float(p.trigger_price)) / float(p.trigger_price) * 100
-        if abs(dist_pct) < 2.0:
-            """print(
-                f"[PENDING CHECK][PAPER] id={p.id} {p.symbol} {p.direction} "
-                f"current={current:.8f} trigger={float(p.trigger_price):.8f} "
-                f"dist={dist_pct:+.4f}%"
-            )"""
-    except Exception:
-        pass
 
     touched, fill_price, touch_source = _check_touch(p, current)
     if not touched:
@@ -529,10 +467,9 @@ def _process_single_paper(db, p, price_map, now):
     max_open = cfg.get("MAX_OPEN_TRADES", 10)
     current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
     if current_open >= max_open:
-        print(f"⏸️ MAX OPEN [PAPER]: {p.symbol} {p.direction} | {current_open}/{max_open}")
         return
 
-    otf = get_open_trade_filter(cfg)
+    otf = get_open_trade_filter(cfg.get("OPEN_TRADE_FILTER"))
     atr_ratio = None
     if p.atr_value and p.trigger_price and float(p.trigger_price) > 0:
         atr_ratio = float(p.atr_value) / float(p.trigger_price)
@@ -553,7 +490,6 @@ def _process_single_paper(db, p, price_map, now):
         atr_ratio=atr_ratio, db=db
     )
     if not otf_ok:
-        print(f"⏸️ FILL OTF BLOCK [PAPER]: {p.symbol} {p.direction} | {otf_reason}")
         return
 
     exec_result = open_position(p, price_map, fill_price=fill_price)
@@ -578,36 +514,33 @@ def _process_single_paper(db, p, price_map, now):
 def _process_single_live(db, p, price_map, now):
     cfg = get_runtime_config(force_reload=True)
 
-    try:
-        otf_dbg = cfg.get("OPEN_TRADE_FILTER", {})
-        """print(
-            f"[OTF DEBUG][PRE-PLACE] {p.symbol} {p.direction} "
-            f"| enabled={otf_dbg.get('enabled')} "
-            f"| directions={otf_dbg.get('identity', {}).get('directions')} "
-            f"| strategies={otf_dbg.get('identity', {}).get('strategies')} "
-            f"| timeframes={otf_dbg.get('identity', {}).get('timeframes')}"
-        )"""
-    except Exception as e:
-        print(f"[OTF DEBUG ERR] {e}")
+    # ── Lock row chống race condition ──────────────────────
+    p = _lock_pending_row(db, p.id)
 
     # ========================================================
     # PRE-PLACE: WAIT + exchange_order_id IS NULL
-    # -> OTF + Prefill + Reprice + Place LIMIT entry ONLY
     # ========================================================
     if not p.exchange_order_id:
+
+        # Expire check
         if ensure_utc(p.expire_at) < now:
             p.status = "CANCELLED"
             p.rejection_reason = "EXPIRED_BEFORE_PLACE"
             db.commit()
             return
 
-        # OTF: fail = keep WAIT
-        otf = get_open_trade_filter(cfg)
+        # Guard: nếu worker khác vừa place xong
+        if p.exchange_order_id:
+            db.commit()
+            return
+
+        # OTF (đúng config block)
+        otf = get_open_trade_filter(cfg.get("OPEN_TRADE_FILTER"))
         atr_ratio = None
         if p.atr_value and p.trigger_price and float(p.trigger_price) > 0:
             atr_ratio = float(p.atr_value) / float(p.trigger_price)
 
-        otf_ok, _ = otf.check(
+        otf_ok, otf_reason = otf.check(
             symbol=p.symbol, direction=p.direction,
             strategy_name=p.strategy_name, pattern=p.pattern,
             timeframe=p.timeframe, regime=p.regime,
@@ -622,10 +555,6 @@ def _process_single_live(db, p, price_map, now):
             },
             atr_ratio=atr_ratio, db=db
         )
-        """print(
-            f"[OTF RESULT][PRE-PLACE] {p.symbol} {p.direction} "
-            f"| ok={otf_ok} reason={otf_reason}"
-        )"""
         if not otf_ok:
             return
 
@@ -633,14 +562,20 @@ def _process_single_live(db, p, price_map, now):
         if current is None:
             return
 
-        # Prefill: fail = REJECTED
+        # Prefill
         result = validate_before_fill(p, float(current))
         if not result.passed:
             _mark_rejected(db, p, result.reason, result.details)
             print(f"🚫 LIVE PREFILL REJECTED: {p.symbol} {p.direction} | {result.reason}")
             return
 
-        # Reprice chỉ 1 lần duy nhất
+        # MAX_OPEN_TRADES gate
+        max_open = cfg.get("MAX_OPEN_TRADES", 10)
+        current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
+        if current_open >= max_open:
+            return
+
+        # Reprice chỉ 1 lần
         if not getattr(p, "reprice_applied", False):
             limit_cfg = cfg.get("LIMIT_ORDER_CONFIG", {})
             if not limit_cfg.get("enabled", True):
@@ -666,31 +601,35 @@ def _process_single_live(db, p, price_map, now):
                 f"| trigger={p.trigger_price:.10f} | sl={p.stop_loss:.10f} tp={p.take_profit:.10f}"
             )
 
-        # --- THÊM ĐOẠN NÀY ĐỂ ĐẢM BẢO CHẶN MAX OPEN ---
-        max_open = cfg.get("MAX_OPEN_TRADES", 10)
-        current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
-        if current_open >= max_open:
-            # Nếu đã đầy thì không đặt thêm lệnh mới lên sàn nữa
-            return
-        # ---------------------
+        # ── Duplicate entry guard ──────────────────────────
+        try:
+            executor = get_executor()
+            if executor and executor.ready:
+                existing_normal = executor.get_open_orders(p.symbol)
+                expected_side = "BUY" if p.direction == "LONG" else "SELL"
+                has_live_entry = any(
+                    str(o.get("type", "")).upper() == "LIMIT"
+                    and str(o.get("side", "")).upper() == expected_side
+                    for o in (existing_normal or [])
+                )
+                if has_live_entry:
+                    print(f"⚠️ DUPLICATE ENTRY GUARD: {p.symbol} already has open LIMIT on exchange")
+                    return
+        except Exception as e:
+            print(f"[PENDING] Existing normal order check error {p.symbol}: {e}")
 
-        # Place limit entry
-        exec_result = place_limit_entry_order(p)
-
-        # Place LIMIT entry ONLY (không đặt SL/TP ở đây)
+        # ── Place LIMIT entry ONLY ─────────────────────────
         exec_result = place_limit_entry_order(p)
 
         if not exec_result.success:
             error_msg = exec_result.error or ""
 
-            # Deterministic failure → REJECTED luôn
             if _is_deterministic_error(error_msg):
                 p.status = "REJECTED"
                 p.rejection_reason = f"ENTRY_FAIL::{error_msg}"
                 db.commit()
                 print(f"🚫 REJECTED (deterministic): {p.symbol} | {error_msg}")
 
-                # Telegram cảnh báo
                 try:
                     from app.services.telegram_service import send_telegram
                     send_telegram(
@@ -703,7 +642,6 @@ def _process_single_live(db, p, price_map, now):
                 except Exception:
                     pass
             else:
-                # Transient → giữ WAIT retry
                 print(f"⚠️ LIMIT PLACE FAILED (transient): {p.symbol} | {error_msg}")
             return
 
@@ -725,6 +663,9 @@ def _process_single_live(db, p, price_map, now):
     # ========================================================
     order_info = get_entry_order_status(p.symbol, p.exchange_order_id)
 
+    prev_status = p.exchange_status
+    prev_qty = float(p.executed_qty or 0)
+
     p.exchange_status = order_info.get("status", p.exchange_status)
     p.executed_qty = float(order_info.get("executed_qty") or p.executed_qty or 0)
     p.avg_fill_price = (
@@ -734,22 +675,13 @@ def _process_single_live(db, p, price_map, now):
     )
     if order_info.get("orig_qty"):
         p.order_quantity = float(order_info["orig_qty"])
-    p.last_exchange_sync_at = now
+
+    # Chỉ update sync timestamp nếu state thay đổi
+    if p.exchange_status != prev_status or float(p.executed_qty or 0) != prev_qty:
+        p.last_exchange_sync_at = now
     db.commit()
 
-    max_open = cfg.get("MAX_OPEN_TRADES", 10)
-    current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
-    
-    # Nếu hệ thống đã đầy (>=10) và lệnh này vẫn là lệnh NEW (chưa khớp tí nào)
-    if current_open >= max_open and p.exchange_status == "NEW" and float(p.executed_qty or 0) == 0:
-        print(f"🚨 CAPACITY FULL ({current_open}/{max_open}): Cancelling resting order {p.symbol}")
-        cancel_entry_and_exits(p)
-        p.status = "CANCELLED"
-        p.rejection_reason = "CAPACITY_FULL"
-        db.commit()
-        return
-
-    # Local expiry
+    # ── Local expiry ───────────────────────────────────────
     if ensure_utc(p.expire_at) < now and not _is_terminal_exchange_status(p.exchange_status):
         cancel_entry_and_exits(p)
 
@@ -770,20 +702,26 @@ def _process_single_live(db, p, price_map, now):
             p.rejection_reason = "EXPIRED_NO_FILL"
 
         db.commit()
-        print(
-            f"🗑️ ENTRY EXPIRED: {p.symbol} "
-            f"| executed={p.executed_qty} exchange_status={p.exchange_status}"
-        )
+        print(f"🗑️ ENTRY EXPIRED: {p.symbol} | executed={p.executed_qty}")
         return
 
-    # ── FIRST FILL: đặt algo SL/TP ────────────────────────
-    # Chỉ khi:
-    #   - đã có fill (executed_qty > 0)
-    #   - chưa có protection (sl_order_id hoặc tp_order_id is None)
+    # ── Capacity guard (cancel resting NEW nếu quá MAX) ───
+    max_open = cfg.get("MAX_OPEN_TRADES", 10)
+    current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
+    if (current_open >= max_open
+            and p.exchange_status == "NEW"
+            and float(p.executed_qty or 0) == 0):
+        print(f"🚨 CAPACITY FULL ({current_open}/{max_open}): Cancelling resting order {p.symbol}")
+        cancel_entry_and_exits(p)
+        p.status = "CANCELLED"
+        p.rejection_reason = "CAPACITY_FULL"
+        db.commit()
+        return
+
+    # ── FIRST FILL: place algo SL/TP ──────────────────────
     if (p.executed_qty or 0) > 0 and (not p.sl_order_id or not p.tp_order_id):
         should_place = True
 
-        # Check algo orders đã tồn tại trên exchange chưa (tránh duplicate)
         try:
             existing_algo = get_open_algo_orders(p.symbol)
 
@@ -806,19 +744,13 @@ def _process_single_live(db, p, price_map, now):
                         p.tp_order_id = str(o.get("algoId", ""))
                 db.commit()
 
-                print(
-                    f"🔄 SYNCED EXISTING ALGO EXITS: {p.symbol} "
-                    f"| sl={p.sl_order_id} tp={p.tp_order_id}"
-                )
+                print(f"🔄 SYNCED EXISTING ALGO EXITS: {p.symbol} | sl={p.sl_order_id} tp={p.tp_order_id}")
 
         except Exception as e:
             print(f"[PENDING] Check existing algo exits error {p.symbol}: {e}")
 
         if should_place:
-            print(
-                f"🔒 PLACING PROTECTION: {p.symbol} {p.direction} "
-                f"| SL={float(p.stop_loss):.6f} TP={float(p.take_profit):.6f}"
-            )
+            print(f"🔒 PLACING PROTECTION: {p.symbol} {p.direction} | SL={float(p.stop_loss):.6f} TP={float(p.take_profit):.6f}")
 
             exit_ids = place_close_position_exit_orders(
                 p.symbol,
@@ -833,15 +765,11 @@ def _process_single_live(db, p, price_map, now):
 
             if not p.sl_order_id or not p.tp_order_id:
                 _rollback_on_protection_fail(
-                    db, p,
-                    "algo_exit_place_failed_after_first_fill"
+                    db, p, "algo_exit_place_failed_after_first_fill"
                 )
                 return
 
-            print(
-                f"✅ PROTECTION SET: {p.symbol} "
-                f"| sl_algo={p.sl_order_id} tp_algo={p.tp_order_id}"
-            )
+            print(f"✅ PROTECTION SET: {p.symbol} | sl_algo={p.sl_order_id} tp_algo={p.tp_order_id}")
 
     # ── Delta fill handling ────────────────────────────────
     executed_qty  = float(p.executed_qty or 0)

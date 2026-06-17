@@ -58,7 +58,10 @@ def manual_close_signal(signal_id: int) -> Dict:
 def manual_cancel_pending(pending_id: int) -> Dict:
     """
     Cancel 1 pending WAIT bằng tay.
-    LIVE/TESTNET: cancel exchange orders nếu có.
+
+    Yêu cầu:
+    - LIVE/TESTNET: phải verify order trên exchange thực sự đã không còn active
+    - Chỉ khi verify OK mới update local status
     """
     mode = get_current_mode()
 
@@ -66,6 +69,8 @@ def manual_cancel_pending(pending_id: int) -> Dict:
         from app.services.execution_service import (
             cancel_entry_and_exits,
             get_entry_order_status,
+            get_open_orders,
+            get_open_algo_orders,
         )
         from app.core.time_utils import utc_now
 
@@ -77,37 +82,99 @@ def manual_cancel_pending(pending_id: int) -> Dict:
         if p.status != "WAIT":
             return {"success": False, "error": f"Pending {pending_id} not WAIT (status={p.status})"}
 
-        # LIVE/TESTNET: cancel exchange orders
-        if mode != TradingMode.PAPER and p.exchange_order_id:
-            try:
-                cancel_entry_and_exits(p)
-
-                info = get_entry_order_status(p.symbol, p.exchange_order_id)
-                p.executed_qty = float(info.get("executed_qty") or p.executed_qty or 0)
-                p.exchange_status = info.get("status", p.exchange_status)
-                if info.get("avg_price"):
-                    p.avg_fill_price = float(info["avg_price"])
-                p.last_exchange_sync_at = utc_now()
-            except Exception as e:
-                print(f"[MANUAL CANCEL] Exchange cleanup error: {e}")
-
-        # Chốt local status
-        if (p.executed_qty or 0) > 0:
-            p.status = "FILLED"
-            p.rejection_reason = "MANUAL_CANCEL"
-        else:
+        # PAPER mode: chỉ local cancel
+        if mode == TradingMode.PAPER:
             p.status = "CANCELLED"
             p.rejection_reason = "MANUAL_CANCEL"
+            db.commit()
+            return {
+                "success": True,
+                "pending_id": pending_id,
+                "symbol": p.symbol,
+                "final_status": p.status,
+                "executed_qty": p.executed_qty,
+                "mode": "PAPER",
+            }
 
-        db.commit()
+        # ── LIVE / TESTNET ──────────────────────────────────
+        try:
+            # 1) Gửi lệnh cancel
+            cancel_entry_and_exits(p)
 
-        return {
-            "success":      True,
-            "pending_id":   pending_id,
-            "symbol":       p.symbol,
-            "final_status": p.status,
-            "executed_qty": p.executed_qty,
-        }
+            # 2) Sync entry status cuối cùng
+            info = get_entry_order_status(p.symbol, p.exchange_order_id)
+            p.executed_qty = float(info.get("executed_qty") or p.executed_qty or 0)
+            p.exchange_status = info.get("status", p.exchange_status)
+            if info.get("avg_price"):
+                p.avg_fill_price = float(info["avg_price"])
+            p.last_exchange_sync_at = utc_now()
+
+            # 3) Verify exchange side:
+            #    entry order còn active không?
+            entry_still_active = False
+            algo_still_active = False
+
+            # Verify normal orders
+            try:
+                normal_orders = get_open_orders(p.symbol)
+                if p.exchange_order_id:
+                    entry_still_active = any(
+                        str(o.get("orderId")) == str(p.exchange_order_id)
+                        for o in (normal_orders or [])
+                    )
+            except Exception:
+                normal_orders = []
+
+            # Verify algo orders
+            try:
+                algo_orders = get_open_algo_orders(p.symbol)
+                algo_ids = {str(p.sl_order_id or ""), str(p.tp_order_id or "")}
+                algo_still_active = any(
+                    str(o.get("algoId")) in algo_ids
+                    for o in (algo_orders or [])
+                )
+            except Exception:
+                algo_orders = []
+
+            # 4) Nếu entry vẫn active -> cancel thất bại
+            if entry_still_active:
+                db.rollback()
+                return {
+                    "success": False,
+                    "error": f"Exchange entry order still active for {p.symbol}. Cancel not confirmed.",
+                    "pending_id": pending_id,
+                    "symbol": p.symbol,
+                    "exchange_status": p.exchange_status,
+                }
+
+            # 5) Nếu đã có fill thì pending kết thúc dưới dạng FILLED
+            #    nếu chưa fill thì mới là CANCELLED
+            if (p.executed_qty or 0) > 0:
+                p.status = "FILLED"
+                p.rejection_reason = "MANUAL_CANCEL"
+            else:
+                p.status = "CANCELLED"
+                p.rejection_reason = "MANUAL_CANCEL"
+
+            db.commit()
+
+            return {
+                "success": True,
+                "pending_id": pending_id,
+                "symbol": p.symbol,
+                "final_status": p.status,
+                "executed_qty": p.executed_qty,
+                "exchange_status": p.exchange_status,
+                "algo_still_active": algo_still_active,
+                "mode": mode.value,
+            }
+
+        except Exception as e:
+            db.rollback()
+            return {
+                "success": False,
+                "error": f"Cancel error: {type(e).__name__}: {e}"
+            }
 
 
 def _get_current_price(symbol: str) -> Optional[float]:

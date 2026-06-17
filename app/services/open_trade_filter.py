@@ -1,5 +1,15 @@
-"""Open Trade Filter — kiểm tra trước khi tạo PendingSignal"""
-from datetime import datetime, timedelta
+"""
+Open Trade Filter
+=================
+Kiểm tra trước khi tạo PendingSignal / trước khi place order.
+
+QUAN TRỌNG:
+- get_open_trade_filter() phải nhận đúng OTF config block
+- KHÔNG được truyền full runtime_cfg vào
+- Nếu lỡ truyền full runtime_cfg, function sẽ tự bóc OPEN_TRADE_FILTER ra
+"""
+
+from datetime import timedelta
 from typing import Tuple, Optional, Dict
 from app.core.trading_mode import get_current_mode, TradingMode
 from app.core.time_utils import utc_now, vn_now
@@ -7,7 +17,11 @@ from app.core.time_utils import utc_now, vn_now
 
 class OpenTradeFilter:
     def __init__(self, config: dict):
-        self.cfg = config
+        self.cfg = config or {"enabled": False}
+
+        # Safety: nếu caller lỡ truyền full runtime config
+        if "OPEN_TRADE_FILTER" in self.cfg and "enabled" not in self.cfg:
+            self.cfg = self.cfg.get("OPEN_TRADE_FILTER", {"enabled": False})
 
     def check(self, symbol, direction, strategy_name, pattern,
                timeframe, regime, score, ml_prob, components,
@@ -20,34 +34,34 @@ class OpenTradeFilter:
         identity = self.cfg.get("identity", {})
 
         # ========================================================
-        # A. KHỐI IDENTITY (Fix triệt để lỗi fallback lọt lưới)
+        # A. IDENTITY CHECKS
         # ========================================================
 
-        # 2. Kiểm tra Direction
+        # 2. Direction
         allowed_dirs = identity.get("directions")
         if allowed_dirs is not None and len(allowed_dirs) > 0:
             if direction not in allowed_dirs:
                 return False, f"direction_blocked_{direction}"
 
-        # 3. Kiểm tra Strategy
+        # 3. Strategy
         allowed_strats = identity.get("strategies")
         if allowed_strats is not None and len(allowed_strats) > 0:
             if strategy_name not in allowed_strats:
                 return False, f"strategy_blocked_{strategy_name}"
 
-        # 4. Kiểm tra Pattern
+        # 4. Pattern
         allowed_patterns = identity.get("patterns")
         if allowed_patterns is not None and len(allowed_patterns) > 0:
             if pattern not in allowed_patterns:
                 return False, f"pattern_blocked_{pattern}"
 
-        # 5. Kiểm tra Timeframe
+        # 5. Timeframe
         allowed_tfs = identity.get("timeframes")
         if allowed_tfs is not None and len(allowed_tfs) > 0:
             if timeframe not in allowed_tfs:
                 return False, f"timeframe_blocked_{timeframe}"
 
-        # 6. Kiểm tra Symbol Whitelist / Blacklist
+        # 6. Symbol
         sym_mode = identity.get("symbol_mode", "all")
         if sym_mode == "whitelist":
             wl = identity.get("symbol_whitelist")
@@ -59,7 +73,7 @@ class OpenTradeFilter:
                 return False, "symbol_blacklisted"
 
         # ========================================================
-        # B. KHỐI MARKET CONDITION & SCORE
+        # B. MARKET CONDITION & SCORE
         # ========================================================
 
         mkt = self.cfg.get("market_condition", {})
@@ -71,15 +85,19 @@ class OpenTradeFilter:
         if atr_ratio is not None:
             min_atr = mkt.get("min_atr_pct", 0)
             max_atr = mkt.get("max_atr_pct", 0)
-            if min_atr > 0 and atr_ratio < min_atr: return False, "atr_too_low"
-            if max_atr > 0 and atr_ratio > max_atr: return False, "atr_too_high"
+            if min_atr > 0 and atr_ratio < min_atr:
+                return False, "atr_too_low"
+            if max_atr > 0 and atr_ratio > max_atr:
+                return False, "atr_too_high"
 
         sc = self.cfg.get("score", {})
-        if score < sc.get("min_overall", 0): return False, "score_below_filter"
-        
+        if score < sc.get("min_overall", 0):
+            return False, "score_below_filter"
+
         if ml_prob is not None and sc.get("min_ml_prob", 0) > 0:
-            if ml_prob < sc["min_ml_prob"]: return False, "ml_prob_below_filter"
-            
+            if ml_prob < sc["min_ml_prob"]:
+                return False, "ml_prob_below_filter"
+
         if components:
             if sc.get("min_trend_score", 0) > 0:
                 if components.get("trend_score", 0) < sc["min_trend_score"]:
@@ -89,17 +107,23 @@ class OpenTradeFilter:
                     return False, "mtf_below_filter"
 
         # ========================================================
-        # C. KHỐI POSITION & TIME
+        # C. POSITION CHECK
         # ========================================================
 
         if db is not None:
             ok, reason = self._check_position(db, symbol, strategy_name, timeframe)
-            if not ok: return False, reason
+            if not ok:
+                return False, reason
+
+        # ========================================================
+        # D. TIME CHECK
+        # ========================================================
 
         time_cfg = self.cfg.get("time", {})
         if time_cfg.get("enabled", False):
             ok, reason = self._check_time(time_cfg)
-            if not ok: return False, reason
+            if not ok:
+                return False, reason
 
         return True, "passed"
 
@@ -107,7 +131,7 @@ class OpenTradeFilter:
         from app.db.models import Signal, PendingSignal
         from sqlalchemy import func
 
-        pos  = self.cfg.get("position", {})
+        pos = self.cfg.get("position", {})
         mode = get_current_mode()
 
         max_conc = pos.get("max_concurrent_trades", 999)
@@ -125,32 +149,31 @@ class OpenTradeFilter:
         else:
             max_sym = pos.get("max_per_symbol", 1)
             if db.query(Signal).filter(
-                    Signal.symbol        == symbol,
+                    Signal.symbol == symbol,
                     Signal.strategy_name == strategy_name,
-                    Signal.timeframe     == timeframe,
-                    Signal.status        == "OPEN").count() >= max_sym:
+                    Signal.timeframe == timeframe,
+                    Signal.status == "OPEN").count() >= max_sym:
                 return False, "max_per_symbol"
 
         max_tf_cfg = pos.get("max_per_timeframe", {})
-        tf_limit   = max_tf_cfg.get(timeframe, 999)
+        tf_limit = max_tf_cfg.get(timeframe, 999)
         if db.query(Signal).filter(
                 Signal.timeframe == timeframe,
-                Signal.status    == "OPEN").count() >= tf_limit:
+                Signal.status == "OPEN").count() >= tf_limit:
             return False, f"max_per_tf_{timeframe}"
 
-        # ── Daily trades — dùng UTC range của ngày VN hôm nay ──
+        # Daily trades
         max_daily = pos.get("max_daily_trades", 0)
         if max_daily > 0:
             from app.core.time_utils import vn_day_to_utc_range
-            import datetime
             today_start_utc, _ = vn_day_to_utc_range(
-                vn_now().date().isoformat()     # ngày hôm nay theo VN
+                vn_now().date().isoformat()
             )
             if db.query(Signal).filter(
                     Signal.created_at >= today_start_utc).count() >= max_daily:
                 return False, "max_daily_trades"
 
-        # ── Daily loss — cùng logic ──────────────────────────
+        # Daily loss
         max_loss = pos.get("max_daily_loss_pct", 0)
         if max_loss > 0:
             from app.core.time_utils import vn_day_to_utc_range
@@ -164,7 +187,7 @@ class OpenTradeFilter:
             if pnl <= -max_loss:
                 return False, "daily_loss_limit"
 
-        # ── Loss streak ───────────────────────────────────────
+        # Loss streak
         pause_n = pos.get("pause_after_loss_streak", 0)
         if pause_n > 0:
             recent = (
@@ -180,8 +203,7 @@ class OpenTradeFilter:
         return True, "ok"
 
     def _check_time(self, time_cfg):
-        # Hiển thị / check giờ theo VN — dùng vn_now()
-        now_vn       = vn_now()
+        now_vn = vn_now()
         allowed_days = time_cfg.get("allowed_days", list(range(7)))
         if now_vn.weekday() not in allowed_days:
             return False, "day_restricted"
@@ -189,11 +211,10 @@ class OpenTradeFilter:
         hours = time_cfg.get("allowed_hours", {"start": "00:00", "end": "23:59"})
         sh, sm = map(int, hours["start"].split(":"))
         eh, em = map(int, hours["end"].split(":"))
-        cur    = now_vn.hour * 60 + now_vn.minute
+        cur = now_vn.hour * 60 + now_vn.minute
         if not (sh * 60 + sm <= cur <= eh * 60 + em):
             return False, "outside_hours"
 
-        # Funding blackout — tính theo UTC
         blackout = time_cfg.get("blackout_minutes_before_funding", 0)
         if blackout > 0:
             now_utc = utc_now()
@@ -209,7 +230,16 @@ class OpenTradeFilter:
 
 
 def get_open_trade_filter(cfg=None) -> OpenTradeFilter:
+    """
+    Hỗ trợ 3 kiểu truyền:
+    1. None         -> tự load runtime config rồi bóc OPEN_TRADE_FILTER
+    2. Full runtime -> tự bóc OPEN_TRADE_FILTER
+    3. OTF config   -> dùng luôn
+    """
     if cfg is None:
         from app.services.config_service import get_runtime_config
         cfg = get_runtime_config().get("OPEN_TRADE_FILTER", {"enabled": False})
-    return OpenTradeFilter(cfg)
+    elif isinstance(cfg, dict) and "OPEN_TRADE_FILTER" in cfg:
+        cfg = cfg.get("OPEN_TRADE_FILTER", {"enabled": False})
+
+    return OpenTradeFilter(cfg or {"enabled": False})

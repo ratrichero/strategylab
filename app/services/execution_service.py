@@ -441,15 +441,6 @@ class BinanceExecutor:
             print(f"[EXEC] Position info error: {e}")
         return None
 
-    def get_open_orders(self, symbol: str) -> list:
-        if not self.ready:
-            return []
-        try:
-            return self._client.get_orders(symbol=symbol)
-        except Exception as e:
-            print(f"[EXEC] Open orders error: {e}")
-            return []
-
     def close_position(
         self, symbol: str, direction: str
     ) -> Optional[Dict]:
@@ -1115,3 +1106,14 @@ def check_position_closed(trade) -> bool:
 
     size = executor.get_position_size(trade.symbol)
     return size == 0
+
+def get_open_orders(symbol: str) -> list:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return []
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return []
+
+    return executor.get_open_orders(symbol)

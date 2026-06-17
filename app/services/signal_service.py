@@ -744,7 +744,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     continue
 
                 # ── OTF CHECK ────────────────────────────────────
-                otf = get_open_trade_filter(runtime_cfg)
+                otf = get_open_trade_filter(runtime_cfg.get("OPEN_TRADE_FILTER"))
                 _atr_r = None
                 if last.get("atr") and last.get("close") and float(last["close"]) > 0:
                     _atr_r = float(last["atr"]) / float(last["close"])
