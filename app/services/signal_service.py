@@ -453,7 +453,7 @@ def run_market_scan_multi_tf():
 
 def run_market_scan_single_tf(timeframe):
     
-    runtime_cfg = get_runtime_config()
+    runtime_cfg = get_runtime_config(force_reload=True)
 
     print(f"\n🚀 Running SINGLE TF scan: {timeframe}")
 

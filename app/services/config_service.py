@@ -27,7 +27,7 @@ DEFAULTS = {
         "atr_entry_multiplier": {"15m": 0.4, "1h": 0.5, "4h": 0.6},
         "expire_hours": {"15m": 0.5, "1h": 2, "4h": 8}
     }),
-    "OPEN_TRADE_FILTER": json.dumps({"enabled": False}),
+    "OPEN_TRADE_FILTER": json.dumps({"enabled": True}),
     "PREFILL_CONFIG": json.dumps({"enabled": True}),
     "STRATEGY_THRESHOLDS": json.dumps({
         "candlestick": 5.0, "breakout": 6.0,

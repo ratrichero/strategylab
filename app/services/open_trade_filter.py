@@ -10,57 +10,84 @@ class OpenTradeFilter:
         self.cfg = config
 
     def check(self, symbol, direction, strategy_name, pattern,
-               timeframe, regime, score, ml_prob, components,
-               atr_ratio=None, db=None) -> Tuple[bool, str]:
-        if not self.cfg.get("enabled", False): return True, "filter_disabled"
+           timeframe, regime, score, ml_prob, components,
+           atr_ratio=None, db=None) -> Tuple[bool, str]:
+
+        if not self.cfg.get("enabled", False):
+            return True, "filter_disabled"
 
         identity = self.cfg.get("identity", {})
-        if direction not in identity.get("directions", ["LONG","SHORT"]):
+
+        # Direction check
+        allowed_dirs = identity.get("directions")
+        if allowed_dirs and direction not in allowed_dirs:
             return False, f"direction_blocked_{direction}"
+
+        # Strategy check
         strats = identity.get("strategies", [])
         if strats and strategy_name not in strats:
             return False, f"strategy_blocked_{strategy_name}"
+
+        # Pattern check
         patterns = identity.get("patterns", [])
         if patterns and pattern not in patterns:
-            return False, f"pattern_blocked"
-        tfs = identity.get("timeframes", ["15m","1h","4h"])
+            return False, "pattern_blocked"
+
+        # Timeframe check
+        tfs = identity.get("timeframes", ["15m", "1h", "4h"])
         if timeframe not in tfs:
-            return False, f"timeframe_blocked"
+            return False, "timeframe_blocked"
+
+        # Symbol whitelist/blacklist
         sym_mode = identity.get("symbol_mode", "all")
         if sym_mode == "whitelist":
             wl = identity.get("symbol_whitelist", [])
-            if wl and symbol not in wl: return False, "symbol_not_whitelisted"
+            if wl and symbol not in wl:
+                return False, "symbol_not_whitelisted"
         elif sym_mode == "blacklist":
             if symbol in identity.get("symbol_blacklist", []):
                 return False, "symbol_blacklisted"
 
+        # Market condition
         mkt = self.cfg.get("market_condition", {})
-        if regime not in mkt.get("allowed_regimes", ["BULL","BEAR","SIDEWAYS"]):
+        allowed_regimes = mkt.get("allowed_regimes", ["BULL", "BEAR", "SIDEWAYS"])
+        if regime not in allowed_regimes:
             return False, f"regime_blocked_{regime}"
-        if atr_ratio is not None:
-            min_atr = mkt.get("min_atr_pct", 0); max_atr = mkt.get("max_atr_pct", 0)
-            if min_atr > 0 and atr_ratio < min_atr: return False, "atr_too_low"
-            if max_atr > 0 and atr_ratio > max_atr: return False, "atr_too_high"
 
+        if atr_ratio is not None:
+            min_atr = mkt.get("min_atr_pct", 0)
+            max_atr = mkt.get("max_atr_pct", 0)
+            if min_atr > 0 and atr_ratio < min_atr:
+                return False, "atr_too_low"
+            if max_atr > 0 and atr_ratio > max_atr:
+                return False, "atr_too_high"
+
+        # Score check
         sc = self.cfg.get("score", {})
-        if score < sc.get("min_overall", 0): return False, "score_below_filter"
+        if score < sc.get("min_overall", 0):
+            return False, "score_below_filter"
         if ml_prob is not None and sc.get("min_ml_prob", 0) > 0:
-            if ml_prob < sc["min_ml_prob"]: return False, "ml_prob_below_filter"
+            if ml_prob < sc["min_ml_prob"]:
+                return False, "ml_prob_below_filter"
         if sc.get("min_trend_score", 0) > 0:
-            if components.get("trend_score", 0) < sc["min_trend_score"]:
+            if (components or {}).get("trend_score", 0) < sc["min_trend_score"]:
                 return False, "trend_below_filter"
         if sc.get("min_mtf_score", 0) > 0:
-            if components.get("mtf_score", 0) < sc["min_mtf_score"]:
+            if (components or {}).get("mtf_score", 0) < sc["min_mtf_score"]:
                 return False, "mtf_below_filter"
 
+        # Position check
         if db is not None:
             ok, reason = self._check_position(db, symbol, strategy_name, timeframe)
-            if not ok: return False, reason
+            if not ok:
+                return False, reason
 
+        # Time check
         time_cfg = self.cfg.get("time", {})
         if time_cfg.get("enabled", False):
             ok, reason = self._check_time(time_cfg)
-            if not ok: return False, reason
+            if not ok:
+                return False, reason
 
         return True, "passed"
 

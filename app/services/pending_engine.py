@@ -461,12 +461,12 @@ def _update_live_signal_from_pending(db, p):
         f"| qty={locked.executed_qty} avg={locked.avg_fill_price}"
     )
 
-    signal = db.query(Signal).get(p.signal_id)
+    """signal = db.query(Signal).get(p.signal_id)
     if not signal or signal.status != "OPEN":
         return
 
     if p.avg_fill_price:
-        signal.entry_price = float(p.avg_fill_price)
+        signal.entry_price = float(p.avg_fill_price)"""
 
     ctx = dict(signal.market_context or {})
     exec_ctx = dict(ctx.get("execution") or {})
