@@ -54,13 +54,13 @@ export function Dashboard() {
 
   const [allRegimes, setAllRegimes] = useState([]);
   const [allPatterns, setAllPatterns] = useState([]);
-  const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', fixedSize: 1000 });
+  const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', fixedSize: 1000 });
   const [appliedFilters, setAppliedFilters] = useState(filters);
 
   const setFilterInstant = (key, value) => {
     const next = { ...filters, [key]: value };
     setFilters(next);
-    if (['timeframe', 'engineVersion', 'strategy', 'regime', 'pattern', 'direction'].includes(key)) {
+    if (['timeframe', 'engineVersion', 'strategy', 'regime', 'pattern'].includes(key)) {
       setAppliedFilters(prev => ({ ...prev, [key]: value }));
     }
   };
@@ -171,7 +171,6 @@ export function Dashboard() {
       if (af.strategy !== 'all' && s.strategy_name !== af.strategy) return false;
       if (af.regime !== 'all' && s.regime !== af.regime) return false;
       if (af.pattern !== 'all' && s.pattern !== af.pattern) return false;
-      if (af.direction !== 'all' && s.direction !== af.direction) return false;
       return true;
     });
   }, [metricClosed, appliedFilters]);
@@ -431,17 +430,6 @@ export function Dashboard() {
   const $ = v => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const clr = v => v >= 0 ? 'text-emerald-400' : 'text-red-400';
 
-  // Check if any filter is active (besides date)
-  const hasActiveFilters = useMemo(() => {
-    const af = appliedFilters;
-    return af.strategy !== 'all' || af.regime !== 'all' || af.pattern !== 'all' || 
-           af.direction !== 'all' || af.timeframe !== 'all' || af.engineVersion !== 'all' || 
-           af.scoreMin !== '' || af.scoreMax !== '';
-  }, [appliedFilters]);
-
-  // Total Trades: show all when no filters, filtered when filters active
-  const totalTradesDisplay = hasActiveFilters ? filteredTradesCount : allClosed.length;
-
   // ========== RENDER ==========
   return (
     <div className="space-y-6">
@@ -457,7 +445,7 @@ export function Dashboard() {
 
       {/* OVERVIEW KPI */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Card className="flex items-center gap-4"><div className="p-3 bg-indigo-500/20 rounded-xl"><BarChart3 className="w-6 h-6 text-indigo-400" /></div><div><p className="text-sm text-slate-400">Total Trades{hasActiveFilters && ' (Filtered)'}</p><p className="text-2xl font-bold text-white">{totalTradesDisplay}</p></div></Card>
+        <Card className="flex items-center gap-4"><div className="p-3 bg-indigo-500/20 rounded-xl"><BarChart3 className="w-6 h-6 text-indigo-400" /></div><div><p className="text-sm text-slate-400">Total Trades</p><p className="text-2xl font-bold text-white">{filteredTradesCount}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-cyan-500/20 rounded-xl"><CalendarCheck className="w-6 h-6 text-cyan-400" /></div><div><p className="text-sm text-slate-400">Trades Today</p><p className="text-2xl font-bold text-white">{tradesTodayCount}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-emerald-500/20 rounded-xl"><Target className="w-6 h-6 text-emerald-400" /></div><div><p className="text-sm text-slate-400">Win Rate</p><p className={`text-2xl font-bold ${winRate >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{winRate.toFixed(1)}%</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-yellow-500/20 rounded-xl"><Zap className="w-6 h-6 text-yellow-400" /></div><div><p className="text-sm text-slate-400">Active Signals</p><p className="text-2xl font-bold text-white">{allOpen.length}</p></div></Card>
@@ -471,13 +459,12 @@ export function Dashboard() {
         <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3">
           <Input type="date" label="From" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} />
           <Input type="date" label="To" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} />
-          <Select label="Strategy" value={filters.strategy} onChange={v => setFilterInstant('strategy', v)} options={[{ value: 'all', label: 'All' }, ...strategies.map(s => ({ value: s, label: s }))]} />
-          <Select label="Pattern" value={filters.pattern} onChange={v => setFilterInstant('pattern', v)} options={[{ value: 'all', label: 'All' }, ...allPatterns.map(p => ({ value: p, label: p }))]} />
-          <Select label="Direction" value={filters.direction} onChange={v => setFilterInstant('direction', v)} options={[{ value: 'all', label: 'All' }, { value: 'LONG', label: 'LONG' }, { value: 'SHORT', label: 'SHORT' }]} />
-          <Select label="Regime" value={filters.regime} onChange={v => setFilterInstant('regime', v)} options={[{ value: 'all', label: 'All' }, ...allRegimes.map(r => ({ value: r, label: r }))]} />
-          <Select label="TF" value={filters.timeframe} onChange={v => setFilterInstant('timeframe', v)} options={[{ value: 'all', label: 'All' }, { value: '15m', label: '15m' }, { value: '1h', label: '1h' }, { value: '4h', label: '4h' }]} />
-          <Select label="Score" value={getScorePreset()} onChange={setScoreFilter} options={[{ value: 'all', label: 'All' }, { value: '6-7', label: '6 ~ 7' }, { value: '7-8', label: '7 ~ 8' }, { value: '8-9', label: '8 ~ 9' }, { value: '9-10', label: '9 ~ 10' }]} />
+          <Select label="Timeframe" value={filters.timeframe} onChange={v => setFilterInstant('timeframe', v)} options={[{ value: 'all', label: 'All' }, { value: '15m', label: '15m' }, { value: '1h', label: '1h' }, { value: '4h', label: '4h' }]} />
           <Select label="Engine" value={filters.engineVersion} onChange={v => setFilterInstant('engineVersion', v)} options={[{ value: 'all', label: 'All' }, ...engineVersions.map(v => ({ value: v, label: `v${v}` }))]} />
+          <Select label="Score" value={getScorePreset()} onChange={setScoreFilter} options={[{ value: 'all', label: 'All' }, { value: '6-7', label: '6 ~ 7' }, { value: '7-8', label: '7 ~ 8' }, { value: '8-9', label: '8 ~ 9' }, { value: '9-10', label: '9 ~ 10' }]} />
+          <Select label="Strategy" value={filters.strategy} onChange={v => setFilterInstant('strategy', v)} options={[{ value: 'all', label: 'All' }, ...strategies.map(s => ({ value: s, label: s }))]} />
+          <Select label="Regime" value={filters.regime} onChange={v => setFilterInstant('regime', v)} options={[{ value: 'all', label: 'All' }, ...allRegimes.map(r => ({ value: r, label: r }))]} />
+          <Select label="Pattern" value={filters.pattern} onChange={v => setFilterInstant('pattern', v)} options={[{ value: 'all', label: 'All' }, ...allPatterns.map(p => ({ value: p, label: p }))]} />
           <Input type="number" label="Fixed Size ($)" value={filters.fixedSize} onChange={e => setFilters({ ...filters, fixedSize: Number(e.target.value) || 1000 })} />
           <div className="flex items-end"><Button variant="primary" onClick={handleApply} className="w-full">Apply</Button></div>
         </div>
