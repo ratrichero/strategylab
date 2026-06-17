@@ -38,7 +38,7 @@ async def account_open_orders(
 async def account_trades(
     target: Optional[str] = Query(default="live"),
     symbol: Optional[str] = Query(default=None),
-    limit: int = Query(default=100),
+    limit: int = Query(default=500),
     startTime: Optional[int] = Query(default=None),
     endTime: Optional[int] = Query(default=None),
 ):
@@ -59,8 +59,8 @@ async def account_trades(
 async def account_income(
     target: Optional[str] = Query(default="live"),
     symbol: Optional[str] = Query(default=None),
-    incomeType: Optional[str] = Query(default=None),
-    limit: int = Query(default=100),
+    incomeType: Optional[str] = Query(default="all"),
+    limit: int = Query(default=500),
     startTime: Optional[int] = Query(default=None),
     endTime: Optional[int] = Query(default=None),
 ):

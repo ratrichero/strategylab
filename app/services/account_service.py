@@ -1,18 +1,20 @@
 """
 Account Service
 ===============
-Expose account-level data từ Binance Futures:
+Exchange-truth account data from Binance Futures only.
+
+Endpoints supported:
 - info
 - positions
-- open orders
-- trades
+- open-orders
+- trades (requires symbol)
 - income
 
-Dùng key từ DB/env qua get_connection_value().
-Mặc định target = live, có thể truyền target=testnet.
+Target:
+- live
+- testnet
 """
 
-import os
 import time
 import hmac
 import hashlib
@@ -23,7 +25,6 @@ from urllib.parse import urlencode
 from app.services.config_service import get_connection_value
 from app.core.trading_mode import get_current_mode, TradingMode
 
-
 _HTTP = requests.Session()
 SIGNED_TIMEOUT = 10
 
@@ -33,12 +34,6 @@ SIGNED_TIMEOUT = 10
 # ============================================================
 
 def _resolve_target(target: Optional[str]) -> str:
-    """
-    target ưu tiên:
-    1. query param target nếu có
-    2. current trading mode nếu là TESTNET/LIVE
-    3. fallback = live
-    """
     if target:
         t = str(target).strip().lower()
         if t in ("live", "testnet"):
@@ -49,7 +44,6 @@ def _resolve_target(target: Optional[str]) -> str:
         return "testnet"
     if mode == TradingMode.LIVE:
         return "live"
-
     return "live"
 
 
@@ -58,26 +52,26 @@ def _get_binance_creds(target: Optional[str] = None) -> Dict[str, str]:
 
     if t == "testnet":
         return {
-            "target":    "testnet",
-            "api_key":   get_connection_value("BINANCE_TESTNET_API_KEY", ""),
-            "api_secret":get_connection_value("BINANCE_TESTNET_API_SECRET", ""),
-            "base_url":  "https://testnet.binancefuture.com",
+            "target": "testnet",
+            "api_key": get_connection_value("BINANCE_TESTNET_API_KEY", ""),
+            "api_secret": get_connection_value("BINANCE_TESTNET_API_SECRET", ""),
+            "base_url": "https://testnet.binancefuture.com",
         }
 
     return {
-        "target":     "live",
-        "api_key":    get_connection_value("BINANCE_API_KEY", ""),
+        "target": "live",
+        "api_key": get_connection_value("BINANCE_API_KEY", ""),
         "api_secret": get_connection_value("BINANCE_API_SECRET", ""),
-        "base_url":   "https://fapi.binance.com",
+        "base_url": "https://fapi.binance.com",
     }
 
 
 def _signed_request(method: str, path: str, params: Optional[Dict[str, Any]] = None, target: Optional[str] = None):
     cfg = _get_binance_creds(target)
 
-    api_key    = cfg["api_key"]
+    api_key = cfg["api_key"]
     api_secret = cfg["api_secret"]
-    base_url   = cfg["base_url"]
+    base_url = cfg["base_url"]
 
     if not api_key or not api_secret:
         raise RuntimeError(f"Missing Binance API credentials for target={cfg['target']}")
@@ -113,7 +107,7 @@ def _signed_request(method: str, path: str, params: Optional[Dict[str, Any]] = N
 
     if not resp.ok:
         code = data.get("code")
-        msg  = data.get("msg") or str(data)
+        msg = data.get("msg") or str(data)
         raise RuntimeError(f"Binance request failed [{resp.status_code}] code={code} msg={msg}")
 
     return data
@@ -126,21 +120,26 @@ def _safe_float(v, default=0.0):
         return default
 
 
+def _norm_symbol(symbol: Optional[str]) -> Optional[str]:
+    if not symbol:
+        return None
+    s = str(symbol).strip().upper()
+    if not s:
+        return None
+    if not s.endswith("USDT"):
+        s = s + "USDT"
+    return s
+
+
 # ============================================================
-# PUBLIC API
+# PUBLIC
 # ============================================================
 
 def get_account_info(target: Optional[str] = None) -> Dict:
-    """
-    Summary account info.
-    """
     cfg = _get_binance_creds(target)
     target = cfg["target"]
 
     account = _signed_request("GET", "/fapi/v2/account", {}, target=target)
-
-    balances = account.get("assets", [])
-    usdt = next((a for a in balances if a.get("asset") == "USDT"), None)
 
     positions = [
         p for p in account.get("positions", [])
@@ -150,25 +149,17 @@ def get_account_info(target: Optional[str] = None) -> Dict:
     return {
         "target": target,
         "can_trade": True,
-        "assets_count": len(balances),
-        "positions_count": len(positions),
-        "usdt": {
-            "walletBalance":      _safe_float(usdt.get("walletBalance"))      if usdt else 0,
-            "availableBalance":   _safe_float(usdt.get("availableBalance"))   if usdt else 0,
-            "marginBalance":      _safe_float(usdt.get("marginBalance"))      if usdt else 0,
-            "unrealizedProfit":   _safe_float(usdt.get("unrealizedProfit"))   if usdt else 0,
-            "crossWalletBalance": _safe_float(usdt.get("crossWalletBalance")) if usdt else 0,
-        },
-        "totals": {
-            "totalWalletBalance":    _safe_float(account.get("totalWalletBalance")),
-            "totalMarginBalance":    _safe_float(account.get("totalMarginBalance")),
-            "totalUnrealizedProfit": _safe_float(account.get("totalUnrealizedProfit")),
-            "totalAvailableBalance": _safe_float(account.get("availableBalance")),
-        }
+        "totalWalletBalance": _safe_float(account.get("totalWalletBalance")),
+        "totalUnrealizedProfit": _safe_float(account.get("totalUnrealizedProfit")),
+        "totalMarginBalance": _safe_float(account.get("totalMarginBalance")),
+        "availableBalance": _safe_float(account.get("availableBalance")),
+        "totalPositionInitialMargin": _safe_float(account.get("totalPositionInitialMargin")),
+        "totalOpenOrderInitialMargin": _safe_float(account.get("totalOpenOrderInitialMargin")),
+        "positionsCount": len(positions),
     }
 
 
-def get_positions(target: Optional[str] = None) -> Dict:
+def get_positions(target: Optional[str] = None):
     cfg = _get_binance_creds(target)
     target = cfg["target"]
 
@@ -180,103 +171,86 @@ def get_positions(target: Optional[str] = None) -> Dict:
         if amt == 0:
             continue
         positions.append({
-            "symbol":            p.get("symbol"),
-            "side":              "LONG" if amt > 0 else "SHORT",
-            "positionAmt":       abs(amt),
-            "entryPrice":        _safe_float(p.get("entryPrice")),
-            "markPrice":         _safe_float(p.get("markPrice")),
-            "unRealizedProfit":  _safe_float(p.get("unRealizedProfit")),
-            "liquidationPrice":  _safe_float(p.get("liquidationPrice")),
-            "leverage":          int(float(p.get("leverage", 1))),
-            "marginType":        p.get("marginType"),
-            "isolatedMargin":    _safe_float(p.get("isolatedMargin")),
-            "updateTime":        p.get("updateTime"),
+            "symbol": p.get("symbol"),
+            "positionAmt": amt,  # giữ dấu + / - để FE phân biệt BUY/SELL
+            "entryPrice": _safe_float(p.get("entryPrice")),
+            "markPrice": _safe_float(p.get("markPrice")),
+            "unrealizedProfit": _safe_float(p.get("unRealizedProfit")),
+            "notional": abs(_safe_float(p.get("notional"))),
+            "leverage": int(float(p.get("leverage", 1))),
+            "marginType": p.get("marginType"),
+            "liquidationPrice": _safe_float(p.get("liquidationPrice")),
+            "isolatedMargin": _safe_float(p.get("isolatedMargin")),
+            "updateTime": p.get("updateTime"),
         })
 
-    return {
-        "target": target,
-        "count": len(positions),
-        "items": positions,
-    }
+    return positions
 
 
-def get_open_orders(target: Optional[str] = None, symbol: Optional[str] = None) -> Dict:
-    """
-    Merge:
-    - normal open orders
-    - algo open orders
-    """
+def get_open_orders(target: Optional[str] = None, symbol: Optional[str] = None):
     cfg = _get_binance_creds(target)
     target = cfg["target"]
+    symbol = _norm_symbol(symbol)
 
     params = {}
     if symbol:
-        params["symbol"] = symbol.upper()
+        params["symbol"] = symbol
 
     normal = _signed_request("GET", "/fapi/v1/openOrders", params, target=target)
-    algo   = _signed_request("GET", "/fapi/v1/openAlgoOrders", params, target=target)
+    algo = _signed_request("GET", "/fapi/v1/openAlgoOrders", params, target=target)
 
-    normal_items = [{
-        "kind":        "NORMAL",
-        "orderId":     o.get("orderId"),
-        "symbol":      o.get("symbol"),
-        "side":        o.get("side"),
-        "type":        o.get("type"),
-        "status":      o.get("status"),
-        "price":       _safe_float(o.get("price")),
-        "stopPrice":   _safe_float(o.get("stopPrice")),
-        "origQty":     _safe_float(o.get("origQty")),
-        "executedQty": _safe_float(o.get("executedQty")),
-        "time":        o.get("time"),
-    } for o in (normal if isinstance(normal, list) else [])]
+    rows = []
 
-    algo_items = [{
-        "kind":         "ALGO",
-        "algoId":       o.get("algoId"),
-        "clientAlgoId": o.get("clientAlgoId"),
-        "symbol":       o.get("symbol"),
-        "side":         o.get("side"),
-        "orderType":    o.get("orderType"),
-        "algoStatus":   o.get("algoStatus"),
-        "triggerPrice": _safe_float(o.get("triggerPrice")),
-        "price":        _safe_float(o.get("price")),
-        "quantity":     _safe_float(o.get("quantity")),
-        "actualOrderId":o.get("actualOrderId"),
-        "workingType":  o.get("workingType"),
-        "closePosition":o.get("closePosition"),
-        "createTime":   o.get("createTime"),
-        "updateTime":   o.get("updateTime"),
-    } for o in (algo if isinstance(algo, list) else [])]
+    # Normal orders
+    for o in (normal if isinstance(normal, list) else []):
+        rows.append({
+            "symbol": o.get("symbol"),
+            "side": o.get("side"),
+            "type": o.get("type"),
+            "origQty": _safe_float(o.get("origQty")),
+            "price": _safe_float(o.get("price")),
+            "stopPrice": _safe_float(o.get("stopPrice")),
+            "status": o.get("status"),
+            "time": o.get("time"),
+            "kind": "NORMAL",
+        })
 
-    return {
-        "target": target,
-        "symbol": symbol.upper() if symbol else None,
-        "normal_count": len(normal_items),
-        "algo_count": len(algo_items),
-        "normal": normal_items,
-        "algo": algo_items,
-    }
+    # Algo orders
+    for o in (algo if isinstance(algo, list) else []):
+        rows.append({
+            "symbol": o.get("symbol"),
+            "side": o.get("side"),
+            "type": o.get("orderType"),               # map sang field FE đang dùng
+            "origQty": _safe_float(o.get("quantity")),
+            "price": _safe_float(o.get("price")),
+            "stopPrice": _safe_float(o.get("triggerPrice")),
+            "status": o.get("algoStatus"),
+            "time": o.get("createTime"),
+            "kind": "ALGO",
+        })
+
+    return rows
 
 
 def get_trades(
     target: Optional[str] = None,
     symbol: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 500,
     start_time: Optional[int] = None,
     end_time: Optional[int] = None,
-) -> Dict:
+):
     """
-    USER TRADES.
-    Binance futures yêu cầu symbol.
+    Binance Futures userTrades requires symbol.
     """
     cfg = _get_binance_creds(target)
     target = cfg["target"]
+    symbol = _norm_symbol(symbol)
 
     if not symbol:
-        raise RuntimeError("symbol is required for /api/account/trades")
+        raise RuntimeError("symbol is required for account/trades")
 
     params = {
-        "symbol": symbol.upper(),
+        "symbol": symbol,
         "limit": min(max(limit, 1), 1000),
     }
     if start_time:
@@ -286,52 +260,39 @@ def get_trades(
 
     data = _signed_request("GET", "/fapi/v1/userTrades", params, target=target)
 
-    items = [{
-        "symbol":      t.get("symbol"),
-        "id":          t.get("id"),
-        "orderId":     t.get("orderId"),
-        "side":        t.get("side"),
-        "price":       _safe_float(t.get("price")),
-        "qty":         _safe_float(t.get("qty")),
-        "quoteQty":    _safe_float(t.get("quoteQty")),
-        "realizedPnl": _safe_float(t.get("realizedPnl")),
-        "commission":  _safe_float(t.get("commission")),
-        "commissionAsset": t.get("commissionAsset"),
-        "time":        t.get("time"),
-        "maker":       t.get("maker"),
-        "buyer":       t.get("buyer"),
-    } for t in (data if isinstance(data, list) else [])]
+    rows = []
+    for t in (data if isinstance(data, list) else []):
+        rows.append({
+            "symbol": t.get("symbol"),
+            "side": "BUY" if t.get("buyer") else "SELL",
+            "price": _safe_float(t.get("price")),
+            "qty": _safe_float(t.get("qty")),
+            "quoteQty": _safe_float(t.get("quoteQty")),
+            "realizedPnl": _safe_float(t.get("realizedPnl")),
+            "commission": _safe_float(t.get("commission")),
+            "commissionAsset": t.get("commissionAsset"),
+            "time": t.get("time"),
+        })
 
-    return {
-        "target": target,
-        "symbol": symbol.upper(),
-        "count": len(items),
-        "items": items,
-    }
+    return rows
 
 
 def get_income(
     target: Optional[str] = None,
     symbol: Optional[str] = None,
     income_type: Optional[str] = None,
-    limit: int = 100,
+    limit: int = 500,
     start_time: Optional[int] = None,
     end_time: Optional[int] = None,
-) -> Dict:
-    """
-    Income history.
-    incomeType examples:
-      TRANSFER, WELCOME_BONUS, REALIZED_PNL, FUNDING_FEE, COMMISSION
-    """
+):
     cfg = _get_binance_creds(target)
     target = cfg["target"]
+    symbol = _norm_symbol(symbol)
 
-    params = {
-        "limit": min(max(limit, 1), 1000),
-    }
+    params = {"limit": min(max(limit, 1), 1000)}
     if symbol:
-        params["symbol"] = symbol.upper()
-    if income_type:
+        params["symbol"] = symbol
+    if income_type and income_type != "all":
         params["incomeType"] = income_type
     if start_time:
         params["startTime"] = int(start_time)
@@ -340,21 +301,17 @@ def get_income(
 
     data = _signed_request("GET", "/fapi/v1/income", params, target=target)
 
-    items = [{
-        "symbol":     i.get("symbol"),
-        "incomeType": i.get("incomeType"),
-        "income":     _safe_float(i.get("income")),
-        "asset":      i.get("asset"),
-        "info":       i.get("info"),
-        "time":       i.get("time"),
-        "tranId":     i.get("tranId"),
-        "tradeId":    i.get("tradeId"),
-    } for i in (data if isinstance(data, list) else [])]
+    rows = []
+    for i in (data if isinstance(data, list) else []):
+        rows.append({
+            "symbol": i.get("symbol"),
+            "incomeType": i.get("incomeType"),
+            "income": _safe_float(i.get("income")),
+            "asset": i.get("asset"),
+            "info": i.get("info"),
+            "time": i.get("time"),
+            "tranId": i.get("tranId"),
+            "tradeId": i.get("tradeId"),
+        })
 
-    return {
-        "target": target,
-        "symbol": symbol.upper() if symbol else None,
-        "incomeType": income_type,
-        "count": len(items),
-        "items": items,
-    }
+    return rows
