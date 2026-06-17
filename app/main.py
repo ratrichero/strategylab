@@ -297,7 +297,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(scan_worker(),           name="scan_worker"),
         asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
         asyncio.create_task(report_scheduler_loop(), name="report"),
-        #asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
+        asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
     ]
 
     def start_bot():
