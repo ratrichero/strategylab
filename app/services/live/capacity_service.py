@@ -24,6 +24,10 @@ Rules:
     C_OPEN + C_NEW >= C_CONFIG + 2
 - Cleanup when:
     C_OPEN + C_NEW > C_CONFIG + 2
+
+IMPORTANT:
+- File này giữ cả API mới và compatibility helpers cũ
+  để không làm vỡ reconciler/runtime cũ đang import.
 """
 
 from dataclasses import dataclass
@@ -40,16 +44,35 @@ def is_exchange_terminal_status(status: str) -> bool:
     return str(status or "").upper() in TERMINAL_EXCHANGE_STATUSES
 
 
-def is_pending_new_zero_fill(pending: PendingSignal) -> bool:
+def is_pending_exchange_active(pending: PendingSignal) -> bool:
+    """
+    Compatibility helper cũ:
+    pending đang sống trên exchange nếu:
+    - status WAIT
+    - có exchange_order_id
+    - exchange chưa terminal
+    """
     if not pending:
         return False
     if pending.status != "WAIT":
         return False
     if not pending.exchange_order_id:
         return False
-    if float(pending.executed_qty or 0) > 0:
-        return False
     if is_exchange_terminal_status(pending.exchange_status):
+        return False
+    return True
+
+
+def is_pending_new_zero_fill(pending: PendingSignal) -> bool:
+    """
+    NEW zero-fill = đang nằm trên exchange, chưa fill gì.
+    Đây là nhóm được tính vào C_NEW.
+    """
+    if not pending:
+        return False
+    if not is_pending_exchange_active(pending):
+        return False
+    if float(pending.executed_qty or 0) > 0:
         return False
     return True
 
@@ -79,6 +102,10 @@ class CapacitySnapshot:
         return max(0, self.total_risk - self.max_risk)
 
 
+# ============================================================
+# Core symbol sets
+# ============================================================
+
 def get_open_signal_symbols(db) -> Set[str]:
     rows = db.query(Signal.symbol).filter(
         Signal.status == "OPEN"
@@ -103,6 +130,10 @@ def get_new_zero_fill_symbols(db) -> Set[str]:
 
     return {row[0] for row in rows if row and row[0]}
 
+
+# ============================================================
+# New API
+# ============================================================
 
 def get_capacity_snapshot(db, c_config: int) -> CapacitySnapshot:
     open_symbols = get_open_signal_symbols(db)
@@ -157,3 +188,52 @@ def get_new_zero_fill_cancel_candidates(db) -> List[PendingSignal]:
     ).all()
 
     return rows
+
+
+# ============================================================
+# Compatibility API for reconciler/runtime cũ
+# ============================================================
+
+def get_active_live_symbols(db) -> Set[str]:
+    """
+    Compatibility helper cũ:
+    ACTIVE LIVE SYMBOLS =
+      OPEN signals
+      UNION
+      placed WAIT pendings chưa terminal
+    """
+    symbols = set()
+
+    open_signal_rows = db.query(Signal.symbol).filter(
+        Signal.status == "OPEN"
+    ).distinct().all()
+
+    for row in open_signal_rows:
+        if row and row[0]:
+            symbols.add(row[0])
+
+    pending_rows = db.query(PendingSignal.symbol).filter(
+        PendingSignal.status == "WAIT",
+        PendingSignal.exchange_order_id != None,  # noqa: E711
+        or_(
+            PendingSignal.exchange_status == None,  # noqa: E711
+            PendingSignal.exchange_status.notin_(list(TERMINAL_EXCHANGE_STATUSES))
+        )
+    ).distinct().all()
+
+    for row in pending_rows:
+        if row and row[0]:
+            symbols.add(row[0])
+
+    return symbols
+
+
+def get_active_live_symbol_count(db) -> int:
+    return len(get_active_live_symbols(db))
+
+
+def get_zero_fill_resting_pending_candidates(db) -> List[PendingSignal]:
+    """
+    Compatibility alias cũ.
+    """
+    return get_new_zero_fill_cancel_candidates(db)
