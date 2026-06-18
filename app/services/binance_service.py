@@ -28,11 +28,12 @@ SYMBOL_BASE_BLACKLIST = {
     "ETHBTC",   # cross-pair, not USDT quote nhưng phòng thủ
 }
 
-SYMBOL_BLACKLIST = {
-    f"{base}USDT" for base in SYMBOL_BASE_BLACKLIST
-} | {
-    # Thêm full symbol nếu cần
-}
+# Cách 1: Định nghĩa rõ ràng là set rỗng nếu không có phần tử nào
+SYMBOL_BLACKLIST = {f"{base}USDT" for base in SYMBOL_BASE_BLACKLIST}.union({
+    # Thêm các symbol cụ thể vào đây dưới dạng set
+    # Ví dụ: "BTCUSDT", "ETHUSDT"
+})
+
 
 retry_strategy = Retry(
     total=3,
