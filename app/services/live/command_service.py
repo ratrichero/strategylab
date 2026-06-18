@@ -448,3 +448,56 @@ def request_kill_switch_all() -> Dict[str, Any]:
                 result["errors"].append(f"{symbol}: {type(e).__name__}: {e}")
 
     return result
+
+def request_protection_replace(signal_id: int, new_sl_price: float) -> Dict[str, Any]:
+    with SessionLocal() as db:
+        trade = db.query(Signal).get(signal_id)
+        if not trade:
+            return {"success": False, "error": f"Signal {signal_id} not found"}
+
+        if trade.status != "OPEN":
+            return {"success": False, "error": f"Signal {signal_id} not OPEN (status={trade.status})"}
+
+        pending = db.query(PendingSignal).filter(
+            PendingSignal.signal_id == trade.id
+        ).order_by(PendingSignal.created_at.desc()).first()
+
+        if not pending:
+            return {"success": False, "error": f"No pending linked for signal {signal_id}"}
+
+        if new_sl_price is None or float(new_sl_price) <= 0:
+            return {"success": False, "error": "Invalid new_sl_price"}
+
+        existing = get_latest_open_command(db, trade.symbol, [CMD_PROTECTION_REPLACE])
+        if existing:
+            return {
+                "success": True,
+                "symbol": trade.symbol,
+                "signal_id": trade.id,
+                "command_id": existing.id,
+                "status": existing.status,
+                "deduped": True,
+            }
+
+        cmd = _create_command(
+            db,
+            symbol=trade.symbol,
+            command_type=CMD_PROTECTION_REPLACE,
+            pending_id=pending.id,
+            signal_id=trade.id,
+            request_payload={
+                "reason": "BREAKEVEN",
+                "new_sl_price": float(new_sl_price),
+            },
+        )
+        db.commit()
+        db.refresh(cmd)
+
+        return {
+            "success": True,
+            "symbol": trade.symbol,
+            "signal_id": trade.id,
+            "command_id": cmd.id,
+            "status": cmd.status,
+            "deduped": False,
+        }

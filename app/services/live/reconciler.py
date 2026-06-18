@@ -12,6 +12,13 @@ from app.services.execution_service import (
     place_algo_take_profit_market_close_position,
     get_executor,
 )
+from app.services.execution_service import get_open_algo_orders
+from app.services.live.protection_service import (
+    set_breakeven_retry_backoff,
+    clear_breakeven_retry_backoff,
+    mark_breakeven_applied,
+)
+
 from app.services.config_service import get_runtime_config
 from app.services.live.snapshot_service import build_symbol_snapshot, SymbolSnapshot
 from app.services.live.locks import live_symbol_lock
@@ -23,6 +30,9 @@ from app.services.live.command_service import (
     CMD_PROTECTION_REPLACE,
     COMMAND_REQUESTED,
     COMMAND_SENT,
+    COMMAND_CONFIRMED,
+    COMMAND_FAILED,
+    get_latest_open_command,
     confirm_commands_for_symbol,
     has_open_command,
     request_emergency_close,
@@ -60,6 +70,248 @@ def reconcile_all_active_symbols():
     # chủ động hủy bớt resting zero-fill entries.
     _enforce_live_hard_cap()
 
+
+def _get_open_protection_replace_command(commands):
+    if not commands:
+        return None
+
+    for cmd in commands:
+        if cmd.command_type == CMD_PROTECTION_REPLACE and cmd.status in (COMMAND_REQUESTED, COMMAND_SENT):
+            return cmd
+
+    return None
+
+def _process_protection_replace_command(db, signal: Signal, pending: Optional[PendingSignal], snapshot: SymbolSnapshot, commands):
+    cmd = _get_open_protection_replace_command(commands)
+    if not cmd or not signal or signal.status != "OPEN" or not pending:
+        return
+
+    req = dict(cmd.request_payload or {})
+    res = dict(cmd.result_payload or {})
+
+    phase = res.get("phase", "REQUESTED")
+    target_sl = float(req.get("new_sl_price") or 0)
+
+    if target_sl <= 0:
+        cmd.status = COMMAND_FAILED
+        cmd.error_message = "INVALID_TARGET_SL"
+        res["phase"] = "FAILED"
+        cmd.result_payload = res
+        set_breakeven_retry_backoff(signal, "INVALID_TARGET_SL")
+        db.flush()
+        return
+
+    # sync current protection ids from snapshot open algo
+    stop_open = _find_algo_by_type(snapshot.open_algo_orders, "STOP_MARKET")
+    tp_open = _find_algo_by_type(snapshot.open_algo_orders, "TAKE_PROFIT_MARKET")
+
+    if stop_open:
+        pending.sl_order_id = str(stop_open.get("algoId", "")) or pending.sl_order_id
+    if tp_open:
+        pending.tp_order_id = str(tp_open.get("algoId", "")) or pending.tp_order_id
+
+    # --------------------------------------------------------
+    # Phase 1: REQUESTED -> send cancel old SL
+    # --------------------------------------------------------
+    if phase == "REQUESTED":
+        old_sl_id = pending.sl_order_id or (str(stop_open.get("algoId", "")) if stop_open else None)
+        old_sl_price = float(signal.stop_loss or pending.stop_loss or 0)
+
+        if old_sl_id:
+            cancel_order_by_id(signal.symbol, old_sl_id)
+
+            cmd.status = COMMAND_SENT
+            if not cmd.sent_at:
+                cmd.sent_at = utc_now()
+
+            res.update({
+                "phase": "CANCEL_SENT",
+                "target_sl": target_sl,
+                "old_sl_id": old_sl_id,
+                "old_sl_price": old_sl_price,
+                "cancel_sent_at": utc_now().isoformat(),
+            })
+            cmd.result_payload = res
+            db.flush()
+
+            print(
+                f"🛡️ [PROTECTION] Cancel sent for old SL: "
+                f"{signal.symbol} | old_sl_id={old_sl_id} | target_sl={target_sl}"
+            )
+            return
+
+        # Không tìm thấy old SL active -> coi như qua phase chờ cancel
+        cmd.status = COMMAND_SENT
+        if not cmd.sent_at:
+            cmd.sent_at = utc_now()
+
+        res.update({
+            "phase": "CANCEL_SENT",
+            "target_sl": target_sl,
+            "old_sl_id": None,
+            "old_sl_price": old_sl_price,
+            "cancel_sent_at": utc_now().isoformat(),
+        })
+        cmd.result_payload = res
+        db.flush()
+
+    # --------------------------------------------------------
+    # Phase 2: CANCEL_SENT -> wait until STOP cũ biến mất, rồi place new
+    # --------------------------------------------------------
+    phase = dict(cmd.result_payload or {}).get("phase", phase)
+
+    if phase == "CANCEL_SENT":
+        stop_open = _find_algo_by_type(snapshot.open_algo_orders, "STOP_MARKET")
+
+        # STOP cũ vẫn còn active -> chờ vòng sau, không log spam
+        if stop_open:
+            return
+
+        executor = get_executor()
+        if not executor or not executor.ready:
+            cmd.status = COMMAND_FAILED
+            cmd.error_message = "EXECUTOR_NOT_READY"
+            res["phase"] = "FAILED"
+            cmd.result_payload = res
+            set_breakeven_retry_backoff(signal, "EXECUTOR_NOT_READY")
+            db.flush()
+            return
+
+        symbol_info = executor.get_symbol_info(signal.symbol)
+        rounded_sl = executor.round_price(signal.symbol, target_sl, symbol_info)
+
+        try:
+            new_sl_order = place_algo_stop_market_close_position(
+                symbol=signal.symbol,
+                direction=signal.direction,
+                trigger_price=rounded_sl,
+            )
+            new_sl_id = str(new_sl_order.get("algoId", "")) if new_sl_order else None
+
+            if not new_sl_id:
+                raise RuntimeError("PLACE_NEW_SL_NO_ID")
+
+        except Exception as e:
+            err = f"PLACE_NEW_SL_ERROR::{e}"
+
+            # re-check open algo immediately
+            latest_open_algos = get_open_algo_orders(signal.symbol) or []
+            latest_stop = _find_algo_by_type(latest_open_algos, "STOP_MARKET")
+
+            if latest_stop:
+                pending.sl_order_id = str(latest_stop.get("algoId", "")) or pending.sl_order_id
+                res["last_error"] = err
+                cmd.result_payload = res
+                db.flush()
+
+                print(
+                    f"⚠️ [PROTECTION] Replace pending, STOP still active => wait "
+                    f"{signal.symbol} | {err}"
+                )
+                return
+
+            # No STOP active now -> try restore old SL
+            old_sl_price = float(res.get("old_sl_price") or signal.stop_loss or pending.stop_loss or 0)
+
+            if old_sl_price > 0:
+                try:
+                    rounded_old_sl = executor.round_price(signal.symbol, old_sl_price, symbol_info)
+                    restored = place_algo_stop_market_close_position(
+                        symbol=signal.symbol,
+                        direction=signal.direction,
+                        trigger_price=rounded_old_sl,
+                    )
+                    restored_id = str(restored.get("algoId", "")) if restored else None
+
+                    if restored_id:
+                        pending.sl_order_id = restored_id
+                        pending.stop_loss = rounded_old_sl
+                        signal.stop_loss = rounded_old_sl
+
+                        cmd.status = COMMAND_FAILED
+                        cmd.error_message = err
+                        res.update({
+                            "phase": "RESTORED_OLD_SL",
+                            "restored_sl_id": restored_id,
+                            "restored_sl_price": rounded_old_sl,
+                            "last_error": err,
+                        })
+                        cmd.result_payload = res
+
+                        set_breakeven_retry_backoff(signal, err)
+                        db.flush()
+
+                        print(
+                            f"♻️ [PROTECTION] Restored old SL after replace fail: "
+                            f"{signal.symbol} | sl={rounded_old_sl} algo_id={restored_id}"
+                        )
+                        return
+
+                except Exception as restore_e:
+                    print(f"❌ [PROTECTION] Restore old SL failed {signal.symbol}: {restore_e}")
+
+            # Fatal: no old stop restored, no new stop placed
+            cmd.status = COMMAND_FAILED
+            cmd.error_message = err
+            res.update({
+                "phase": "FAILED_EMERGENCY_CLOSE",
+                "last_error": err,
+            })
+            cmd.result_payload = res
+
+            set_breakeven_retry_backoff(signal, err)
+            db.flush()
+
+            print(f"🚨 [PROTECTION] Replace failed => EMERGENCY_CLOSE {signal.symbol} | {err}")
+
+            request_emergency_close(
+                symbol=signal.symbol,
+                signal_id=signal.id,
+                pending_id=pending.id,
+                reason=f"PROTECTION_REPLACE_FAILED::{err}",
+            )
+            return
+
+        # Success
+        pending.sl_order_id = new_sl_id
+        pending.stop_loss = rounded_sl
+        signal.stop_loss = rounded_sl
+
+        mark_breakeven_applied(signal, rounded_sl, new_sl_id)
+        clear_breakeven_retry_backoff(signal)
+
+        cmd.status = COMMAND_CONFIRMED
+        cmd.confirmed_at = utc_now()
+        res.update({
+            "phase": "CONFIRMED",
+            "new_sl_id": new_sl_id,
+            "new_sl_price": rounded_sl,
+        })
+        cmd.result_payload = res
+        cmd.error_message = None
+
+        db.flush()
+
+        print(
+            f"✅ [PROTECTION] Breakeven applied: {signal.symbol} "
+            f"| new_sl={rounded_sl} algo_id={new_sl_id}"
+        )
+        _notify_breakeven_applied(signal, rounded_sl)
+
+def _notify_breakeven_applied(signal: Signal, new_sl_price: float):
+    try:
+        from app.services.telegram_service import send_telegram
+
+        send_telegram(
+            f"🛡️ <b>BREAKEVEN APPLIED</b>\n\n"
+            f"<b>Symbol:</b> {signal.symbol}\n"
+            f"<b>Direction:</b> {signal.direction}\n"
+            f"<b>Entry:</b> {float(signal.entry_price):.4f}\n"
+            f"<b>New SL:</b> {float(new_sl_price):.4f}\n"
+            f"<b>Signal ID:</b> {signal.id}"
+        )
+    except Exception as e:
+        print(f"[BREAKEVEN NOTIFY] {e}")
 
 def reconcile_symbol(symbol: str):
     with live_symbol_lock(symbol, blocking=False) as acquired:
@@ -295,6 +547,10 @@ def _find_algo_by_type(open_algo_orders, order_type: str):
 
 def _ensure_protection(db, signal: Signal, pending: Optional[PendingSignal], snapshot: SymbolSnapshot):
     if not pending:
+        return
+    
+    # Nếu đang có command protection replace mở, không auto chạm protection nữa
+    if pending and has_open_command(db, pending.symbol, [CMD_PROTECTION_REPLACE]):
         return
 
     executor = get_executor()

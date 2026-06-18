@@ -5,21 +5,9 @@ Xử lý phase E0:
 - pending WAIT
 - exchange_order_id IS NULL
 
-HOTFIX v1:
-- Retry policy cố ý hardcode để chặn retry vô hạn trên LIVE
-- Sau khi live ổn định sẽ chuyển policy này sang app_config / spec động
-
-Policy hiện tại:
-- deterministic fail -> reject ngay
-- transient fail -> retry tối đa 1 lần
-- backoff giữa các lần thử = 10 giây
-
-HARD-CAP HOTFIX:
-- MAX_OPEN_TRADES được hiểu là hard-cap exposure thực tế
-- Count theo DISTINCT active live symbols:
-    + OPEN signals
-    + placed WAIT pendings chưa terminal
-- Nếu đã đầy cap -> không place thêm
+HOTFIX:
+- Retry policy hardcode để chặn retry vô hạn trên LIVE
+- HARD CAP BLOCK dùng backoff để không spam loop/log
 """
 
 from datetime import timedelta
@@ -41,15 +29,9 @@ from app.services.live.capacity_service import get_active_live_symbol_count
 from app.services.price_feed import get_all_current_prices
 
 
-# ============================================================
-# HARD-CODED RETRY POLICY (HOTFIX v1)
-# NOTE:
-# - Intent retry hiện cố ý hardcode
-# - Sau khi live ổn định sẽ chuyển sang app_config / spec động
-# ============================================================
-
 MAX_PLACE_RETRIES = 1
 RETRY_BACKOFF_SECONDS = 10
+HARD_CAP_BLOCK_BACKOFF_SECONDS = 60
 
 
 DETERMINISTIC_ERRORS = [
@@ -140,7 +122,6 @@ def _reject_place_failure(db, p: PendingSignal, error_msg: str):
 def _schedule_place_retry_or_reject(db, p: PendingSignal, error_msg: str, now):
     p.last_place_error = error_msg
 
-    # deterministic = reject ngay
     if _is_deterministic_error(error_msg):
         _reject_place_failure(db, p, error_msg)
         return
@@ -148,7 +129,6 @@ def _schedule_place_retry_or_reject(db, p: PendingSignal, error_msg: str, now):
     max_total_attempts = 1 + MAX_PLACE_RETRIES
     attempts = int(p.place_attempt_count or 0)
 
-    # nếu đã hết quota retry -> reject
     if attempts >= max_total_attempts:
         p.status = "REJECTED"
         p.rejection_reason = f"ENTRY_FAIL_RETRY_EXHAUSTED::{error_msg}"
@@ -162,7 +142,6 @@ def _schedule_place_retry_or_reject(db, p: PendingSignal, error_msg: str, now):
         )
         return
 
-    # transient fail -> schedule retry
     p.next_retry_at = now + timedelta(seconds=RETRY_BACKOFF_SECONDS)
     db.commit()
 
@@ -211,6 +190,7 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             db.commit()
             return
 
+        # Quan trọng: nếu đã có order trên exchange thì intent phase hết quyền
         if p.exchange_order_id:
             db.commit()
             return
@@ -256,15 +236,18 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             db.commit()
             return
 
-        # HARD-CAP gate #1: check sớm để tránh làm prefill/sizing vô ích
         max_open = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
         active_live_count = get_active_live_symbol_count(db)
         if active_live_count >= max_open:
+            p.last_place_error = "HARD_CAP_BLOCK"
+            p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
+            db.commit()
+
             print(
                 f"⛔ LIVE HARD CAP BLOCK: {p.symbol} {p.direction} "
-                f"| pending={p.id} active_live={active_live_count}/{max_open}"
+                f"| pending={p.id} active_live={active_live_count}/{max_open} "
+                f"| retry_at={p.next_retry_at.isoformat()}"
             )
-            db.commit()
             return
 
         current = price_map.get(p.symbol)
@@ -311,8 +294,6 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
                 for o in (existing_normal or [])
             )
             if has_live_entry:
-                # Không tự bind mù vì chưa có clientOrderId entry.
-                # Tránh spin liên tục bằng backoff nhẹ.
                 p.last_place_error = "DUPLICATE_OPEN_LIMIT_DETECTED"
                 p.next_retry_at = now + timedelta(seconds=RETRY_BACKOFF_SECONDS)
                 db.commit()
@@ -323,17 +304,19 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
                 )
                 return
 
-        # HARD-CAP gate #2: check lại ngay trước khi place thật
         active_live_count = get_active_live_symbol_count(db)
         if active_live_count >= max_open:
+            p.last_place_error = "HARD_CAP_BLOCK"
+            p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
+            db.commit()
+
             print(
                 f"⛔ LIVE HARD CAP BLOCK BEFORE PLACE: {p.symbol} {p.direction} "
-                f"| pending={p.id} active_live={active_live_count}/{max_open}"
+                f"| pending={p.id} active_live={active_live_count}/{max_open} "
+                f"| retry_at={p.next_retry_at.isoformat()}"
             )
-            db.commit()
             return
 
-        # Từ đây mới tính là 1 place attempt thực sự
         _record_place_attempt(p, now)
         db.flush()
 
@@ -350,7 +333,6 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
         p.order_quantity = exec_result.actual_quantity
         p.last_exchange_sync_at = now
 
-        # success -> clear retry control
         p.next_retry_at = None
         p.last_place_error = None
 
