@@ -27,9 +27,9 @@ PROFIT_PROTECTION_CONFIG = {
         "4h": 1.0,
     },
     "buffer_pct": {
-        "15m": 0.001,
-        "1h": 0.0015,
-        "4h": 0.002,
+        "15m": 0.002,
+        "1h": 0.0025,
+        "4h": 0.003,
     },
     "once_only": True,
 }
