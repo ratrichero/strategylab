@@ -11,6 +11,12 @@ HOTFIX:
 
 IMPORTANT:
 - expire_at phải được check TRƯỚC next_retry_at
+- place gate dùng capacity model:
+    C_OPEN + C_NEW <= C_CONFIG + 2
+  và block nếu:
+    C_OPEN >= C_CONFIG
+    OR
+    C_OPEN + C_NEW >= C_CONFIG + 2
 """
 
 from datetime import timedelta
@@ -28,7 +34,10 @@ from app.services.execution_service import (
     get_executor,
 )
 from app.services.live.locks import live_symbol_lock
-from app.services.live.capacity_service import get_active_live_symbol_count
+from app.services.live.capacity_service import (
+    get_capacity_snapshot,
+    should_block_new_entry,
+)
 from app.services.price_feed import get_all_current_prices
 
 
@@ -241,15 +250,17 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             return
 
         max_open = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
-        active_live_count = get_active_live_symbol_count(db)
-        if active_live_count >= max_open:
+        cap = get_capacity_snapshot(db, max_open)
+
+        if should_block_new_entry(cap):
             p.last_place_error = "HARD_CAP_BLOCK"
             p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
             db.commit()
 
             print(
                 f"⛔ LIVE HARD CAP BLOCK: {p.symbol} {p.direction} "
-                f"| pending={p.id} active_live={active_live_count}/{max_open} "
+                f"| pending={p.id} open={cap.c_open} new={cap.c_new} "
+                f"| total={cap.total_risk}/{cap.max_risk} "
                 f"| retry_at={p.next_retry_at.isoformat()}"
             )
             return
@@ -308,15 +319,16 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
                 )
                 return
 
-        active_live_count = get_active_live_symbol_count(db)
-        if active_live_count >= max_open:
+        cap = get_capacity_snapshot(db, max_open)
+        if should_block_new_entry(cap):
             p.last_place_error = "HARD_CAP_BLOCK"
             p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
             db.commit()
 
             print(
                 f"⛔ LIVE HARD CAP BLOCK BEFORE PLACE: {p.symbol} {p.direction} "
-                f"| pending={p.id} active_live={active_live_count}/{max_open} "
+                f"| pending={p.id} open={cap.c_open} new={cap.c_new} "
+                f"| total={cap.total_risk}/{cap.max_risk} "
                 f"| retry_at={p.next_retry_at.isoformat()}"
             )
             return

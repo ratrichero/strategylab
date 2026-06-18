@@ -25,6 +25,7 @@ from app.services.config_service import get_runtime_config
 from app.strategies.registry import get_active_strategies
 from app.services.open_trade_filter import get_open_trade_filter
 from app.core.trading_mode import get_current_mode, TradingMode
+from app.services.live.capacity_service import get_capacity_snapshot, should_pause_scan
 
 # ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 
@@ -426,21 +427,28 @@ def _in_cooldown_v2(db, symbol, timeframe, strategy_name, hours=4):
 # ============================================================
 
 def run_market_scan_multi_tf():
-    
-
     runtime_cfg = get_runtime_config(force_reload=True)
-    
 
     # 🛑 CHẶN TẠI ĐÂY: Nếu TOP_LIMIT <= 0, coi như hệ thống đã dừng.
-    # Không cần mở DB, không cần tính toán logic, không tốn resource.
     if runtime_cfg.get("TOP_LIMIT", 0) <= 0:
         print(f"💤 Scan system is PAUSED (TOP_LIMIT = 0)")
         return
-    
-    now        = utc_now()
 
-    # ← CHANGED: dùng context manager, không double-close
+    now = utc_now()
+
     with SessionLocal() as db:
+        # LIVE scan pause gate
+        if get_current_mode() != TradingMode.PAPER:
+            c_config = int(runtime_cfg.get("MAX_OPEN_TRADES", 10) or 10)
+            cap = get_capacity_snapshot(db, c_config)
+
+            if should_pause_scan(cap):
+                print(
+                    f"⏸️ [SCAN PAUSED] LIVE saturated "
+                    f"| open={cap.c_open} new={cap.c_new} total={cap.total_risk}/{cap.max_risk}"
+                )
+                return
+
         if now.minute in [1, 16, 31, 46]:
             scan_timeframe(db, "15m", runtime_cfg)
 
@@ -452,17 +460,35 @@ def run_market_scan_multi_tf():
 
 
 def run_market_scan_single_tf(timeframe):
-    
     runtime_cfg = get_runtime_config(force_reload=True)
 
     print(f"\n🚀 Running SINGLE TF scan: {timeframe}")
 
-    # ← CHANGED: dùng context manager, không double-close
     with SessionLocal() as db:
+        # LIVE scan pause gate:
+        # nếu saturated thì dừng sớm, không tạo scan_run/debug/pending
+        if get_current_mode() != TradingMode.PAPER:
+            c_config = int(runtime_cfg.get("MAX_OPEN_TRADES", 10) or 10)
+            cap = get_capacity_snapshot(db, c_config)
+
+            if should_pause_scan(cap):
+                print(
+                    f"⏸️ [SCAN PAUSED] LIVE saturated "
+                    f"| open={cap.c_open} new={cap.c_new} total={cap.total_risk}/{cap.max_risk}"
+                )
+                return {
+                    "timeframe": timeframe,
+                    "skipped": True,
+                    "reason": "LIVE_CAPACITY_PAUSED",
+                    "open": cap.c_open,
+                    "new": cap.c_new,
+                    "total": cap.total_risk,
+                    "max_risk": cap.max_risk,
+                }
+
         result = scan_timeframe(db, timeframe, runtime_cfg)
 
     return result
-
 
 # ============================================================
 # MAIN SCAN ENGINE

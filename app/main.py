@@ -178,6 +178,23 @@ async def scheduler_loop():
         # Dùng UTC để schedule — không dùng local time
         now = utc_now()
 
+        # LIVE scheduler pause gate:
+        # nếu saturated thì không enqueue scan auto
+        if get_current_mode() != TradingMode.PAPER:
+            try:
+                from app.db.session import SessionLocal
+                from app.services.live.capacity_service import get_capacity_snapshot, should_pause_scan
+
+                with SessionLocal() as db:
+                    c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+                    cap = get_capacity_snapshot(db, c_config)
+
+                    if should_pause_scan(cap):
+                        await asyncio.sleep(1)
+                        continue
+            except Exception as e:
+                print(f"[SCHEDULER CAPACITY CHECK] {e}")
+
         if now.minute in [1, 16, 31, 46] and last["15m"] != now.minute:
             await scan_queue.put("15m")
             last["15m"] = now.minute

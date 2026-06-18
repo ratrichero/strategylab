@@ -6,6 +6,7 @@ from app.core.time_utils import utc_now, ensure_utc
 from app.core.trading_mode import get_current_mode
 from app.db.session import SessionLocal
 from app.db.models import PendingSignal, Signal, SignalFeature, ScanDebug, ExecutionCommand
+from app.services.live.capacity_service import is_exchange_terminal_status 
 from app.services.execution_service import (
     cancel_order_by_id,
     place_algo_stop_market_close_position,
@@ -17,6 +18,11 @@ from app.services.live.protection_service import (
     set_breakeven_retry_backoff,
     clear_breakeven_retry_backoff,
     mark_breakeven_applied,
+)
+from app.services.config_service import get_runtime_config
+from app.services.live.capacity_service import (
+    get_capacity_snapshot,
+    get_new_zero_fill_cancel_candidates,
 )
 
 from app.services.live.protection_service import (
@@ -1064,30 +1070,28 @@ def run_deferred_outcomes():
 def _enforce_live_hard_cap():
     """
     HARD-CAP cho LIVE:
-    - Count DISTINCT active live symbols:
-        + OPEN signals
-        + placed WAIT pendings chưa terminal
-    - Nếu vượt MAX_OPEN_TRADES:
-        + chỉ hủy các resting zero-fill entries
-        + ưu tiên hủy các lệnh mới nhất trước
-        + KHÔNG tự đóng vị thế đang mở
+    - Risk model:
+        C_OPEN + C_NEW <= C_CONFIG + 2
+    - Nếu overflow:
+        chỉ hủy các NEW zero-fill newest-first
+    - KHÔNG tự đóng vị thế OPEN
     """
     cfg = get_runtime_config()
-    cap = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+    c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
 
     with SessionLocal() as db:
-        active_symbols = get_active_live_symbols(db)
-        active_count = len(active_symbols)
+        snap = get_capacity_snapshot(db, c_config)
 
-        if active_count <= cap:
+        if not snap.cleanup_needed:
             return
 
-        overflow = active_count - cap
-        candidates = get_zero_fill_resting_pending_candidates(db)
+        overflow = snap.overflow_count
+        candidates = get_new_zero_fill_cancel_candidates(db)
 
     print(
-        f"⚠️ LIVE HARD CAP EXCEEDED: active_live={active_count}/{cap} "
-        f"| overflow={overflow} | trying to cancel newest zero-fill resting entries"
+        f"⚠️ LIVE HARD CAP EXCEEDED: "
+        f"open={snap.c_open} new={snap.c_new} total={snap.total_risk}/{snap.max_risk} "
+        f"| overflow={overflow} | cancelling newest zero-fill NEW entries"
     )
 
     cancelled = 0
@@ -1114,12 +1118,20 @@ def _enforce_live_hard_cap():
                 if not p:
                     continue
 
-                if not is_pending_exchange_active(p):
+                # chỉ cancel đúng NEW zero-fill
+                if p.status != "WAIT":
+                    db.commit()
+                    continue
+
+                if not p.exchange_order_id:
                     db.commit()
                     continue
 
                 if float(p.executed_qty or 0) > 0:
-                    # đã có fill thì không được hủy vì hard-cap
+                    db.commit()
+                    continue
+                 
+                if is_exchange_terminal_status(p.exchange_status):
                     db.commit()
                     continue
 
@@ -1131,8 +1143,6 @@ def _enforce_live_hard_cap():
                 ok = cancel_order_by_id(p.symbol, p.exchange_order_id)
 
                 if ok:
-                    # marker tạm để nhìn log/query dễ hơn;
-                    # terminal state thật sẽ do reconcile sau khi exchange xác nhận cancel
                     p.last_place_error = "CAPACITY_HARD_CAP_CANCEL_REQUESTED"
                     p.last_exchange_sync_at = utc_now()
                     db.commit()
@@ -1147,8 +1157,6 @@ def _enforce_live_hard_cap():
         print(
             f"⚠️ LIVE HARD CAP NOT FULLY ENFORCED: "
             f"remaining_overflow={remaining} "
-            f"| likely because cap is already consumed by OPEN positions "
-            f"or some symbols were locked/became non-candidates"
+            f"| likely because some symbols were locked / already changed state"
         )
-
         
