@@ -281,7 +281,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"⚠️ Async pool: {e}")
 
+    cfg = get_runtime_config(force_reload=True)
+
     print(f"  Mode: {mode.value}")
+
+    if mode != TradingMode.PAPER:
+        print(f"  LIVE monitor enabled: {cfg.get('ENABLE_MONITOR', True)}")
+        print(f"  LIVE scheduler enabled: {cfg.get('ENABLE_SCHEDULER', True)}")
+        print(f"  LIVE max open trades: {cfg.get('MAX_OPEN_TRADES')}")
+        print(f"  LIVE position size cfg: {cfg.get('POSITION_SIZE_CONFIG')}")
+        print("  LIVE intent retry policy: hardcoded max_retries=1 backoff=10s")
+        if cfg.get("ENABLE_SCHEDULER", True):
+            print("  ⚠️ LIVE scheduler is ENABLED — scanner may create real pending/orders automatically")
 
     # Price Feed — đăng ký callback TRƯỚC khi start
     print("\n📡 Price Feed...")
@@ -302,7 +313,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(scan_worker(),           name="scan_worker"),
         asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
         asyncio.create_task(report_scheduler_loop(), name="report"),
-        asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
+        #asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
     ]
 
     # LIVE mode: thêm live loops riêng
@@ -322,11 +333,11 @@ async def lifespan(app: FastAPI):
     def start_bot():
         try:
             from app.bot.telegram_bot import run_bot
-            run_bot(TELEGRAM_TOKEN)
+            #run_bot(TELEGRAM_TOKEN)
         except Exception as e:
             print(f"[BOT] {e}")
 
-    threading.Thread(target=start_bot, daemon=True, name="Bot").start()
+    #threading.Thread(target=start_bot, daemon=True, name="Bot").start()
 
     print("🤖 Bot started")
     print("✅ All systems GO")

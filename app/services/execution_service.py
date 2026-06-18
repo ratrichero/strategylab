@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from typing import Optional, Dict, Tuple, List
 from urllib.parse import urlencode
 
-from app.core.trading_mode import get_trading_mode, TradingMode
+from app.core.trading_mode import get_trading_mode
 
 
 # ============================================================
@@ -216,8 +216,8 @@ class BinanceExecutor:
     def __init__(self, testnet: bool = False):
         self.testnet = testnet
         self._client = None
-        self._init_client()
         self._last_error = None
+        self._init_client()
 
     def _init_client(self):
         try:
@@ -314,9 +314,11 @@ class BinanceExecutor:
         if not self.ready:
             return False
         try:
+            self._last_error = None
             self._client.change_leverage(symbol=symbol, leverage=leverage)
             return True
         except Exception as e:
+            self._last_error = str(e)
             print(f"[EXEC] Leverage error {symbol}: {e}")
             return False
 
@@ -339,6 +341,7 @@ class BinanceExecutor:
                 params["reduceOnly"] = "true"
             return self._client.new_order(**params)
         except Exception as e:
+            self._last_error = str(e)
             print(f"[EXEC] Market order error {symbol} {side}: {e}")
             return None
 
@@ -530,7 +533,14 @@ def open_position(
         )
 
         symbol_info = executor.get_symbol_info(pending.symbol)
-        executor.set_leverage(pending.symbol, leverage)
+
+        if not executor.set_leverage(pending.symbol, leverage):
+            err = getattr(executor, "_last_error", None) or f"failed to set leverage={leverage}"
+            return OrderResult(
+                success=False,
+                error=f"SET_LEVERAGE_FAILED::{err}",
+                mode=mode.get_mode().value
+            )
 
         current_price = float(price_map.get(pending.symbol, pending.trigger_price))
         raw_qty = usdt_notional / current_price
@@ -549,9 +559,10 @@ def open_position(
             pending.symbol, entry_side, quantity
         )
         if not entry_order:
+            err = getattr(executor, "_last_error", None) or "Entry order failed"
             return OrderResult(
                 success=False,
-                error="Entry order failed",
+                error=err,
                 mode=mode.get_mode().value
             )
 
@@ -613,7 +624,14 @@ def place_limit_entry_order(pending) -> OrderResult:
         )
 
         symbol_info = executor.get_symbol_info(pending.symbol)
-        executor.set_leverage(pending.symbol, leverage)
+
+        if not executor.set_leverage(pending.symbol, leverage):
+            err = getattr(executor, "_last_error", None) or f"failed to set leverage={leverage}"
+            return OrderResult(
+                success=False,
+                error=f"SET_LEVERAGE_FAILED::{err}",
+                mode=mode.get_mode().value
+            )
 
         raw_qty = usdt_notional / float(pending.trigger_price)
         quantity = executor.round_quantity(

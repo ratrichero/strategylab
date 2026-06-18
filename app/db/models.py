@@ -304,6 +304,15 @@ class PendingSignal(Base):
     tp_order_id           = Column(String, nullable=True)
     reprice_applied       = Column(Boolean, nullable=False, default=False)
 
+    # ── LIVE intent retry control (HOTFIX v1)
+    # NOTE:
+    # - Hiện tại cố ý hardcode retry policy trong live intent engine
+    # - Khi live ổn định hơn sẽ chuyển sang app_config / spec động
+    place_attempt_count   = Column(Integer, nullable=False, default=0)
+    last_place_attempt_at = _dt(nullable=True)
+    last_place_error      = Column(Text, nullable=True)
+    next_retry_at         = _dt(nullable=True)
+
     # ── Refs ─────────────────────────────────────────────
     scan_id       = Column(
         Integer,
@@ -335,7 +344,6 @@ class PendingSignal(Base):
         Index("idx_pending_symbol_tf_status", "symbol", "timeframe", "status"),
         Index("idx_pending_created_at",       "created_at"),
     )
-
 
 # ============================================================
 # ExecutionCommand
