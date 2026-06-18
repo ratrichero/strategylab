@@ -348,36 +348,45 @@ def _manual_command_reason(commands) -> Optional[Tuple[str, Optional[float]]]:
         return None
 
     for cmd in commands:
+        payload = cmd.result_payload or {}
+        req = cmd.request_payload or {}
+
+        actual_exit = payload.get("actual_exit_price")
+        price_hint = payload.get("price_hint") or req.get("price_hint")
+
+        if actual_exit is not None:
+            try:
+                actual_exit = float(actual_exit)
+                if actual_exit <= 0:
+                    actual_exit = None
+            except Exception:
+                actual_exit = None
+
+        if price_hint is not None:
+            try:
+                price_hint = float(price_hint)
+                if price_hint <= 0:
+                    price_hint = None
+            except Exception:
+                price_hint = None
+
+        final_price = actual_exit or price_hint
+
         if cmd.command_type == CMD_MANUAL_CLOSE:
-            price = None
-            payload = cmd.result_payload or {}
-            if payload.get("actual_exit_price"):
-                price = float(payload["actual_exit_price"])
-            return "MANUAL", price
+            return "MANUAL", final_price
 
         if cmd.command_type == CMD_KILL_SWITCH:
-            payload = cmd.result_payload or {}
-            price = None
             close_raw = payload.get("close_raw") or {}
+            raw_price = None
             if isinstance(close_raw, dict):
-                price = float(close_raw.get("avgPrice", 0) or 0) or None
-            return "KILL_SWITCH", price
+                raw_price = float(close_raw.get("avgPrice", 0) or 0) or None
+            return "KILL_SWITCH", raw_price or final_price
 
         if cmd.command_type == CMD_EMERGENCY_CLOSE:
-            payload = cmd.result_payload or {}
-            price = payload.get("actual_exit_price")
-            if price:
-                price = float(price)
-            req = cmd.request_payload or {}
-            return f"EMERGENCY_CLOSE::{req.get('reason', 'UNKNOWN')}", price
+            return f"EMERGENCY_CLOSE::{req.get('reason', 'UNKNOWN')}", final_price
 
         if cmd.command_type == CMD_PROTECTION_REPLACE:
-            payload = cmd.result_payload or {}
-            price = payload.get("actual_exit_price")
-            if price:
-                price = float(price)
-            req = cmd.request_payload or {}
-            return f"PROTECTION_REPLACE_FAILED::{req.get('reason', 'UNKNOWN')}", price
+            return f"PROTECTION_REPLACE_FAILED::{req.get('reason', 'UNKNOWN')}", final_price
 
     return None
 
@@ -391,9 +400,13 @@ def _derive_close_reason(
     cmd_reason = _manual_command_reason(commands)
     if cmd_reason:
         reason, exit_price = cmd_reason
-        if exit_price:
+        if exit_price and float(exit_price) > 0:
             return reason, float(exit_price)
-        return reason, float(signal.entry_price or 0)
+
+        # HOTFIX:
+        # Không fallback về entry price nữa.
+        # Ưu tiên current market/mark price.
+        return reason, _get_best_exit_price(signal.symbol, fallback=float(signal.entry_price or 0))
 
     if _is_algo_triggered(snapshot.tp_algo):
         price = (
@@ -411,8 +424,11 @@ def _derive_close_reason(
         )
         return "SL", price
 
-    # fallback cuối cùng: không suy reason bằng giá local nữa
-    return "EXCHANGE_CLOSE_UNKNOWN", float(signal.entry_price or 0)
+    # fallback cuối cùng
+    return "EXCHANGE_CLOSE_UNKNOWN", _get_best_exit_price(
+        signal.symbol,
+        fallback=float(signal.entry_price or 0)
+    )
 
 
 def _is_manual_like_reason(reason: str) -> bool:
@@ -539,6 +555,28 @@ def _schedule_outcome_save(signal_id: int):
         if signal_id not in _outcome_queue:
             _outcome_queue.append(signal_id)
 
+def _get_best_exit_price(symbol: str, fallback: Optional[float] = None) -> float:
+    try:
+        from app.services.price_feed import get_current_price
+        px = get_current_price(symbol)
+        if px is not None:
+            px = float(px)
+            if px > 0:
+                return px
+    except Exception:
+        pass
+
+    try:
+        from app.services.binance_service import get_all_prices
+        px = get_all_prices().get(symbol)
+        if px is not None:
+            px = float(px)
+            if px > 0:
+                return px
+    except Exception:
+        pass
+
+    return float(fallback or 0)
 
 def run_deferred_outcomes():
     """

@@ -24,6 +24,29 @@ CMD_PROTECTION_REPLACE = "PROTECTION_REPLACE"
 CMD_EMERGENCY_CLOSE = "EMERGENCY_CLOSE"
 
 
+def _get_price_hint(symbol: str) -> Optional[float]:
+    try:
+        from app.services.price_feed import get_current_price
+        px = get_current_price(symbol)
+        if px is not None:
+            px = float(px)
+            if px > 0:
+                return px
+    except Exception:
+        pass
+
+    try:
+        from app.services.binance_service import get_all_prices
+        px = get_all_prices().get(symbol)
+        if px is not None:
+            px = float(px)
+            if px > 0:
+                return px
+    except Exception:
+        pass
+
+    return None
+
 def _create_command(
     db,
     *,
@@ -104,25 +127,33 @@ def request_manual_close(signal_id: int) -> Dict[str, Any]:
             PendingSignal.signal_id == trade.id
         ).order_by(PendingSignal.created_at.desc()).first()
 
+        price_hint = _get_price_hint(trade.symbol)
+
         cmd = _create_command(
             db,
             symbol=trade.symbol,
             command_type=CMD_MANUAL_CLOSE,
             pending_id=pending.id if pending else None,
             signal_id=trade.id,
-            request_payload={"reason": "MANUAL"},
+            request_payload={
+                "reason": "MANUAL",
+                "price_hint": price_hint,
+            },
         )
         db.commit()
         db.refresh(cmd)
 
         try:
             result = exec_close_position(trade, "MANUAL")
+            actual_exit = result.actual_entry if (result.actual_entry and result.actual_entry > 0) else None
+
             cmd.status = COMMAND_SENT if result.success else COMMAND_FAILED
             cmd.sent_at = utc_now()
             cmd.result_payload = {
                 "success": result.success,
                 "order_id": result.order_id,
-                "actual_exit_price": result.actual_entry,
+                "actual_exit_price": actual_exit,
+                "price_hint": price_hint,
                 "fee": result.fee,
                 "mode": result.mode,
             }
@@ -240,13 +271,18 @@ def request_emergency_close(symbol: str, signal_id: Optional[int], pending_id: O
         if signal_id:
             trade = db.query(Signal).get(signal_id)
 
+        price_hint = _get_price_hint(symbol)
+
         cmd = _create_command(
             db,
             symbol=symbol,
             command_type=CMD_EMERGENCY_CLOSE,
             pending_id=pending_id,
             signal_id=signal_id,
-            request_payload={"reason": reason},
+            request_payload={
+                "reason": reason,
+                "price_hint": price_hint,
+            },
         )
         db.commit()
         db.refresh(cmd)
@@ -254,11 +290,13 @@ def request_emergency_close(symbol: str, signal_id: Optional[int], pending_id: O
         try:
             if trade:
                 result = exec_close_position(trade, f"EMERGENCY_CLOSE::{reason}")
+                actual_exit = result.actual_entry if (result.actual_entry and result.actual_entry > 0) else None
                 success = result.success
                 payload = {
                     "success": result.success,
                     "order_id": result.order_id,
-                    "actual_exit_price": result.actual_entry,
+                    "actual_exit_price": actual_exit,
+                    "price_hint": price_hint,
                     "fee": result.fee,
                     "mode": result.mode,
                 }
@@ -266,7 +304,9 @@ def request_emergency_close(symbol: str, signal_id: Optional[int], pending_id: O
             else:
                 executor = get_executor()
                 success = False
-                payload = {}
+                payload = {
+                    "price_hint": price_hint,
+                }
                 err = "No trade found for emergency close"
                 if executor and executor.ready:
                     pos = executor.get_position_info(symbol)
@@ -275,7 +315,7 @@ def request_emergency_close(symbol: str, signal_id: Optional[int], pending_id: O
                         cancel_all_algo_orders(symbol)
                         result = executor.close_position(symbol, pos["direction"])
                         success = result is not None
-                        payload = {"raw": result}
+                        payload["raw"] = result
                         err = None if success else "Executor close_position returned None"
 
             cmd.status = COMMAND_SENT if success else COMMAND_FAILED

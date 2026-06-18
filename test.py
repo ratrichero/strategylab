@@ -1,143 +1,388 @@
-from dotenv import load_dotenv
-load_dotenv()
+#!/usr/bin/env python3
+"""
+Standalone WebSocket Probe for Binance Futures
 
-import math
-from datetime import timezone
+Scope:
+1) Market WS probe:
+   - connect to markPrice stream
+   - verify first payload arrives
+   - keep receiving during duration
 
-from app.db.session import SessionLocal
-from app.db.models import PendingSignal
-from app.services.config_service import get_runtime_config
-from app.services.binance_service import get_klines_closed, get_all_prices, get_binance_server_time
-from app.services.indicator_service import add_indicators_advanced
+2) WS API probe:
+   - connect to WS API endpoint
+   - call session.status repeatedly
+   - verify request/response path works
+
+IMPORTANT:
+- This file is standalone, does NOT modify core system.
+- This probe does NOT test authenticated trading/order placement.
+- WS API here only tests connectivity + basic usability.
+
+Examples:
+    pip install websockets
+
+    # testnet
+    python tools/ws_probe.py --env testnet --symbol BTCUSDT --duration 30
+
+    # mainnet
+    python tools/ws_probe.py --env mainnet --symbol BTCUSDT --duration 30
+
+    # override market url manually if needed
+    python tools/ws_probe.py --env testnet --symbol BTCUSDT --duration 30 \
+      --market-url wss://stream.binancefuture.com/ws/btcusdt@markPrice
+"""
+
+import argparse
+import asyncio
+import json
+import sys
+import time
+import uuid
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import Optional, Any
+
+try:
+    import websockets
+except ImportError:
+    print("Missing dependency: pip install websockets", file=sys.stderr)
+    raise
 
 
-SYMBOLS = ["FETUSDT", "PUMPUSDT"]
+# ============================================================
+# Helpers
+# ============================================================
+
+def utc_iso(ts: Optional[float] = None) -> str:
+    if ts is None:
+        ts = time.time()
+    return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def estimate_reprice_rounds(current_trigger, reference_trigger, reprice_pct, direction):
-    """
-    Ước lượng số vòng reprice lặp lại.
-    LONG: trigger_new = trigger_old * (1 - p)
-    SHORT: trigger_new = trigger_old * (1 + p)
-    """
+def mask_value(v: Optional[str]) -> Optional[str]:
+    if not v:
+        return v
+    if len(v) <= 6:
+        return "*" * len(v)
+    return v[:2] + "*" * (len(v) - 4) + v[-2:]
+
+
+def add_return_rate_limits_flag(url: str) -> str:
+    if "returnRateLimits=" in url:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}returnRateLimits=false"
+
+
+def default_api_url(env: str) -> str:
+    if env == "testnet":
+        return "wss://testnet.binancefuture.com/ws-fapi/v1"
+    return "wss://ws-fapi.binance.com/ws-fapi/v1"
+
+
+def default_market_url(env: str, symbol: str) -> str:
+    sym = symbol.lower()
+
+    # NOTE:
+    # Mainnet routed endpoint theo doc mới.
+    # Testnet preset dùng endpoint phổ biến cũ/đang dùng thực tế nhiều nơi.
+    # Nếu môi trường của anh khác route, override bằng --market-url.
+    if env == "testnet":
+        return f"wss://stream.binancefuture.com/ws/{sym}@markPrice"
+
+    return f"wss://fstream.binance.com/market/ws/{sym}@markPrice"
+
+
+def short_json(data: Any, limit: int = 240) -> str:
     try:
-        if current_trigger <= 0 or reference_trigger <= 0:
-            return None
-
-        if direction == "LONG":
-            factor = 1 - reprice_pct
-        else:
-            factor = 1 + reprice_pct
-
-        if factor <= 0 or factor == 1:
-            return None
-
-        rounds = math.log(current_trigger / reference_trigger) / math.log(factor)
-        return round(rounds, 2)
+        s = json.dumps(data, ensure_ascii=False)
     except Exception:
-        return None
+        s = str(data)
+    if len(s) > limit:
+        return s[:limit] + "..."
+    return s
 
 
-def debug_symbol(symbol: str):
-    cfg = get_runtime_config()
-    server_now = get_binance_server_time()
+# ============================================================
+# Result Model
+# ============================================================
 
-    with SessionLocal() as db:
-        p = (
-            db.query(PendingSignal)
-            .filter(PendingSignal.symbol == symbol)
-            .order_by(PendingSignal.id.desc())
-            .first()
-        )
+@dataclass
+class ProbeResult:
+    name: str
+    url: str
+    ok: bool = False
+    connected: bool = False
+    connected_at: Optional[str] = None
+    first_message_at: Optional[str] = None
+    last_message_at: Optional[str] = None
+    duration_s: float = 0.0
+    message_count: int = 0
+    error: Optional[str] = None
+    last_summary: Optional[dict] = None
 
-        if not p:
-            print(f"\n❌ No pending found for {symbol}")
-            return
 
-        tf = p.timeframe
-        df = get_klines_closed(symbol, interval=tf, limit=100, server_now=server_now)
-        if df is None or df.empty:
-            print(f"\n❌ No klines for {symbol}")
-            return
+# ============================================================
+# Market WS Probe
+# ============================================================
 
-        df = add_indicators_advanced(df)
-        last = df.iloc[-1]
+def summarize_market_message(raw: Any) -> dict:
+    if isinstance(raw, bytes):
+        try:
+            raw = raw.decode("utf-8", errors="replace")
+        except Exception:
+            return {"raw_preview": "<bytes>"}
 
-        current_price = get_all_prices().get(symbol)
-        atr_val = float(last.get("atr") or 0)
-        close_price = float(current_price or 0)
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return {"raw_preview": str(raw)[:200]}
 
-        pending_cfg = cfg.get("PENDING_CONFIG", {})
-        risk_cfg = cfg.get("RISK_CONFIG", {})
-        limit_cfg = cfg.get("LIMIT_ORDER_CONFIG", {})
+    payload = data.get("data", data)
 
-        atr_mult_entry = pending_cfg.get("atr_entry_multiplier", {}).get(tf, 0.5)
-        sl_pct = risk_cfg.get(tf, {}).get("sl_mult", 0.02)
-        tp_pct = risk_cfg.get(tf, {}).get("tp_mult", 0.04)
-        reprice_pct = limit_cfg.get("entry_reprice_pct", {}).get(tf, 0.0)
+    summary = {
+        "stream": data.get("stream"),
+        "event": payload.get("e"),
+        "symbol": payload.get("s") or payload.get("symbol"),
+    }
 
-        # ── Trigger gốc theo scan-time formula ───────────────────
-        if p.direction == "LONG":
-            trigger_from_formula = close_price - atr_val * atr_mult_entry
-            trigger_after_one_reprice = trigger_from_formula * (1 - reprice_pct)
-            sl_from_formula = trigger_from_formula * (1 - sl_pct)
-            tp_from_formula = trigger_from_formula * (1 + tp_pct)
-        else:
-            trigger_from_formula = close_price + atr_val * atr_mult_entry
-            trigger_after_one_reprice = trigger_from_formula * (1 + reprice_pct)
-            sl_from_formula = trigger_from_formula * (1 + sl_pct)
-            tp_from_formula = trigger_from_formula * (1 - tp_pct)
+    # futures markPrice thường có các field này
+    for k in ("p", "i", "r", "E", "T"):
+        if k in payload:
+            summary[k] = payload.get(k)
 
-        # Ước lượng số vòng reprice nếu đang compound
-        rounds_vs_formula = estimate_reprice_rounds(
-            current_trigger=float(p.trigger_price),
-            reference_trigger=trigger_from_formula,
-            reprice_pct=reprice_pct,
-            direction=p.direction
-        )
+    return summary
 
-        rounds_vs_one_reprice = estimate_reprice_rounds(
-            current_trigger=float(p.trigger_price),
-            reference_trigger=trigger_after_one_reprice,
-            reprice_pct=reprice_pct,
-            direction=p.direction
-        )
 
-        print("\n" + "=" * 90)
-        print(f"DEBUG PENDING: {symbol}")
-        print("=" * 90)
-        print(f"Pending ID            : {p.id}")
-        print(f"Status                : {p.status}")
-        print(f"Direction             : {p.direction}")
-        print(f"Timeframe             : {p.timeframe}")
-        print(f"Created At            : {p.created_at}")
-        print(f"Exchange Order ID     : {p.exchange_order_id}")
-        print(f"Exchange Status       : {p.exchange_status}")
-        print("-" * 90)
-        print(f"Current Price         : {close_price:.10f}")
-        print(f"ATR Value             : {atr_val:.10f}")
-        print(f"ATR Mult Entry        : {atr_mult_entry}")
-        print(f"Reprice %             : {reprice_pct} ({reprice_pct*100:.2f}%)")
-        print(f"SL %                  : {sl_pct} ({sl_pct*100:.2f}%)")
-        print(f"TP %                  : {tp_pct} ({tp_pct*100:.2f}%)")
-        print("-" * 90)
-        print(f"Pending Trigger (DB)  : {float(p.trigger_price):.10f}")
-        print(f"Pending SL (DB)       : {float(p.stop_loss):.10f}")
-        print(f"Pending TP (DB)       : {float(p.take_profit):.10f}")
-        print("-" * 90)
-        print(f"Trigger from formula  : {trigger_from_formula:.10f}")
-        print(f"Trigger after 1x repr : {trigger_after_one_reprice:.10f}")
-        print(f"SL from formula       : {sl_from_formula:.10f}")
-        print(f"TP from formula       : {tp_from_formula:.10f}")
-        print("-" * 90)
-        print(f"Estimated rounds vs formula      : {rounds_vs_formula}")
-        print(f"Estimated rounds vs one reprice  : {rounds_vs_one_reprice}")
-        print("=" * 90)
+async def probe_market_ws(url: str, duration: int, verbose: bool) -> ProbeResult:
+    res = ProbeResult(name="market_ws", url=url)
+    started = time.monotonic()
+
+    print(f"\n[MARKET] Connecting: {url}")
+
+    try:
+        async with websockets.connect(
+            url,
+            ping_interval=None,
+            open_timeout=10,
+            close_timeout=3,
+            max_size=2_000_000,
+        ) as ws:
+            res.connected = True
+            res.connected_at = utc_iso()
+            print(f"[MARKET] Connected at {res.connected_at}")
+
+            deadline = time.monotonic() + duration
+
+            while time.monotonic() < deadline:
+                timeout = min(10, max(0.1, deadline - time.monotonic()))
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+                except asyncio.TimeoutError:
+                    continue
+
+                now_iso = utc_iso()
+                res.message_count += 1
+                res.last_message_at = now_iso
+
+                if res.first_message_at is None:
+                    res.first_message_at = now_iso
+
+                summary = summarize_market_message(raw)
+                res.last_summary = summary
+
+                if verbose or res.message_count <= 3:
+                    print(f"[MARKET] msg#{res.message_count}: {short_json(summary)}")
+
+            if res.message_count > 0:
+                res.ok = True
+            else:
+                res.error = f"No market payload received within {duration}s"
+
+    except Exception as e:
+        res.error = f"{type(e).__name__}: {e}"
+
+    res.duration_s = round(time.monotonic() - started, 3)
+
+    if res.ok:
+        print(f"[MARKET] PASS | messages={res.message_count} | duration={res.duration_s}s")
+    else:
+        print(f"[MARKET] FAIL | error={res.error}")
+
+    return res
+
+
+# ============================================================
+# WS API Probe
+# ============================================================
+
+async def ws_api_call(ws, method: str, params: Optional[dict] = None, timeout: int = 10) -> dict:
+    req_id = str(uuid.uuid4())
+    req = {
+        "id": req_id,
+        "method": method,
+    }
+    if params:
+        req["params"] = params
+
+    await ws.send(json.dumps(req))
+
+    while True:
+        raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+
+        data = json.loads(raw)
+
+        # Chỉ bắt response đúng request id
+        if data.get("id") == req_id:
+            return data
+
+
+def summarize_api_response(data: dict) -> dict:
+    result = data.get("result") or {}
+    return {
+        "status": data.get("status"),
+        "apiKey": mask_value(result.get("apiKey")),
+        "authorizedSince": result.get("authorizedSince"),
+        "connectedSince": result.get("connectedSince"),
+        "serverTime": result.get("serverTime"),
+    }
+
+
+async def probe_api_ws(url: str, duration: int, verbose: bool) -> ProbeResult:
+    res = ProbeResult(name="ws_api", url=url)
+    started = time.monotonic()
+
+    url = add_return_rate_limits_flag(url)
+
+    print(f"\n[WS_API] Connecting: {url}")
+
+    try:
+        async with websockets.connect(
+            url,
+            ping_interval=None,
+            open_timeout=10,
+            close_timeout=3,
+            max_size=2_000_000,
+        ) as ws:
+            res.connected = True
+            res.connected_at = utc_iso()
+            print(f"[WS_API] Connected at {res.connected_at}")
+
+            deadline = time.monotonic() + duration
+            req_interval = 10
+
+            while time.monotonic() < deadline:
+                resp = await ws_api_call(ws, "session.status", timeout=10)
+
+                now_iso = utc_iso()
+                res.message_count += 1
+                res.last_message_at = now_iso
+
+                if res.first_message_at is None:
+                    res.first_message_at = now_iso
+
+                summary = summarize_api_response(resp)
+                res.last_summary = summary
+
+                status_code = resp.get("status")
+                if status_code != 200:
+                    err = resp.get("error") or {}
+                    res.error = f"session.status failed: status={status_code} code={err.get('code')} msg={err.get('msg')}"
+                    res.ok = False
+                    print(f"[WS_API] FAIL response: {short_json(resp)}")
+                    break
+
+                if verbose or res.message_count <= 3:
+                    print(f"[WS_API] resp#{res.message_count}: {short_json(summary)}")
+
+                res.ok = True
+
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+
+                await asyncio.sleep(min(req_interval, remaining))
+
+            if res.message_count == 0 and not res.error:
+                res.error = f"No API response received within {duration}s"
+                res.ok = False
+
+    except Exception as e:
+        res.error = f"{type(e).__name__}: {e}"
+
+    res.duration_s = round(time.monotonic() - started, 3)
+
+    if res.ok:
+        print(f"[WS_API] PASS | responses={res.message_count} | duration={res.duration_s}s")
+    else:
+        print(f"[WS_API] FAIL | error={res.error}")
+
+    return res
+
+
+# ============================================================
+# Main
+# ============================================================
+
+async def async_main():
+    parser = argparse.ArgumentParser(description="Binance Futures WebSocket probe")
+    parser.add_argument("--env", choices=["mainnet", "testnet"], default="testnet")
+    parser.add_argument("--symbol", default="BTCUSDT")
+    parser.add_argument("--duration", type=int, default=30, help="seconds for each probe")
+    parser.add_argument("--market-url", default=None, help="override market ws url")
+    parser.add_argument("--api-url", default=None, help="override ws api url")
+    parser.add_argument("--verbose", action="store_true")
+    args = parser.parse_args()
+
+    market_url = args.market_url or default_market_url(args.env, args.symbol)
+    api_url = args.api_url or default_api_url(args.env)
+
+    print("=" * 72)
+    print("BINANCE FUTURES WS PROBE")
+    print("=" * 72)
+    print(f"ENV           : {args.env}")
+    print(f"SYMBOL        : {args.symbol}")
+    print(f"DURATION      : {args.duration}s / probe")
+    print(f"MARKET URL    : {market_url}")
+    print(f"WS API URL    : {api_url}")
+    if args.env == "testnet" and args.market_url is None:
+        print("NOTE          : testnet market URL đang dùng preset phổ biến;")
+        print("                nếu fail, hãy override bằng --market-url theo route môi trường thực tế.")
+    print("=" * 72)
+
+    market_res = await probe_market_ws(market_url, args.duration, args.verbose)
+    api_res = await probe_api_ws(api_url, args.duration, args.verbose)
+
+    summary = {
+        "market_ws": asdict(market_res),
+        "ws_api": asdict(api_res),
+        "all_passed": bool(market_res.ok and api_res.ok),
+    }
+
+    print("\n" + "=" * 72)
+    print("FINAL SUMMARY")
+    print("=" * 72)
+    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print("=" * 72)
+
+    if summary["all_passed"]:
+        print("RESULT: PASS — websocket connectivity usable at transport level.")
+        return 0
+
+    print("RESULT: FAIL — ít nhất 1 probe chưa qua.")
+    return 1
 
 
 def main():
-    for sym in SYMBOLS:
-        debug_symbol(sym)
+    try:
+        code = asyncio.run(async_main())
+        raise SystemExit(code)
+    except KeyboardInterrupt:
+        print("\nInterrupted by user")
+        raise SystemExit(130)
 
 
 if __name__ == "__main__":
