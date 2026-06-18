@@ -364,6 +364,49 @@ export function Dashboard() {
     }));
   }, [pComp.curve, pFixed.curve]);
 
+  // ========== HANDLERS ==========
+  // Total Unrealized P&L for Active Signals
+  const totalUnrealizedPnL = useMemo(() => {
+    return activeWithPrice.reduce((sum, s) => sum + (s.pnl || 0), 0);
+  }, [activeWithPrice]);
+
+  const handleCancelActive = async (id) => {
+    if (!confirm('Close this signal?')) return;
+    try {
+      const res = await fetch(`${API}/signals/${id}/close`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      toast.success('Signal closed');
+      window.location.reload();
+    } catch (e) { toast.error('Failed to close signal'); }
+  };
+  const handleCancelAllActive = async () => {
+    if (!confirm('Close all active signals?')) return;
+    try {
+      const res = await fetch(`${API}/admin/cancel-all-active`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      toast.success('All signals closed');
+      window.location.reload();
+    } catch (e) { toast.error('Failed to close all signals'); }
+  };
+  const handleCancelPending = async (id) => {
+    if (!confirm('Cancel this pending?')) return;
+    try {
+      const res = await fetch(`${API}/pending/${id}/cancel`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      toast.success('Pending cancelled');
+      window.location.reload();
+    } catch (e) { toast.error('Failed to cancel pending'); }
+  };
+  const handleCancelAllPending = async () => {
+    if (!confirm('Cancel all pending signals?')) return;
+    try {
+      const res = await fetch(`${API}/admin/cancel-all-pending`, { method: 'POST' });
+      if (!res.ok) throw new Error('Failed');
+      toast.success('All pending cancelled');
+      window.location.reload();
+    } catch (e) { toast.error('Failed to cancel all pending'); }
+  };
+
   // ========== TABLE COLUMNS ==========
   const activeColumns = [
     { key: 'symbol', header: 'Symbol', sortable: true },
@@ -451,68 +494,6 @@ export function Dashboard() {
   // Total Trades: show all when no filters, filtered when filters active
   const totalTradesDisplay = hasActiveFilters ? filteredTradesCount : allClosed.length;
 
-  // Total Unrealized P&L for Active Signals
-  const totalUnrealizedPnL = useMemo(() => {
-    return activeWithPrice.reduce((sum, s) => sum + (s.pnl || 0), 0);
-  }, [activeWithPrice]);
-
-  // Handle Cancel Active Signal
-  const handleCancelActive = async (id) => {
-    if (!confirm('Close this signal?')) return;
-    try {
-      const res = await fetch(`${API}/signals/${id}/close`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed');
-      toast.success('Signal closed');
-      window.location.reload();
-    } catch (e) {
-      toast.error('Failed to close signal');
-    }
-  };
-
-  // Handle Cancel All Active Signals
-  const handleCancelAllActive = async () => {
-    if (!confirm('Close all active signals?')) return;
-    try {
-      const res = await fetch(`${API}/admin/cancel-all-active`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed');
-      toast.success('All signals closed');
-      window.location.reload();
-    } catch (e) {
-      toast.error('Failed to close all signals');
-    }
-  };
-
-  // Handle Cancel Pending
-  const handleCancelPending = async (id) => {
-  if (!confirm("Cancel this pending?")) return;
-  try {
-    const res = await fetch(`${API}/pending/${id}/cancel`, { method: "POST" });
-    const data = await res.json();
-
-    if (!res.ok || !data.success) {
-      throw new Error(data?.detail || data?.error || "Failed");
-    }
-
-    toast.success(`Pending cancelled: ${data.symbol}`);
-    setTimeout(() => window.location.reload(), 800);
-  } catch (e: any) {
-    toast.error(e.message || "Failed to cancel pending");
-  }
-};
-
-  // Handle Cancel All Pending
-  const handleCancelAllPending = async () => {
-    if (!confirm('Cancel all pending signals?')) return;
-    try {
-      const res = await fetch(`${API}/admin/cancel-all-pending`, { method: 'POST' });
-      if (!res.ok) throw new Error('Failed');
-      toast.success('All pending cancelled');
-      window.location.reload();
-    } catch (e) {
-      toast.error('Failed to cancel all pending');
-    }
-  };
-
   // ========== RENDER ==========
   return (
     <div className="space-y-6">
@@ -548,7 +529,6 @@ export function Dashboard() {
           <Select label="Regime" value={filters.regime} onChange={v => setFilterInstant('regime', v)} options={[{ value: 'all', label: 'All' }, ...allRegimes.map(r => ({ value: r, label: r }))]} />
           <Select label="TF" value={filters.timeframe} onChange={v => setFilterInstant('timeframe', v)} options={[{ value: 'all', label: 'All' }, { value: '15m', label: '15m' }, { value: '1h', label: '1h' }, { value: '4h', label: '4h' }]} />
           <Select label="Score" value={getScorePreset()} onChange={setScoreFilter} options={[{ value: 'all', label: 'All' }, { value: '6-7', label: '6 ~ 7' }, { value: '7-8', label: '7 ~ 8' }, { value: '8-9', label: '8 ~ 9' }, { value: '9-10', label: '9 ~ 10' }]} />
-          <Select label="Engine" value={filters.engineVersion} onChange={v => setFilterInstant('engineVersion', v)} options={[{ value: 'all', label: 'All' }, ...engineVersions.map(v => ({ value: v, label: `v${v}` }))]} />
           <Input type="number" label="Fixed Size ($)" value={filters.fixedSize} onChange={e => setFilters({ ...filters, fixedSize: Number(e.target.value) || 1000 })} />
           <div className="flex items-end"><Button variant="primary" onClick={handleApply} className="w-full">Apply</Button></div>
         </div>

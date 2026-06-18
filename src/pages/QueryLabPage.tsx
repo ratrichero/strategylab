@@ -19,11 +19,11 @@ const SAMPLE_QUERIES = [
 ];
 
 export function QueryLab() {
-  const [sql, setSql] = useState(SAMPLE_QUERIES[0].sql);
-  const [data, setData] = useState([]);
+  const [sql, setSql]         = useState(SAMPLE_QUERIES[0].sql);
+  const [data, setData]       = useState([]);
   const [loading, setLoading] = useState(false);
   const [execTime, setExecTime] = useState(0);
-  const [error, setError] = useState("");
+  const [error, setError]     = useState("");
 
   const run = async () => {
     setLoading(true); setError(""); setData([]);
@@ -73,26 +73,64 @@ export function QueryLab() {
           <Button variant="primary" onClick={run} loading={loading} icon={<Play className="w-4 h-4" />}>Run (Ctrl+Enter)</Button>
         </div>
       </div>
+
+      {/* Sample queries */}
       <div className="flex gap-2 flex-wrap">
         {SAMPLE_QUERIES.map(q => (
-          <button key={q.label} onClick={() => setSql(q.sql)} className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs transition">{q.label}</button>
+          <button key={q.label} onClick={() => setSql(q.sql)}
+            className="px-3 py-1 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded text-xs transition">
+            {q.label}
+          </button>
         ))}
       </div>
+
+      {/* Editor */}
       <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden flex-shrink-0">
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-700 bg-slate-900/30">
-          <div className="flex items-center gap-2 text-xs text-slate-400"><Database className="w-4 h-4" /><span>PostgreSQL — Read Only</span></div>
+          <div className="flex items-center gap-2 text-xs text-slate-400">
+            <Database className="w-4 h-4" />
+            <span>PostgreSQL — Read Only</span>
+          </div>
           <div className="flex items-center gap-3 text-xs text-slate-500">
             {data.length > 0 && <span className="text-emerald-400">{data.length} rows · {execTime.toFixed(0)}ms</span>}
             {error && <span className="text-red-400">Error</span>}
           </div>
         </div>
-        <textarea value={sql} onChange={e => setSql(e.target.value)} onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); } }} rows={8} className="w-full bg-slate-900 text-white font-mono text-sm p-4 resize-none focus:outline-none" spellCheck={false} placeholder="SELECT * FROM signals LIMIT 10;" />
+        <textarea value={sql} onChange={e => setSql(e.target.value)}
+          onKeyDown={e => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); } }}
+          rows={8}
+          className="w-full bg-slate-900 text-white font-mono text-sm p-4 resize-none focus:outline-none"
+          spellCheck={false}
+          placeholder="SELECT * FROM signals LIMIT 10;"
+        />
       </div>
+
+      {/* Results */}
       <div className="flex-1 overflow-auto">
-        {error && <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm mb-4">{error}</div>}
-        {loading && <div className="flex items-center justify-center h-32"><Loader2 className="animate-spin text-indigo-500 w-8 h-8" /></div>}
-        {!loading && data.length > 0 && <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4"><DataTable columns={columns} data={data} pageSize={50} /></div>}
-        {!loading && !data.length && !error && <div className="flex items-center justify-center h-32 text-slate-500"><div className="text-center"><Database className="w-10 h-10 mx-auto mb-2 opacity-30" /><p>Run a query to see results</p><p className="text-xs mt-1">Ctrl+Enter to execute</p></div></div>}
+        {error && (
+          <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm mb-4">
+            {error}
+          </div>
+        )}
+        {loading && (
+          <div className="flex items-center justify-center h-32">
+            <Loader2 className="animate-spin text-indigo-500 w-8 h-8" />
+          </div>
+        )}
+        {!loading && data.length > 0 && (
+          <div className="bg-slate-800/50 rounded-xl border border-slate-700/50 p-4">
+            <DataTable columns={columns} data={data} pageSize={50} />
+          </div>
+        )}
+        {!loading && !data.length && !error && (
+          <div className="flex items-center justify-center h-32 text-slate-500">
+            <div className="text-center">
+              <Database className="w-10 h-10 mx-auto mb-2 opacity-30" />
+              <p>Run a query to see results</p>
+              <p className="text-xs mt-1">Ctrl+Enter to execute</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
