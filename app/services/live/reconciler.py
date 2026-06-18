@@ -1,5 +1,6 @@
 from typing import Optional, Tuple, Dict, Any, Iterable
 import time as _time
+from sqlalchemy import text
 
 from app.core.time_utils import utc_now, ensure_utc
 from app.core.trading_mode import get_current_mode
@@ -656,7 +657,7 @@ def backfill_missing_outcomes(limit: int = 20):
     - MANUAL
     """
     with SessionLocal() as db:
-        rows = db.execute("""
+        rows = db.execute(text("""
             SELECT s.id
             FROM signals s
             LEFT JOIN trade_outcome_analytics t
@@ -667,7 +668,7 @@ def backfill_missing_outcomes(limit: int = 20):
               AND t.signal_id IS NULL
             ORDER BY s.exit_time DESC
             LIMIT :limit
-        """, {"limit": limit}).fetchall()
+        """), {"limit": limit}).fetchall()
 
         if not rows:
             return
