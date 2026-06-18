@@ -4,7 +4,7 @@ Live Runtime Loops
 3 loops riêng cho LIVE mode:
 1. intent_loop     — validate + place pending entries
 2. reconcile_loop  — sync exchange → derive state → finalize
-3. advisory_loop   — profit protection + anomaly detection + deferred outcomes
+3. advisory_loop   — profit protection + anomaly detection + deferred outcome save
 """
 
 import asyncio
@@ -18,7 +18,7 @@ from app.services.live.reconciler import (
     backfill_missing_outcomes,
 )
 from app.services.live.advisory_monitor import run_advisory_cycle
-from app.services.live.reconciler import reconcile_all_active_symbols, run_deferred_outcomes
+
 
 async def live_intent_loop():
     """
@@ -82,9 +82,7 @@ async def live_advisory_loop():
         except Exception as e:
             print(f"[LIVE ADVISORY LOOP] {e}")
 
-        # Drain deferred outcome queue
-        # Chạy sau advisory để không cạnh tranh resource với protection logic
-       try:
+        try:
             await asyncio.to_thread(run_deferred_outcomes)
         except Exception as e:
             print(f"[LIVE OUTCOME LOOP] {e}")

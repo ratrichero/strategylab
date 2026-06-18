@@ -1,4 +1,5 @@
 from typing import Optional, Tuple, Dict, Any, Iterable
+import time as _time
 
 from app.core.time_utils import utc_now, ensure_utc
 from app.core.trading_mode import get_current_mode
@@ -11,11 +12,6 @@ from app.services.execution_service import (
     get_executor,
 )
 from app.services.config_service import get_runtime_config
-from app.services.live.capacity_service import (
-    get_active_live_symbols,
-    get_zero_fill_resting_pending_candidates,
-    is_pending_exchange_active,
-)
 from app.services.live.snapshot_service import build_symbol_snapshot, SymbolSnapshot
 from app.services.live.locks import live_symbol_lock
 from app.services.live.command_service import (
@@ -30,16 +26,20 @@ from app.services.live.command_service import (
     has_open_command,
     request_emergency_close,
 )
+from app.services.live.capacity_service import (
+    get_active_live_symbols,
+    get_zero_fill_resting_pending_candidates,
+    is_pending_exchange_active,
+)
 from app.services.btc_context_cache import (
     get_or_build_hourly_snapshot,
     build_event_context,
 )
 from app.services.outcome_service import save_trade_outcome
-import time as _time
 
 # Throttle: symbol resting (chưa fill) chỉ cần reconcile mỗi 5s
 _symbol_last_reconcile = {}
-RESTING_RECONCILE_INTERVAL = 
+RESTING_RECONCILE_INTERVAL = 5.0
 
 
 ENTRY_TERMINAL_STATUSES = {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
@@ -693,7 +693,7 @@ def backfill_missing_outcomes(limit: int = 20):
 
         except Exception as e:
             print(f"[OUTCOME BACKFILL] signal_id={signal_id}: {type(e).__name__}: {e}")
-            
+
 def run_deferred_outcomes():
     """
     Gọi từ advisory loop hoặc background task riêng.
