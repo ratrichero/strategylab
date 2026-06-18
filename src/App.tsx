@@ -1,7 +1,9 @@
 // @ts-nocheck
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
+import { useIsMobile } from './hooks/useIsMobile';
 import { Layout } from './components/layout/Layout';
+import { MobileLayout } from './components/layout/MobileLayout';
 import { Dashboard } from './pages/DashboardPage';
 import { Research } from './pages/ResearchPage';
 import { Signals } from './pages/SignalsPage';
@@ -14,10 +16,13 @@ import { SettingsPage } from './pages/SettingsPage';
 import { MarketPage, EnginePage, BlockedPage, SimulationPage } from './pages/PlaceholderPages';
 
 export default function App() {
+  const isMobile = useIsMobile();
+  const LayoutWrapper = isMobile ? MobileLayout : Layout;
+
   return (
     <HashRouter>
       <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
-      <Layout>
+      <LayoutWrapper>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/research" element={<Research />} />
@@ -33,7 +38,7 @@ export default function App() {
           <Route path="/query-lab" element={<QueryLab />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
-      </Layout>
+      </LayoutWrapper>
     </HashRouter>
   );
 }

@@ -46,10 +46,11 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
       <div className={cn("flex-1 flex flex-col min-h-screen transition-all duration-300", sidebarCollapsed ? "ml-16" : "ml-64")}>
-        <header className="h-16 flex-shrink-0 sticky top-0 z-40 flex items-center justify-between px-6 bg-slate-800/30 backdrop-blur-sm border-b border-slate-700/50">
+        <StatusBar />
+        <header className="h-14 flex-shrink-0 sticky top-0 z-40 flex items-center justify-between px-6 bg-slate-800/30 backdrop-blur-sm border-b border-slate-700/50">
           <h1 className="text-lg font-semibold text-white">{pageTitle}</h1>
           <div className="flex items-center gap-3">
-            <StatusBar /><KillSwitch />
+            <KillSwitch />
             <button onClick={() => setSearchOpen(true)} className="p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"><Search className="w-5 h-5" /></button>
             <button className="relative p-2 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"><Bell className="w-5 h-5" /><span className="absolute top-1.5 right-1.5 w-2 h-2 bg-indigo-500 rounded-full" /></button>
             <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center text-white font-medium text-sm ml-1">A</div>

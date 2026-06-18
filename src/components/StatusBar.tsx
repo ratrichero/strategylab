@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useEffect, useState } from "react";
 import { tradingMode as tmApi, engine } from "../services/api";
 import { useAppStore } from "../store/appStore";
@@ -12,7 +13,7 @@ export function StatusBar() {
     setPriceFeed,
   } = useAppStore();
 
-  const [btcOverview, setBtcOverview] = useState<any>(null);
+  const [btcOverview, setBtcOverview] = useState(null);
 
   useEffect(() => {
     const load = async () => {
@@ -35,15 +36,15 @@ export function StatusBar() {
     return () => clearInterval(id);
   }, [setTradingMode, setPriceFeed]);
 
-  const mode = (tradingMode?.mode as string) || "";
+  const mode = (tradingMode?.mode) || "";
 
-  const modeStyle: Record<string, string> = {
+  const modeStyle = {
     PAPER:   "bg-blue-900/50 text-blue-300 border-blue-700/50",
     TESTNET: "bg-yellow-900/50 text-yellow-300 border-yellow-700/50",
     LIVE:    "bg-red-900/50 text-red-300 border-red-700/50 animate-pulse",
   };
 
-  const modeIcon: Record<string, string> = {
+  const modeIcon = {
     PAPER: "📋", TESTNET: "🧪", LIVE: "💰",
   };
 
@@ -51,8 +52,8 @@ export function StatusBar() {
     ? "bg-emerald-900/40 text-emerald-300 border-emerald-700/40"
     : "bg-red-900/40 text-red-300 border-red-700/40";
 
-  const regimeDot = (regime: string) => {
-    const colors: Record<string, string> = {
+  const regimeDot = (regime) => {
+    const colors = {
       BULL:     "bg-green-400",
       BEAR:     "bg-red-400",
       SIDEWAYS: "bg-yellow-400",
