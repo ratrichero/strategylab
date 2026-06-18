@@ -19,6 +19,14 @@ from app.services.live.protection_service import (
     mark_breakeven_applied,
 )
 
+from app.services.live.protection_service import (
+    set_breakeven_retry_backoff,
+    clear_breakeven_retry_backoff,
+    mark_breakeven_applied,
+    mark_protection_changed,
+    protection_change_cooldown_active,
+)
+
 from app.services.config_service import get_runtime_config
 from app.services.live.snapshot_service import build_symbol_snapshot, SymbolSnapshot
 from app.services.live.locks import live_symbol_lock
@@ -76,32 +84,87 @@ def _get_open_protection_replace_command(commands):
         return None
 
     for cmd in commands:
-        if cmd.command_type == CMD_PROTECTION_REPLACE and cmd.status in (COMMAND_REQUESTED, COMMAND_SENT):
+        if cmd.command_type == CMD_PROTECTION_REPLACE and cmd.status in (
+            COMMAND_REQUESTED,
+            COMMAND_SENT,
+        ):
             return cmd
 
     return None
 
+def _is_command_timed_out(cmd, timeout_seconds: int = 120) -> bool:
+    if not cmd or not cmd.requested_at:
+        return False
+
+    try:
+        age = (utc_now() - ensure_utc(cmd.requested_at)).total_seconds()
+        return age > timeout_seconds
+    except Exception:
+        return False
+
 def _process_protection_replace_command(db, signal: Signal, pending: Optional[PendingSignal], snapshot: SymbolSnapshot, commands):
     cmd = _get_open_protection_replace_command(commands)
-    if not cmd or not signal or signal.status != "OPEN" or not pending:
+    if not cmd or not signal or signal.status != "OPEN":
         return
 
     req = dict(cmd.request_payload or {})
     res = dict(cmd.result_payload or {})
 
-    phase = res.get("phase", "REQUESTED")
+    # Set phase mặc định
+    phase = res.get("phase") or cmd.status or "REQUESTED"
     target_sl = float(req.get("new_sl_price") or 0)
 
+    # Timeout guard
+    if _is_command_timed_out(cmd, timeout_seconds=120):
+        cmd.status = COMMAND_FAILED
+        cmd.error_message = "TIMEOUT"
+        res["phase"] = "FAILED_TIMEOUT"
+        cmd.result_payload = res
+        set_breakeven_retry_backoff(signal, "TIMEOUT")
+        db.flush()
+        return
+
+    # Guard 1: invalid target
     if target_sl <= 0:
         cmd.status = COMMAND_FAILED
         cmd.error_message = "INVALID_TARGET_SL"
-        res["phase"] = "FAILED"
+        res["phase"] = "FAILED_INVALID_TARGET"
         cmd.result_payload = res
         set_breakeven_retry_backoff(signal, "INVALID_TARGET_SL")
         db.flush()
         return
 
-    # sync current protection ids from snapshot open algo
+    # Guard 2: no pending linked
+    if not pending:
+        cmd.status = COMMAND_FAILED
+        cmd.error_message = "NO_PENDING_LINKED"
+        res["phase"] = "FAILED_NO_PENDING"
+        cmd.result_payload = res
+        set_breakeven_retry_backoff(signal, "NO_PENDING_LINKED")
+        db.flush()
+        return
+
+    # Guard 3: nếu không còn position thì command này hết ý nghĩa
+    if not snapshot.position.exists:
+        cmd.status = COMMAND_FAILED
+        cmd.error_message = "NO_POSITION"
+        res["phase"] = "FAILED_NO_POSITION"
+        cmd.result_payload = res
+        set_breakeven_retry_backoff(signal, "NO_POSITION")
+        db.flush()
+        return
+
+    # Guard 4: timeout command
+    if _is_command_timed_out(cmd, timeout_seconds=120):
+        cmd.status = COMMAND_FAILED
+        cmd.error_message = "TIMEOUT"
+        res["phase"] = "FAILED_TIMEOUT"
+        cmd.result_payload = res
+        set_breakeven_retry_backoff(signal, "TIMEOUT")
+        db.flush()
+        return
+
+    # Sync protection IDs từ open algo hiện tại
     stop_open = _find_algo_by_type(snapshot.open_algo_orders, "STOP_MARKET")
     tp_open = _find_algo_by_type(snapshot.open_algo_orders, "TAKE_PROFIT_MARKET")
 
@@ -113,7 +176,7 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
     # --------------------------------------------------------
     # Phase 1: REQUESTED -> send cancel old SL
     # --------------------------------------------------------
-    if phase == "REQUESTED":
+    if phase in ("REQUESTED", COMMAND_REQUESTED):
         old_sl_id = pending.sl_order_id or (str(stop_open.get("algoId", "")) if stop_open else None)
         old_sl_price = float(signal.stop_loss or pending.stop_loss or 0)
 
@@ -140,7 +203,7 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
             )
             return
 
-        # Không tìm thấy old SL active -> coi như qua phase chờ cancel
+        # Không có old SL active -> chuyển luôn sang phase CANCEL_SENT
         cmd.status = COMMAND_SENT
         if not cmd.sent_at:
             cmd.sent_at = utc_now()
@@ -156,14 +219,14 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
         db.flush()
 
     # --------------------------------------------------------
-    # Phase 2: CANCEL_SENT -> wait until STOP cũ biến mất, rồi place new
+    # Phase 2: CANCEL_SENT -> đợi STOP cũ biến mất, rồi place new
     # --------------------------------------------------------
     phase = dict(cmd.result_payload or {}).get("phase", phase)
 
     if phase == "CANCEL_SENT":
         stop_open = _find_algo_by_type(snapshot.open_algo_orders, "STOP_MARKET")
 
-        # STOP cũ vẫn còn active -> chờ vòng sau, không log spam
+        # STOP cũ vẫn còn => chờ vòng sau
         if stop_open:
             return
 
@@ -171,7 +234,7 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
         if not executor or not executor.ready:
             cmd.status = COMMAND_FAILED
             cmd.error_message = "EXECUTOR_NOT_READY"
-            res["phase"] = "FAILED"
+            res["phase"] = "FAILED_EXECUTOR_NOT_READY"
             cmd.result_payload = res
             set_breakeven_retry_backoff(signal, "EXECUTOR_NOT_READY")
             db.flush()
@@ -194,10 +257,11 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
         except Exception as e:
             err = f"PLACE_NEW_SL_ERROR::{e}"
 
-            # re-check open algo immediately
+            # Re-check open STOP ngay sau lỗi
             latest_open_algos = get_open_algo_orders(signal.symbol) or []
             latest_stop = _find_algo_by_type(latest_open_algos, "STOP_MARKET")
 
+            # Nếu vẫn có STOP active => chờ, không fail command
             if latest_stop:
                 pending.sl_order_id = str(latest_stop.get("algoId", "")) or pending.sl_order_id
                 res["last_error"] = err
@@ -210,7 +274,7 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
                 )
                 return
 
-            # No STOP active now -> try restore old SL
+            # Không còn STOP => thử restore old SL
             old_sl_price = float(res.get("old_sl_price") or signal.stop_loss or pending.stop_loss or 0)
 
             if old_sl_price > 0:
@@ -238,6 +302,12 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
                         })
                         cmd.result_payload = res
 
+                        mark_protection_changed(
+                            trade=signal,
+                            sl_price=rounded_old_sl,
+                            sl_id=restored_id,
+                        )
+                        
                         set_breakeven_retry_backoff(signal, err)
                         db.flush()
 
@@ -250,7 +320,7 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
                 except Exception as restore_e:
                     print(f"❌ [PROTECTION] Restore old SL failed {signal.symbol}: {restore_e}")
 
-            # Fatal: no old stop restored, no new stop placed
+            # Fatal
             cmd.status = COMMAND_FAILED
             cmd.error_message = err
             res.update({
@@ -359,6 +429,9 @@ def reconcile_symbol(symbol: str):
                     signal = _create_signal_from_pending(db, pending, snapshot)
                 else:
                     _update_signal_from_pending(db, signal, pending, snapshot)
+
+            if signal and signal.status == "OPEN":
+                _process_protection_replace_command(db, signal, pending, snapshot, commands)
 
             if signal and snapshot.position.exists:
                 _ensure_protection(db, signal, pending, snapshot)
@@ -544,13 +617,17 @@ def _find_algo_by_type(open_algo_orders, order_type: str):
             return o
     return None
 
-
 def _ensure_protection(db, signal: Signal, pending: Optional[PendingSignal], snapshot: SymbolSnapshot):
     if not pending:
         return
-    
+
     # Nếu đang có command protection replace mở, không auto chạm protection nữa
-    if pending and has_open_command(db, pending.symbol, [CMD_PROTECTION_REPLACE]):
+    if has_open_command(db, pending.symbol, [CMD_PROTECTION_REPLACE]):
+        return
+
+    # Nếu vừa mới có thay đổi protection, bỏ qua auto-repair trong cooldown ngắn
+    # để tránh race cùng cycle / stale snapshot exchange
+    if protection_change_cooldown_active(signal):
         return
 
     executor = get_executor()
@@ -562,6 +639,7 @@ def _ensure_protection(db, signal: Signal, pending: Optional[PendingSignal], sna
 
     if sl_open and not pending.sl_order_id:
         pending.sl_order_id = str(sl_open.get("algoId", ""))
+
     if tp_open and not pending.tp_order_id:
         pending.tp_order_id = str(tp_open.get("algoId", ""))
 
@@ -600,7 +678,6 @@ def _ensure_protection(db, signal: Signal, pending: Optional[PendingSignal], sna
                 pending_id=pending.id if pending else None,
                 reason="MISSING_PROTECTION"
             )
-
 
 def _finalize_entry_lifecycle(db, pending: PendingSignal, snapshot: SymbolSnapshot):
     status = str(snapshot.entry.status or pending.exchange_status or "").upper()

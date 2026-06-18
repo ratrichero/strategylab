@@ -11,6 +11,7 @@ QUAN TRỌNG:
 - Chỉ phát hiện điều kiện + request command
 - KHÔNG tự finalize signal
 - KHÔNG tự close trade
+- Nếu đã có PROTECTION_REPLACE command đang mở -> im lặng skip
 """
 
 from typing import Optional, Dict
@@ -21,7 +22,11 @@ from app.services.live.protection_service import (
     is_protection_enabled,
     check_breakeven_condition,
 )
-from app.services.live.command_service import request_protection_replace
+from app.services.live.command_service import (
+    request_protection_replace,
+    has_open_command,
+    CMD_PROTECTION_REPLACE,
+)
 from app.services.live.locks import live_symbol_lock
 
 
@@ -53,17 +58,21 @@ def run_advisory_cycle(price_map: Optional[Dict[str, float]] = None):
 
         for trade in open_trades:
             try:
-                _check_trade_advisory(trade, price_map)
+                _check_trade_advisory(db, trade, price_map)
             except Exception as e:
                 print(f"[ADVISORY] {trade.symbol}: {type(e).__name__}: {e}")
 
 
-def _check_trade_advisory(trade: Signal, price_map: dict):
+def _check_trade_advisory(db, trade: Signal, price_map: dict):
     current = price_map.get(trade.symbol)
     if current is None:
         return
 
     current = float(current)
+
+    # Nếu đã có open command protection replace -> im lặng skip
+    if has_open_command(db, trade.symbol, [CMD_PROTECTION_REPLACE]):
+        return
 
     should_trigger, new_sl = check_breakeven_condition(trade, current)
 
@@ -74,18 +83,22 @@ def _check_trade_advisory(trade: Signal, price_map: dict):
         if not acquired:
             return
 
-        print(
-            f"🛡️ [ADVISORY] {trade.symbol} hit breakeven trigger "
-            f"| current={current:.4f} new_sl={new_sl:.4f}"
-        )
+        # Check lại lần nữa sau khi có lock
+        if has_open_command(db, trade.symbol, [CMD_PROTECTION_REPLACE]):
+            return
 
         result = request_protection_replace(
             signal_id=trade.id,
             new_sl_price=float(new_sl),
         )
 
+        # Chỉ log khi request mới thực sự được tạo
         if result.get("success") and not result.get("deduped"):
             print(
-                f"📝 [ADVISORY] Breakeven replace requested: "
+                f"🛡️ [ADVISORY] {trade.symbol} hit breakeven trigger "
+                f"| current={current:.4f} new_sl={new_sl:.4f}"
+            )
+            print(
+                f"🛑 [ADVISORY] Breakeven replace requested: "
                 f"{trade.symbol} | signal_id={trade.id} | new_sl={new_sl:.4f}"
             )

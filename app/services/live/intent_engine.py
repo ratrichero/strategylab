@@ -8,6 +8,9 @@ Xử lý phase E0:
 HOTFIX:
 - Retry policy hardcode để chặn retry vô hạn trên LIVE
 - HARD CAP BLOCK dùng backoff để không spam loop/log
+
+IMPORTANT:
+- expire_at phải được check TRƯỚC next_retry_at
 """
 
 from datetime import timedelta
@@ -190,19 +193,20 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             db.commit()
             return
 
-        # Quan trọng: nếu đã có order trên exchange thì intent phase hết quyền
+        # Nếu đã có order trên exchange thì intent phase hết quyền
         if p.exchange_order_id:
             db.commit()
             return
 
-        if p.next_retry_at and ensure_utc(p.next_retry_at) > now:
-            db.commit()
-            return
-
+        # QUAN TRỌNG: expire phải check trước retry gate
         if ensure_utc(p.expire_at) < now:
             p.status = "CANCELLED"
             p.rejection_reason = "EXPIRED_BEFORE_PLACE"
             p.next_retry_at = None
+            db.commit()
+            return
+
+        if p.next_retry_at and ensure_utc(p.next_retry_at) > now:
             db.commit()
             return
 

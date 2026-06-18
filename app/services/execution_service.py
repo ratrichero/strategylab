@@ -23,9 +23,10 @@ import time
 import hmac
 import hashlib
 import traceback
+import threading
 import requests
 from dataclasses import dataclass
-from typing import Optional, Dict, Tuple, List
+from typing import Optional, Dict, Tuple, List, Callable, Any
 from urllib.parse import urlencode
 
 from app.core.trading_mode import get_trading_mode
@@ -37,8 +38,70 @@ from app.core.trading_mode import get_trading_mode
 
 ALGO_WORKING_TYPE = "MARK_PRICE"
 SIGNED_TIMEOUT = 10
+SIGNED_RECV_WINDOW = 60000
 
 _http = requests.Session()
+
+
+# ============================================================
+# SERVER TIME SYNC (for signed requests)
+# ============================================================
+
+_server_time_lock = threading.Lock()
+_server_time_offset_ms = 0
+_server_time_sync_ts = 0.0
+_SERVER_TIME_SYNC_TTL = 60  # seconds
+
+
+def _is_timestamp_error(exc: Exception) -> bool:
+    s = str(exc)
+    return (
+        "-1021" in s
+        or "recvWindow" in s
+        or "Timestamp for this request is outside of the recvWindow" in s
+    )
+
+
+def _sync_server_time_if_needed(force: bool = False):
+    """
+    Đồng bộ offset local_time -> Binance server_time.
+    Dùng chung cho:
+    - raw signed HTTP (_signed_request)
+    - UMFutures signed endpoints
+    """
+    global _server_time_offset_ms, _server_time_sync_ts
+
+    with _server_time_lock:
+        now = time.time()
+
+        if (not force) and _server_time_sync_ts and (now - _server_time_sync_ts < _SERVER_TIME_SYNC_TTL):
+            return
+
+        mode = get_trading_mode()
+        cfg = mode.get_binance_config()
+        base_url = cfg.get("base_url")
+
+        if not base_url:
+            return
+
+        try:
+            resp = _http.get(f"{base_url}/fapi/v1/time", timeout=5)
+            resp.raise_for_status()
+            data = resp.json()
+
+            server_ms = int(data["serverTime"])
+            local_ms = int(time.time() * 1000)
+
+            _server_time_offset_ms = server_ms - local_ms
+            _server_time_sync_ts = now
+
+        except Exception as e:
+            print(f"[EXEC] server time sync error: {e}")
+
+
+def _signed_timestamp_ms() -> int:
+    _sync_server_time_if_needed()
+    return int(time.time() * 1000 + _server_time_offset_ms)
 
 
 # ============================================================
@@ -154,6 +217,10 @@ def _get_min_notional(symbol_info: Optional[Dict]) -> float:
 # ============================================================
 
 def _signed_request(method: str, path: str, params: Dict) -> Dict:
+    """
+    Raw signed HTTP request dùng cho algo endpoints.
+    Có retry 1 lần nếu bị timestamp drift (-1021).
+    """
     mode = get_trading_mode()
     cfg = mode.get_binance_config()
 
@@ -164,46 +231,56 @@ def _signed_request(method: str, path: str, params: Dict) -> Dict:
     if not api_key or not api_secret or not base_url:
         raise RuntimeError("Missing Binance API credentials")
 
-    payload = dict(params or {})
-    payload["timestamp"] = int(time.time() * 1000)
+    def _do_request():
+        payload = dict(params or {})
+        payload.setdefault("recvWindow", SIGNED_RECV_WINDOW)
+        payload["timestamp"] = _signed_timestamp_ms()
 
-    query = urlencode(payload, doseq=True)
-    signature = hmac.new(
-        api_secret.encode("utf-8"),
-        query.encode("utf-8"),
-        hashlib.sha256
-    ).hexdigest()
+        query = urlencode(payload, doseq=True)
+        signature = hmac.new(
+            api_secret.encode("utf-8"),
+            query.encode("utf-8"),
+            hashlib.sha256
+        ).hexdigest()
 
-    full_params = dict(payload)
-    full_params["signature"] = signature
+        full_params = dict(payload)
+        full_params["signature"] = signature
 
-    headers = {
-        "X-MBX-APIKEY": api_key
-    }
+        headers = {
+            "X-MBX-APIKEY": api_key
+        }
 
-    url = f"{base_url}{path}"
+        url = f"{base_url}{path}"
 
-    resp = _http.request(
-        method.upper(),
-        url,
-        params=full_params,
-        headers=headers,
-        timeout=SIGNED_TIMEOUT,
-    )
-
-    try:
-        data = resp.json()
-    except Exception:
-        data = {"raw_text": resp.text}
-
-    if not resp.ok:
-        code = data.get("code")
-        msg  = data.get("msg") or str(data)
-        raise RuntimeError(
-            f"Binance signed request failed [{resp.status_code}] code={code} msg={msg}"
+        resp = _http.request(
+            method.upper(),
+            url,
+            params=full_params,
+            headers=headers,
+            timeout=SIGNED_TIMEOUT,
         )
 
-    return data
+        try:
+            data = resp.json()
+        except Exception:
+            data = {"raw_text": resp.text}
+
+        if not resp.ok:
+            code = data.get("code")
+            msg  = data.get("msg") or str(data)
+            raise RuntimeError(
+                f"Binance signed request failed [{resp.status_code}] code={code} msg={msg}"
+            )
+
+        return data
+
+    try:
+        return _do_request()
+    except Exception as e:
+        if _is_timestamp_error(e):
+            _sync_server_time_if_needed(force=True)
+            return _do_request()
+        raise
 
 
 # ============================================================
@@ -213,7 +290,6 @@ def _signed_request(method: str, path: str, params: Dict) -> Dict:
 class BinanceExecutor:
     """Wrapper cho Binance Futures API thường."""
 
-    # Cache exchange_info TTL (seconds)
     _EXCHANGE_INFO_TTL = 300  # 5 phút
 
     def __init__(self, testnet: bool = False):
@@ -223,7 +299,7 @@ class BinanceExecutor:
 
         # Exchange info cache
         self._exchange_info_cache = None
-        self._exchange_info_ts = 0
+        self._exchange_info_ts = 0.0
         self._symbol_info_map = {}
 
         self._init_client()
@@ -255,11 +331,27 @@ class BinanceExecutor:
     def ready(self) -> bool:
         return self._client is not None
 
+    # ── Signed helpers ────────────────────────────────────
+
+    def _signed_params(self) -> dict:
+        return {
+            "recvWindow": SIGNED_RECV_WINDOW,
+            "timestamp": _signed_timestamp_ms(),
+        }
+
+    def _call_signed_with_retry(self, fn: Callable[[], Any]):
+        try:
+            return fn()
+        except Exception as e:
+            if _is_timestamp_error(e):
+                _sync_server_time_if_needed(force=True)
+                return fn()
+            raise
+
     # ── Exchange Info Cache ──────────────────────────────
 
     def _refresh_exchange_info_if_needed(self):
-        import time as _time
-        now = _time.time()
+        now = time.time()
 
         if (
             self._exchange_info_cache
@@ -275,7 +367,6 @@ class BinanceExecutor:
             self._exchange_info_cache = info
             self._exchange_info_ts = now
 
-            # Rebuild per-symbol map
             self._symbol_info_map = {}
             for s in info.get("symbols", []):
                 self._symbol_info_map[s["symbol"]] = s
@@ -294,26 +385,32 @@ class BinanceExecutor:
     def get_balance(self) -> float:
         if not self.ready:
             return 0.0
-        try:
-            account = self._client.account()
+
+        def _do():
+            account = self._client.account(**self._signed_params())
             for asset in account.get("assets", []):
                 if asset["asset"] == "USDT":
                     return float(asset["availableBalance"])
+            return 0.0
+
+        try:
+            return float(self._call_signed_with_retry(_do) or 0.0)
         except Exception as e:
             print(f"[EXEC] Balance error: {e}")
-        return 0.0
+            return 0.0
 
     # ── Symbol Info (CACHED) ─────────────────────────────
 
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
         self._refresh_exchange_info_if_needed()
+
         info = self._symbol_info_map.get(symbol)
         if info:
             return info
 
-        # Fallback: nếu cache miss, thử query trực tiếp 1 lần
         if not self.ready:
             return None
+
         try:
             raw = self._client.exchange_info()
             for s in raw.get("symbols", []):
@@ -322,6 +419,7 @@ class BinanceExecutor:
                     return s
         except Exception as e:
             print(f"[EXEC] Info error {symbol}: {e}")
+
         return None
 
     def round_quantity(
@@ -363,9 +461,17 @@ class BinanceExecutor:
     def set_leverage(self, symbol: str, leverage: int) -> bool:
         if not self.ready:
             return False
-        try:
+
+        def _do():
             self._last_error = None
-            self._client.change_leverage(symbol=symbol, leverage=leverage)
+            return self._client.change_leverage(
+                symbol=symbol,
+                leverage=leverage,
+                **self._signed_params()
+            )
+
+        try:
+            self._call_signed_with_retry(_do)
             return True
         except Exception as e:
             self._last_error = str(e)
@@ -380,16 +486,22 @@ class BinanceExecutor:
     ) -> Optional[Dict]:
         if not self.ready:
             return None
-        try:
+
+        def _do():
+            self._last_error = None
             params = {
                 "symbol":   symbol,
                 "side":     side,
                 "type":     "MARKET",
                 "quantity": quantity,
+                **self._signed_params(),
             }
             if reduce_only:
                 params["reduceOnly"] = "true"
             return self._client.new_order(**params)
+
+        try:
+            return self._call_signed_with_retry(_do)
         except Exception as e:
             self._last_error = str(e)
             print(f"[EXEC] Market order error {symbol} {side}: {e}")
@@ -398,12 +510,21 @@ class BinanceExecutor:
     def limit_order(self, symbol, side, quantity, price, tif="GTC"):
         if not self.ready:
             return None
-        try:
+
+        def _do():
             self._last_error = None
             return self._client.new_order(
-                symbol=symbol, side=side, type="LIMIT",
-                quantity=quantity, price=price, timeInForce=tif
+                symbol=symbol,
+                side=side,
+                type="LIMIT",
+                quantity=quantity,
+                price=price,
+                timeInForce=tif,
+                **self._signed_params()
             )
+
+        try:
+            return self._call_signed_with_retry(_do)
         except Exception as e:
             self._last_error = str(e)
             print(f"[EXEC] Limit order error {symbol} {side}: {e}")
@@ -412,8 +533,16 @@ class BinanceExecutor:
     def cancel_order(self, symbol: str, order_id: str) -> bool:
         if not self.ready:
             return False
+
+        def _do():
+            return self._client.cancel_order(
+                symbol=symbol,
+                orderId=order_id,
+                **self._signed_params()
+            )
+
         try:
-            self._client.cancel_order(symbol=symbol, orderId=order_id)
+            self._call_signed_with_retry(_do)
             return True
         except Exception as e:
             err_str = str(e)
@@ -425,8 +554,15 @@ class BinanceExecutor:
     def cancel_all_orders(self, symbol: str) -> bool:
         if not self.ready:
             return False
+
+        def _do():
+            return self._client.cancel_open_orders(
+                symbol=symbol,
+                **self._signed_params()
+            )
+
         try:
-            self._client.cancel_open_orders(symbol=symbol)
+            self._call_signed_with_retry(_do)
             return True
         except Exception as e:
             print(f"[EXEC] Cancel all error {symbol}: {e}")
@@ -435,8 +571,16 @@ class BinanceExecutor:
     def query_order(self, symbol: str, order_id: str) -> Optional[Dict]:
         if not self.ready:
             return None
+
+        def _do():
+            return self._client.query_order(
+                symbol=symbol,
+                orderId=order_id,
+                **self._signed_params()
+            )
+
         try:
-            return self._client.query_order(symbol=symbol, orderId=order_id)
+            return self._call_signed_with_retry(_do)
         except Exception as e:
             print(f"[EXEC] Query order error {symbol}/{order_id}: {e}")
             return None
@@ -444,8 +588,15 @@ class BinanceExecutor:
     def get_open_orders(self, symbol: str) -> List[Dict]:
         if not self.ready:
             return []
+
+        def _do():
+            return self._client.get_orders(
+                symbol=symbol,
+                **self._signed_params()
+            )
+
         try:
-            return self._client.get_orders(symbol=symbol)
+            return self._call_signed_with_retry(_do)
         except Exception as e:
             print(f"[EXEC] Get open orders error {symbol}: {e}")
             return []
@@ -455,21 +606,33 @@ class BinanceExecutor:
     def get_position_size(self, symbol: str) -> float:
         if not self.ready:
             return 0.0
-        try:
-            positions = self._client.get_position_risk(symbol=symbol)
+
+        def _do():
+            positions = self._client.get_position_risk(
+                symbol=symbol,
+                **self._signed_params()
+            )
             if positions:
                 return abs(float(positions[0]["positionAmt"]))
+            return 0.0
+
+        try:
+            return float(self._call_signed_with_retry(_do) or 0.0)
         except Exception as e:
             print(f"[EXEC] Position error {symbol}: {e}")
-        return 0.0
+            return 0.0
 
     def get_position_info(self, symbol: str) -> Optional[Dict]:
         if not self.ready:
             return None
-        try:
-            positions = self._client.get_position_risk(symbol=symbol)
+
+        def _do():
+            positions = self._client.get_position_risk(
+                symbol=symbol,
+                **self._signed_params()
+            )
             if positions:
-                p   = positions[0]
+                p = positions[0]
                 amt = float(p.get("positionAmt", 0))
                 if amt != 0:
                     return {
@@ -480,16 +643,21 @@ class BinanceExecutor:
                         "leverage":         int(p.get("leverage", 1)),
                         "direction":        "LONG" if amt > 0 else "SHORT",
                     }
+            return None
+
+        try:
+            return self._call_signed_with_retry(_do)
         except Exception as e:
-            print(f"[EXEC] Position info error: {e}")
-        return None
+            print(f"[EXEC] Position info error {symbol}: {e}")
+            return None
 
     def list_open_positions(self) -> List[Dict]:
         if not self.ready:
             return []
-        out = []
-        try:
-            positions = self._client.get_position_risk()
+
+        def _do():
+            positions = self._client.get_position_risk(**self._signed_params())
+            out = []
             for p in positions or []:
                 amt = float(p.get("positionAmt", 0) or 0)
                 if amt == 0:
@@ -502,9 +670,13 @@ class BinanceExecutor:
                     "leverage":         int(p.get("leverage", 1)),
                     "direction":        "LONG" if amt > 0 else "SHORT",
                 })
+            return out
+
+        try:
+            return self._call_signed_with_retry(_do)
         except Exception as e:
             print(f"[EXEC] list_open_positions error: {e}")
-        return out
+            return []
 
     def close_position(
         self, symbol: str, direction: str
@@ -603,7 +775,7 @@ def open_position(
                 mode=mode.get_mode().value
             )
 
-        entry_side = "BUY"  if pending.direction == "LONG" else "SELL"
+        entry_side = "BUY" if pending.direction == "LONG" else "SELL"
 
         entry_order = executor.market_order(
             pending.symbol, entry_side, quantity
@@ -891,6 +1063,13 @@ def get_open_algo_orders(symbol: Optional[str] = None) -> list:
 
 
 def cancel_algo_order(algo_id: str) -> bool:
+    """
+    Cancel single algo order by algoId.
+
+    NOTE:
+    - silent với các lỗi "not found / already gone"
+    - vì mục tiêu nghiệp vụ là: không còn order active nữa
+    """
     mode = get_trading_mode()
     if mode.is_paper:
         return True
@@ -901,8 +1080,19 @@ def cancel_algo_order(algo_id: str) -> bool:
         })
         return True
     except Exception as e:
-        if "-2011" not in str(e):
+        err = str(e)
+
+        silent_patterns = [
+            "-2011",
+            "Unknown order",
+            "not found",
+            "does not exist",
+            "No such",
+        ]
+
+        if not any(p.lower() in err.lower() for p in silent_patterns):
             print(f"[EXEC] cancel_algo_order warning algoId={algo_id}: {e}")
+
         return False
 
 
@@ -975,6 +1165,17 @@ def get_entry_order_status(symbol: str, order_id: str) -> Dict:
 # ============================================================
 
 def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
+    """
+    Smart cancel:
+    - thử normal order
+    - thử algo order
+    - trả True nếu 1 trong 2 nhánh cancel được
+      hoặc order thực tế đã không còn
+
+    HOTFIX:
+    - Không được short-circuit quá sớm ở nhánh normal,
+      vì algoId có thể bị nhánh normal "ăn nhầm" là unknown order.
+    """
     if not order_id:
         return False
 
@@ -986,10 +1187,20 @@ def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
     if not executor or not executor.ready:
         return False
 
-    if executor.cancel_order(symbol, order_id):
-        return True
+    normal_ok = False
+    algo_ok = False
 
-    return cancel_algo_order(order_id)
+    try:
+        normal_ok = executor.cancel_order(symbol, order_id)
+    except Exception:
+        normal_ok = False
+
+    try:
+        algo_ok = cancel_algo_order(order_id)
+    except Exception:
+        algo_ok = False
+
+    return normal_ok or algo_ok
 
 
 def cancel_exit_orders(pending) -> bool:

@@ -140,9 +140,10 @@ class OpenTradeFilter:
         return True, "passed"
 
     def _check_position(self, db, symbol, strategy_name, timeframe,
-                        exclude_pending_id=None, exclude_signal_id=None):
+                    exclude_pending_id=None, exclude_signal_id=None):
         from app.db.models import Signal, PendingSignal
         from sqlalchemy import func
+        from app.services.live.capacity_service import get_live_otf_symbol_count
 
         pos = self.cfg.get("position", {})
         mode = get_current_mode()
@@ -150,8 +151,53 @@ class OpenTradeFilter:
         rule = mode_manager.get_conflict_rule()
 
         max_conc = pos.get("max_concurrent_trades", 999)
-        if db.query(Signal).filter(Signal.status == "OPEN").count() >= max_conc:
-            return False, "max_concurrent_reached"
+
+        # LIVE: dùng count theo OPEN signals + ALL WAIT pendings
+        if mode != TradingMode.PAPER:
+            live_count = get_live_otf_symbol_count(db)
+
+            # Nếu exclude current pending mà pending đó đang WAIT trong DB, trừ bớt 1 symbol nếu cần
+            # (trường hợp intent phase check lại cho row hiện tại)
+            if exclude_pending_id is not None:
+                current_pending = db.query(PendingSignal).get(exclude_pending_id)
+                if current_pending and current_pending.status == "WAIT":
+                    # chỉ trừ nếu symbol đó thực sự nằm trong counted set
+                    # giữ đơn giản: recalc thủ công
+                    live_symbols = set()
+                    open_signal_rows = db.query(Signal.symbol).filter(
+                        Signal.status == "OPEN"
+                    ).distinct().all()
+                    for row in open_signal_rows:
+                        if row and row[0]:
+                            live_symbols.add(row[0])
+
+                    waiting_pending_rows = db.query(PendingSignal.symbol).filter(
+                        PendingSignal.status == "WAIT"
+                    ).all()
+                    for row in waiting_pending_rows:
+                        if row and row[0]:
+                            live_symbols.add(row[0])
+
+                    if current_pending.symbol in live_symbols:
+                        # remove self symbol only if no other WAIT/OPEN row of same symbol still exists
+                        other_wait = db.query(PendingSignal).filter(
+                            PendingSignal.symbol == current_pending.symbol,
+                            PendingSignal.status == "WAIT",
+                            PendingSignal.id != current_pending.id
+                        ).count()
+                        other_open = db.query(Signal).filter(
+                            Signal.symbol == current_pending.symbol,
+                            Signal.status == "OPEN"
+                        ).count()
+
+                        if other_wait == 0 and other_open == 0:
+                            live_count = max(0, live_count - 1)
+
+            if live_count >= max_conc:
+                return False, "max_concurrent_reached"
+        else:
+            if db.query(Signal).filter(Signal.status == "OPEN").count() >= max_conc:
+                return False, "max_concurrent_reached"
 
         # ── Conflict checks dùng cùng rule với scanner ───────
         open_cond = rule.get_open_signal_block_condition(

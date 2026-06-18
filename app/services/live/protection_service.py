@@ -37,6 +37,7 @@ PROFIT_PROTECTION_CONFIG = {
 # NOTE:
 # hardcode tạm cho live ổn định trước
 BREAKEVEN_RETRY_BACKOFF_SECONDS = 30
+PROTECTION_CHANGE_COOLDOWN_SECONDS = 15
 
 
 def is_protection_enabled() -> bool:
@@ -61,14 +62,58 @@ def clear_breakeven_retry_backoff(trade: Signal):
     trade.market_context = ctx
 
 
-def mark_breakeven_applied(trade: Signal, new_sl_price: float, new_sl_id: Optional[str] = None):
+def mark_protection_changed(
+    trade: Signal,
+    sl_price: Optional[float] = None,
+    sl_id: Optional[str] = None,
+):
+    """
+    Đánh dấu vừa có thay đổi protection.
+    Dùng để _ensure_protection() không auto-repair ngay trong vài giây tiếp theo,
+    tránh race cùng cycle / stale snapshot.
+    """
     ctx = dict(trade.market_context or {})
     exec_ctx = dict(ctx.get("execution") or {})
 
-    if new_sl_id:
-        exec_ctx["sl_order_id"] = new_sl_id
+    if sl_id:
+        exec_ctx["sl_order_id"] = sl_id
+        ctx["protection_change_sl_id"] = sl_id
+
+    if sl_price is not None:
+        ctx["protection_change_sl_price"] = float(sl_price)
 
     ctx["execution"] = exec_ctx
+    ctx["protection_change_at"] = utc_now().isoformat()
+    trade.market_context = ctx
+
+
+def protection_change_cooldown_active(
+    trade: Signal,
+    seconds: int = PROTECTION_CHANGE_COOLDOWN_SECONDS
+) -> bool:
+    ctx = trade.market_context or {}
+    ts = ctx.get("protection_change_at")
+    if not ts:
+        return False
+
+    try:
+        changed_at = ensure_utc(datetime.fromisoformat(ts))
+        age = (utc_now() - changed_at).total_seconds()
+        return age < seconds
+    except Exception:
+        return False
+
+
+def mark_breakeven_applied(trade: Signal, new_sl_price: float, new_sl_id: Optional[str] = None):
+    ctx = dict(trade.market_context or {})
+
+    mark_protection_changed(
+        trade=trade,
+        sl_price=float(new_sl_price),
+        sl_id=new_sl_id,
+    )
+
+    ctx = dict(trade.market_context or {})
     ctx["breakeven_applied"] = True
     ctx["breakeven_sl"] = float(new_sl_price)
     ctx["breakeven_at"] = utc_now().isoformat()

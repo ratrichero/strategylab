@@ -3,16 +3,16 @@ LIVE Capacity Service
 =====================
 Hard-cap exposure helpers cho LIVE mode.
 
-Hard-cap definition:
-- 1 symbol được tính là ACTIVE nếu:
-    1) có Signal OPEN
-    HOẶC
-    2) có Pending WAIT đã place lên exchange và chưa terminal
+Definitions:
+- HARD-CAP execution exposure:
+    OPEN signals
+    UNION
+    placed WAIT pendings chưa terminal
 
-NOTE:
-- Đây là hard-cap execution exposure, khác với soft filter của scanner/OTF.
-- Không tự đóng vị thế đang mở chỉ vì vượt cap.
-- Khi overflow, chỉ hủy các resting entry zero-fill.
+- OTF/Scanner soft-cap:
+    OPEN signals
+    UNION
+    ALL WAIT pendings (kể cả chưa place)
 """
 
 from typing import Set, List
@@ -75,6 +75,38 @@ def get_active_live_symbols(db) -> Set[str]:
 
 def get_active_live_symbol_count(db) -> int:
     return len(get_active_live_symbols(db))
+
+
+def get_live_otf_symbols(db) -> Set[str]:
+    """
+    LIVE OTF / scanner cap symbols =
+      OPEN signals
+      UNION
+      ALL WAIT pendings (kể cả chưa place)
+    """
+    symbols = set()
+
+    open_signal_rows = db.query(Signal.symbol).filter(
+        Signal.status == "OPEN"
+    ).distinct().all()
+
+    for row in open_signal_rows:
+        if row and row[0]:
+            symbols.add(row[0])
+
+    waiting_pending_rows = db.query(PendingSignal.symbol).filter(
+        PendingSignal.status == "WAIT"
+    ).distinct().all()
+
+    for row in waiting_pending_rows:
+        if row and row[0]:
+            symbols.add(row[0])
+
+    return symbols
+
+
+def get_live_otf_symbol_count(db) -> int:
+    return len(get_live_otf_symbols(db))
 
 
 def get_zero_fill_resting_pending_candidates(db) -> List[PendingSignal]:
