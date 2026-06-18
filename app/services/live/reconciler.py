@@ -309,12 +309,14 @@ def _ensure_protection(db, signal: Signal, pending: Optional[PendingSignal], sna
 def _finalize_entry_lifecycle(db, pending: PendingSignal, snapshot: SymbolSnapshot):
     status = str(snapshot.entry.status or pending.exchange_status or "").upper()
     executed = float(pending.executed_qty or 0)
+    now = utc_now()
 
+    # 1. Thụ động: xử lý nếu exchange đã báo terminal
     if status in ENTRY_TERMINAL_STATUSES:
         if executed > 0:
             pending.status = "FILLED"
             if pending.filled_at is None:
-                pending.filled_at = utc_now()
+                pending.filled_at = now
         else:
             if status == "REJECTED":
                 pending.status = "REJECTED"
@@ -323,6 +325,27 @@ def _finalize_entry_lifecycle(db, pending: PendingSignal, snapshot: SymbolSnapsh
                 pending.status = "CANCELLED"
                 pending.rejection_reason = f"BINANCE::{status or 'CANCELED'}"
         db.flush()
+        return
+
+    # 2. Chủ động: nếu chưa terminal nhưng đã quá expire_at -> Hủy lệnh
+    if pending.expire_at and ensure_utc(pending.expire_at) < now:
+        # Check xem đã có command cancel chưa để khỏi spam
+        from app.services.live.command_service import has_open_command, CMD_MANUAL_CANCEL_PENDING
+        
+        # Mượn tạm command type MANUAL_CANCEL_PENDING hoặc tạo type mới, 
+        # ở đây dùng luôn MANUAL_CANCEL_PENDING cho lẹ hoặc gọi thẳng cancel
+        if not has_open_command(db, pending.symbol, [CMD_MANUAL_CANCEL_PENDING]):
+            print(f"⏰ LIVE ENTRY EXPIRED: {pending.symbol} | pending={pending.id} | Cancelling...")
+            
+            try:
+                from app.services.execution_service import cancel_order_by_id
+                # Gửi lệnh hủy lên sàn
+                if cancel_order_by_id(pending.symbol, pending.exchange_order_id):
+                    # Nếu lệnh hủy thành công, vòng reconcile sau snapshot sẽ báo CANCELED 
+                    # và logic thụ động (bước 1) sẽ dọn dẹp nó.
+                    print(f"✅ Cancel command sent for expired entry: {pending.symbol}")
+            except Exception as e:
+                print(f"❌ Expire cancel failed for {pending.symbol}: {e}")
 
 
 def _is_algo_triggered(algo) -> bool:
