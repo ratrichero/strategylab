@@ -13,6 +13,13 @@ Policy hiện tại:
 - deterministic fail -> reject ngay
 - transient fail -> retry tối đa 1 lần
 - backoff giữa các lần thử = 10 giây
+
+HARD-CAP HOTFIX:
+- MAX_OPEN_TRADES được hiểu là hard-cap exposure thực tế
+- Count theo DISTINCT active live symbols:
+    + OPEN signals
+    + placed WAIT pendings chưa terminal
+- Nếu đã đầy cap -> không place thêm
 """
 
 from datetime import timedelta
@@ -21,7 +28,7 @@ from sqlalchemy import and_, or_
 
 from app.core.time_utils import utc_now, ensure_utc
 from app.db.session import SessionLocal
-from app.db.models import PendingSignal, Signal
+from app.db.models import PendingSignal
 from app.services.config_service import get_runtime_config
 from app.services.prefill_validator import validate_before_fill
 from app.services.open_trade_filter import get_open_trade_filter
@@ -30,6 +37,7 @@ from app.services.execution_service import (
     get_executor,
 )
 from app.services.live.locks import live_symbol_lock
+from app.services.live.capacity_service import get_active_live_symbol_count
 from app.services.price_feed import get_all_current_prices
 
 
@@ -248,6 +256,17 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             db.commit()
             return
 
+        # HARD-CAP gate #1: check sớm để tránh làm prefill/sizing vô ích
+        max_open = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+        active_live_count = get_active_live_symbol_count(db)
+        if active_live_count >= max_open:
+            print(
+                f"⛔ LIVE HARD CAP BLOCK: {p.symbol} {p.direction} "
+                f"| pending={p.id} active_live={active_live_count}/{max_open}"
+            )
+            db.commit()
+            return
+
         current = price_map.get(p.symbol)
         if current is None:
             db.commit()
@@ -259,12 +278,6 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             p.rejection_reason = result.reason
             p.validation_details = result.details
             p.next_retry_at = None
-            db.commit()
-            return
-
-        max_open = cfg.get("MAX_OPEN_TRADES", 10)
-        current_open = db.query(Signal).filter(Signal.status == "OPEN").count()
-        if current_open >= max_open:
             db.commit()
             return
 
@@ -309,6 +322,16 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
                     f"| pending={p.id} retry_at={p.next_retry_at.isoformat()}"
                 )
                 return
+
+        # HARD-CAP gate #2: check lại ngay trước khi place thật
+        active_live_count = get_active_live_symbol_count(db)
+        if active_live_count >= max_open:
+            print(
+                f"⛔ LIVE HARD CAP BLOCK BEFORE PLACE: {p.symbol} {p.direction} "
+                f"| pending={p.id} active_live={active_live_count}/{max_open}"
+            )
+            db.commit()
+            return
 
         # Từ đây mới tính là 1 place attempt thực sự
         _record_place_attempt(p, now)

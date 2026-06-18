@@ -1,4 +1,4 @@
-"""Trade Outcome Analytics — với fix MAE/MFE cho flash close"""
+"""Trade Outcome Analytics — robust save for LIVE/PAPER, including MANUAL"""
 
 from datetime import timedelta
 from typing import Optional, Tuple
@@ -18,6 +18,16 @@ def _safe_float(v):
 
 
 def save_trade_outcome(db, trade, feature):
+    """
+    Save outcome analytics for any CLOSED signal:
+    - WIN
+    - LOSS
+    - MANUAL
+
+    Business rule:
+    - If signal is closed and minimum data exists, outcome must be created.
+    - label follows realized pnl sign, NOT trade.status text.
+    """
     existing = db.query(TradeOutcomeAnalytics).filter(
         TradeOutcomeAnalytics.signal_id == trade.id
     ).first()
@@ -33,8 +43,8 @@ def save_trade_outcome(db, trade, feature):
     created = ensure_utc(trade.created_at) if trade.created_at else None
     exited = ensure_utc(trade.exit_time) if trade.exit_time else None
 
-    # HOTFIX:
-    # analytics là side-effect, không được crash nếu thiếu field
+    # Outcome là bắt buộc nếu đã đóng signal thật,
+    # nhưng vẫn cần tối thiểu entry/exit/time để tính.
     if entry is None or exit_price is None or created is None or exited is None:
         print(
             f"[OUTCOME] Skip signal_id={trade.id} "
@@ -84,10 +94,13 @@ def save_trade_outcome(db, trade, feature):
     if stop_loss is not None and take_profit is not None and entry != stop_loss:
         rr_planned = round(abs((take_profit - entry) / (entry - stop_loss)), 4)
 
-    if rr_planned and rr_planned > 0 and stop_loss is not None:
+    if stop_loss is not None:
         risk_pct = abs((stop_loss - entry) / entry * 100) if entry else 0
         if risk_pct > 0:
             rr_realized = round(result_pct / risk_pct, 4)
+
+    # label phải theo pnl thực tế, không theo status text
+    label = 1 if result_pct > 0 else 0
 
     db.add(TradeOutcomeAnalytics(
         signal_id=trade.id,
@@ -105,7 +118,7 @@ def save_trade_outcome(db, trade, feature):
         rr_realized=rr_realized,
         trade_return=result_pct,
 
-        label=1 if trade.status == "WIN" else 0,
+        label=label,
         max_drawdown=mae,
         max_favorable=mfe,
 
@@ -113,12 +126,12 @@ def save_trade_outcome(db, trade, feature):
         time_to_mae=time_to_mae,
         time_to_mfe=time_to_mfe,
 
-        volatility_at_entry=float(feature.atr_ratio) if feature.atr_ratio else None,
-        volume_ratio_at_entry=float(feature.volume_ratio) if feature.volume_ratio else None,
-        total_score=float(feature.total_score or 0),
-        trend_score=float(feature.trend_score or 0),
-        mtf_score=float(feature.mtf_score or 0),
-        penalty_norm=float(feature.penalty_norm or 0),
+        volatility_at_entry=float(feature.atr_ratio) if feature and feature.atr_ratio else None,
+        volume_ratio_at_entry=float(feature.volume_ratio) if feature and feature.volume_ratio else None,
+        total_score=float(feature.total_score or 0) if feature else None,
+        trend_score=float(feature.trend_score or 0) if feature else None,
+        mtf_score=float(feature.mtf_score or 0) if feature else None,
+        penalty_norm=float(feature.penalty_norm or 0) if feature else None,
 
         exit_reason=trade.exit_reason
     ))

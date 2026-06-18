@@ -10,6 +10,30 @@ _session = requests.Session()
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+# ─────────────────────────────────────────────
+# VALID SYMBOLS (CACHED)
+# ─────────────────────────────────────────────
+
+# Blacklist: tài sản không phải crypto thuần
+# Tokenized commodities, index, synthetic, v.v.
+# NOTE: maintain list này khi Binance thêm loại mới
+SYMBOL_BASE_BLACKLIST = {
+    "PAXG",     # tokenized gold
+    "XAUT",     # tokenized gold
+    "BTCDOM",   # BTC dominance index
+    "DEFI",     # DeFi index
+    "BLUEBIRD", # synthetic / index
+    "BSVBULL",  # leveraged token artifact
+    "BSVBEAR",  # leveraged token artifact
+    "ETHBTC",   # cross-pair, not USDT quote nhưng phòng thủ
+}
+
+SYMBOL_BLACKLIST = {
+    f"{base}USDT" for base in SYMBOL_BASE_BLACKLIST
+} | {
+    # Thêm full symbol nếu cần
+}
+
 retry_strategy = Retry(
     total=3,
     backoff_factor=1,
@@ -85,12 +109,19 @@ def get_valid_symbols():
             if not base.isalpha() or len(base) > 12:
                 continue
 
-            symbols.append(s["symbol"])
+            sym = s["symbol"]
+
+            # Blacklist filter
+            if base.upper() in SYMBOL_BASE_BLACKLIST:
+                continue
+            if sym in SYMBOL_BLACKLIST:
+                continue
+
+            symbols.append(sym)
 
     _valid_symbols_cache = symbols
     _valid_symbols_ts = now
 
-    return symbols
 
 
 # ─────────────────────────────────────────────

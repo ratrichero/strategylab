@@ -10,6 +10,12 @@ from app.services.execution_service import (
     place_algo_take_profit_market_close_position,
     get_executor,
 )
+from app.services.config_service import get_runtime_config
+from app.services.live.capacity_service import (
+    get_active_live_symbols,
+    get_zero_fill_resting_pending_candidates,
+    is_pending_exchange_active,
+)
 from app.services.live.snapshot_service import build_symbol_snapshot, SymbolSnapshot
 from app.services.live.locks import live_symbol_lock
 from app.services.live.command_service import (
@@ -29,6 +35,11 @@ from app.services.btc_context_cache import (
     build_event_context,
 )
 from app.services.outcome_service import save_trade_outcome
+import time as _time
+
+# Throttle: symbol resting (chưa fill) chỉ cần reconcile mỗi 5s
+_symbol_last_reconcile = {}
+RESTING_RECONCILE_INTERVAL = 
 
 
 ENTRY_TERMINAL_STATUSES = {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
@@ -42,6 +53,12 @@ def reconcile_all_active_symbols():
     for symbol in symbols:
         reconcile_symbol(symbol)
 
+    # HARD-CAP enforcement:
+    # Sau khi reconcile xong toàn bộ active symbols,
+    # nếu số active live symbols vẫn vượt cap,
+    # chủ động hủy bớt resting zero-fill entries.
+    _enforce_live_hard_cap()
+
 
 def reconcile_symbol(symbol: str):
     with live_symbol_lock(symbol, blocking=False) as acquired:
@@ -54,7 +71,29 @@ def reconcile_symbol(symbol: str):
             if not pending and not signal and not commands:
                 return
 
-            snapshot = build_symbol_snapshot(symbol, pending=pending)
+            # ── Throttle check cho resting symbols ───────
+            has_fill = pending and float(pending.executed_qty or 0) > 0
+            has_position = signal and signal.status == "OPEN"
+            has_commands = bool(commands)
+            is_active = has_fill or has_position or has_commands
+
+            if not is_active:
+                now_ts = _time.time()
+                last_ts = _symbol_last_reconcile.get(symbol, 0)
+                if now_ts - last_ts < RESTING_RECONCILE_INTERVAL:
+                    db.commit()
+                    return
+                _symbol_last_reconcile[symbol] = now_ts
+
+            # ── Build snapshot ───────────────────────────
+            # Chỉ cần algo detail khi đã có fill hoặc position
+            need_algo = has_fill or has_position
+
+            snapshot = build_symbol_snapshot(
+                symbol,
+                pending=pending,
+                need_algo_detail=need_algo,
+            )
             if not snapshot.ok:
                 print(f"[LIVE RECONCILE] snapshot fail {symbol}: {snapshot.error}")
                 return
@@ -327,25 +366,30 @@ def _finalize_entry_lifecycle(db, pending: PendingSignal, snapshot: SymbolSnapsh
         db.flush()
         return
 
-    # 2. Chủ động: nếu chưa terminal nhưng đã quá expire_at -> Hủy lệnh
+    # 2. Chủ động: nếu chưa terminal nhưng đã quá expire_at
     if pending.expire_at and ensure_utc(pending.expire_at) < now:
-        # Check xem đã có command cancel chưa để khỏi spam
-        from app.services.live.command_service import has_open_command, CMD_MANUAL_CANCEL_PENDING
-        
-        # Mượn tạm command type MANUAL_CANCEL_PENDING hoặc tạo type mới, 
-        # ở đây dùng luôn MANUAL_CANCEL_PENDING cho lẹ hoặc gọi thẳng cancel
-        if not has_open_command(db, pending.symbol, [CMD_MANUAL_CANCEL_PENDING]):
+
+        # RISK #12 guard: chỉ gửi cancel 1 lần
+        already_sent = (
+            pending.last_place_error
+            and "EXPIRE_CANCEL_SENT" in str(pending.last_place_error)
+        )
+
+        if not already_sent:
             print(f"⏰ LIVE ENTRY EXPIRED: {pending.symbol} | pending={pending.id} | Cancelling...")
-            
+
             try:
-                from app.services.execution_service import cancel_order_by_id
-                # Gửi lệnh hủy lên sàn
-                if cancel_order_by_id(pending.symbol, pending.exchange_order_id):
-                    # Nếu lệnh hủy thành công, vòng reconcile sau snapshot sẽ báo CANCELED 
-                    # và logic thụ động (bước 1) sẽ dọn dẹp nó.
+                ok = cancel_order_by_id(pending.symbol, pending.exchange_order_id)
+                if ok:
+                    pending.last_place_error = "EXPIRE_CANCEL_SENT"
+                    pending.last_exchange_sync_at = now
                     print(f"✅ Cancel command sent for expired entry: {pending.symbol}")
+                else:
+                    print(f"⚠️ Cancel command returned False for expired entry: {pending.symbol}")
             except Exception as e:
                 print(f"❌ Expire cancel failed for {pending.symbol}: {e}")
+
+            db.flush()
 
 
 def _is_algo_triggered(algo) -> bool:
@@ -601,6 +645,55 @@ def _get_best_exit_price(symbol: str, fallback: Optional[float] = None) -> float
 
     return float(fallback or 0)
 
+def backfill_missing_outcomes(limit: int = 20):
+    """
+    Guarantee layer:
+    Tìm mọi signal đã đóng nhưng chưa có outcome, rồi save bù.
+
+    Áp dụng cho:
+    - WIN
+    - LOSS
+    - MANUAL
+    """
+    with SessionLocal() as db:
+        rows = db.execute("""
+            SELECT s.id
+            FROM signals s
+            LEFT JOIN trade_outcome_analytics t
+              ON t.signal_id = s.id
+            WHERE s.status IN ('WIN', 'LOSS', 'MANUAL')
+              AND s.exit_time IS NOT NULL
+              AND s.exit_price IS NOT NULL
+              AND t.signal_id IS NULL
+            ORDER BY s.exit_time DESC
+            LIMIT :limit
+        """, {"limit": limit}).fetchall()
+
+        if not rows:
+            return
+
+        ids = [r[0] for r in rows]
+
+    from app.services.outcome_service import save_trade_outcome
+
+    for signal_id in ids:
+        try:
+            with SessionLocal() as db:
+                signal = db.query(Signal).get(signal_id)
+                if not signal:
+                    continue
+
+                feature = db.query(SignalFeature).filter(
+                    SignalFeature.signal_id == signal_id
+                ).first()
+
+                # feature có thể thiếu, vẫn cho save
+                save_trade_outcome(db, signal, feature)
+                db.commit()
+
+        except Exception as e:
+            print(f"[OUTCOME BACKFILL] signal_id={signal_id}: {type(e).__name__}: {e}")
+            
 def run_deferred_outcomes():
     """
     Gọi từ advisory loop hoặc background task riêng.
@@ -633,3 +726,95 @@ def run_deferred_outcomes():
 
         except Exception as e:
             print(f"[LIVE OUTCOME DEFERRED] signal_id={signal_id}: {type(e).__name__}: {e}")
+
+def _enforce_live_hard_cap():
+    """
+    HARD-CAP cho LIVE:
+    - Count DISTINCT active live symbols:
+        + OPEN signals
+        + placed WAIT pendings chưa terminal
+    - Nếu vượt MAX_OPEN_TRADES:
+        + chỉ hủy các resting zero-fill entries
+        + ưu tiên hủy các lệnh mới nhất trước
+        + KHÔNG tự đóng vị thế đang mở
+    """
+    cfg = get_runtime_config()
+    cap = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+
+    with SessionLocal() as db:
+        active_symbols = get_active_live_symbols(db)
+        active_count = len(active_symbols)
+
+        if active_count <= cap:
+            return
+
+        overflow = active_count - cap
+        candidates = get_zero_fill_resting_pending_candidates(db)
+
+    print(
+        f"⚠️ LIVE HARD CAP EXCEEDED: active_live={active_count}/{cap} "
+        f"| overflow={overflow} | trying to cancel newest zero-fill resting entries"
+    )
+
+    cancelled = 0
+    touched_symbols = set()
+
+    for item in candidates:
+        if cancelled >= overflow:
+            break
+
+        if item.symbol in touched_symbols:
+            continue
+
+        with live_symbol_lock(item.symbol, blocking=False) as acquired:
+            if not acquired:
+                continue
+
+            with SessionLocal() as db:
+                p = (
+                    db.query(PendingSignal)
+                    .filter(PendingSignal.id == item.id)
+                    .with_for_update()
+                    .first()
+                )
+                if not p:
+                    continue
+
+                if not is_pending_exchange_active(p):
+                    db.commit()
+                    continue
+
+                if float(p.executed_qty or 0) > 0:
+                    # đã có fill thì không được hủy vì hard-cap
+                    db.commit()
+                    continue
+
+                print(
+                    f"🚫 LIVE HARD CAP CANCEL: {p.symbol} {p.direction} "
+                    f"| pending={p.id} order_id={p.exchange_order_id}"
+                )
+
+                ok = cancel_order_by_id(p.symbol, p.exchange_order_id)
+
+                if ok:
+                    # marker tạm để nhìn log/query dễ hơn;
+                    # terminal state thật sẽ do reconcile sau khi exchange xác nhận cancel
+                    p.last_place_error = "CAPACITY_HARD_CAP_CANCEL_REQUESTED"
+                    p.last_exchange_sync_at = utc_now()
+                    db.commit()
+
+                    cancelled += 1
+                    touched_symbols.add(p.symbol)
+                else:
+                    db.commit()
+
+    if cancelled < overflow:
+        remaining = overflow - cancelled
+        print(
+            f"⚠️ LIVE HARD CAP NOT FULLY ENFORCED: "
+            f"remaining_overflow={remaining} "
+            f"| likely because cap is already consumed by OPEN positions "
+            f"or some symbols were locked/became non-candidates"
+        )
+
+        

@@ -4,7 +4,7 @@ import { cn } from "../../utils/cn";
 import { useAppStore } from "../../store/appStore";
 import { StatusBar } from "../StatusBar";
 import { KillSwitch } from "../KillSwitch";
-import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Code2, Settings, Microscope, ChevronLeft, ChevronRight, Bell, Search, Clock, Wallet } from "lucide-react";
+import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Code2, Settings, Microscope, ChevronLeft, ChevronRight, Bell, Search, Clock, Wallet, UserX } from "lucide-react";
 
 const nav = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -12,6 +12,7 @@ const nav = [
   { name: "Pending", href: "/pending-signals", icon: Clock },
   { name: "Strategy", href: "/research", icon: Microscope },
   { name: "Signals", href: "/signals", icon: Zap },
+  { name: "Manual Behavior", href: "/manual-behavior", icon: UserX },
   { name: "Edge Discovery", href: "/edge-discovery", icon: TrendingUp },
   { name: "Indicators", href: "/indicators", icon: BarChart3 },
   { name: "Blocked", href: "/blocked", icon: Ban },

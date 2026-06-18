@@ -421,6 +421,7 @@ export function Dashboard() {
     )},
     { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'quantity', header: 'Qty', sortable: true, align: 'right', render: v => v ? Number(v).toFixed(4) : '-' },
     { key: 'pnl', header: 'P&L', sortable: true, render: v => <PercentChangeBadge value={v || 0} /> },
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
     { key: 'score', header: 'Score', sortable: true, render: v => <ScoreCell value={v} /> },
@@ -440,8 +441,15 @@ export function Dashboard() {
     { key: 'direction', header: 'Dir', sortable: true, render: v => <DirectionBadge direction={v || 'LONG'} /> },
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
     { key: 'trigger_price', header: 'Entry', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'currentPrice', header: 'Current', render: (v, row) => (
+      <span className={`font-mono transition-all duration-300 ${row.flash === 'up' ? 'text-emerald-400 bg-emerald-500/20 px-1 rounded' : row.flash === 'down' ? 'text-red-400 bg-red-500/20 px-1 rounded' : 'text-white'}`}>
+        {v?.toFixed(v > 100 ? 2 : 4) || '-'}
+      </span>
+    )},
     { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'order_quantity', header: 'OrderQty', align: 'right', render: v => v ? Number(v).toFixed(4) : '-' },
+    { key: 'executed_qty', header: 'ExeQty', align: 'right', render: v => v ? Number(v).toFixed(4) : '-' },
     { key: 'status', header: 'Status', sortable: true, render: v => <StatusBadge status={v} /> },
     { key: 'signal_score', header: 'Score', sortable: true, render: v => <ScoreCell value={v} /> },
     { key: 'exchange_status', header: 'EStatus', render: v => v || '-' },

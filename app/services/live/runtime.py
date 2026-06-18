@@ -12,9 +12,13 @@ import asyncio
 from app.core.trading_mode import get_current_mode, TradingMode
 from app.services.config_service import get_runtime_config
 from app.services.live.intent_engine import process_live_pending_intents
-from app.services.live.reconciler import reconcile_all_active_symbols, run_deferred_outcomes
+from app.services.live.reconciler import (
+    reconcile_all_active_symbols,
+    run_deferred_outcomes,
+    backfill_missing_outcomes,
+)
 from app.services.live.advisory_monitor import run_advisory_cycle
-
+from app.services.live.reconciler import reconcile_all_active_symbols, run_deferred_outcomes
 
 async def live_intent_loop():
     """
@@ -80,7 +84,12 @@ async def live_advisory_loop():
 
         # Drain deferred outcome queue
         # Chạy sau advisory để không cạnh tranh resource với protection logic
-        try:
+       try:
             await asyncio.to_thread(run_deferred_outcomes)
         except Exception as e:
             print(f"[LIVE OUTCOME LOOP] {e}")
+
+        try:
+            await asyncio.to_thread(backfill_missing_outcomes)
+        except Exception as e:
+            print(f"[LIVE OUTCOME BACKFILL LOOP] {e}")

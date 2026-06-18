@@ -213,10 +213,19 @@ def _signed_request(method: str, path: str, params: Dict) -> Dict:
 class BinanceExecutor:
     """Wrapper cho Binance Futures API thường."""
 
+    # Cache exchange_info TTL (seconds)
+    _EXCHANGE_INFO_TTL = 300  # 5 phút
+
     def __init__(self, testnet: bool = False):
         self.testnet = testnet
         self._client = None
         self._last_error = None
+
+        # Exchange info cache
+        self._exchange_info_cache = None
+        self._exchange_info_ts = 0
+        self._symbol_info_map = {}
+
         self._init_client()
 
     def _init_client(self):
@@ -246,6 +255,40 @@ class BinanceExecutor:
     def ready(self) -> bool:
         return self._client is not None
 
+    # ── Exchange Info Cache ──────────────────────────────
+
+    def _refresh_exchange_info_if_needed(self):
+        import time as _time
+        now = _time.time()
+
+        if (
+            self._exchange_info_cache
+            and now - self._exchange_info_ts < self._EXCHANGE_INFO_TTL
+        ):
+            return
+
+        if not self.ready:
+            return
+
+        try:
+            info = self._client.exchange_info()
+            self._exchange_info_cache = info
+            self._exchange_info_ts = now
+
+            # Rebuild per-symbol map
+            self._symbol_info_map = {}
+            for s in info.get("symbols", []):
+                self._symbol_info_map[s["symbol"]] = s
+
+        except Exception as e:
+            print(f"[EXEC] exchange_info refresh error: {e}")
+            # Giữ cache cũ nếu có
+
+    def invalidate_exchange_info_cache(self):
+        self._exchange_info_cache = None
+        self._exchange_info_ts = 0
+        self._symbol_info_map = {}
+
     # ── Account ──────────────────────────────────────────
 
     def get_balance(self) -> float:
@@ -260,15 +303,22 @@ class BinanceExecutor:
             print(f"[EXEC] Balance error: {e}")
         return 0.0
 
-    # ── Symbol Info ──────────────────────────────────────
+    # ── Symbol Info (CACHED) ─────────────────────────────
 
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
+        self._refresh_exchange_info_if_needed()
+        info = self._symbol_info_map.get(symbol)
+        if info:
+            return info
+
+        # Fallback: nếu cache miss, thử query trực tiếp 1 lần
         if not self.ready:
             return None
         try:
-            info = self._client.exchange_info()
-            for s in info.get("symbols", []):
+            raw = self._client.exchange_info()
+            for s in raw.get("symbols", []):
                 if s["symbol"] == symbol:
+                    self._symbol_info_map[symbol] = s
                     return s
         except Exception as e:
             print(f"[EXEC] Info error {symbol}: {e}")

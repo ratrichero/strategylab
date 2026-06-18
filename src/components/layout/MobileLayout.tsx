@@ -23,6 +23,7 @@ const allPages = [
   { name: "Pending", href: "/pending-signals", icon: Clock },
   { name: "Strategy", href: "/research", icon: Microscope },
   { name: "Signals", href: "/signals", icon: Zap },
+  { name: "Manual Behavior", href: "/manual-behavior", icon: Ban },
   { name: "Edge Discovery", href: "/edge-discovery", icon: TrendingUp },
   { name: "Indicators", href: "/indicators", icon: BarChart3 },
   { name: "Blocked", href: "/blocked", icon: Ban },

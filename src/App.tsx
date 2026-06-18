@@ -11,6 +11,7 @@ import { EdgeDiscovery } from './pages/EdgeDiscoveryPage';
 import { Indicators } from './pages/IndicatorsPage';
 import { PendingSignalsPage as PendingSignals } from './pages/PendingSignalsPage';
 import { AccountPage } from './pages/AccountPage';
+import { ManualBehaviorPage } from './pages/ManualBehaviorPage';
 import { QueryLab } from './pages/QueryLabPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { MarketPage, EnginePage, BlockedPage, SimulationPage } from './pages/PlaceholderPages';
@@ -32,6 +33,7 @@ export default function App() {
           <Route path="/indicators" element={<Indicators />} />
           <Route path="/pending-signals" element={<PendingSignals />} />
           <Route path="/account" element={<AccountPage />} />
+          <Route path="/manual-behavior" element={<ManualBehaviorPage />} />
           <Route path="/engine" element={<EnginePage />} />
           <Route path="/blocked" element={<BlockedPage />} />
           <Route path="/simulation" element={<SimulationPage />} />

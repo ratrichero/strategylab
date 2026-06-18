@@ -204,19 +204,25 @@ export function BlockedPage() {
     })();
   }, []);
 
+  // Group block reasons: "HTF::abc" → "HTF", "OTF::xyz" → "OTF", else unique
+  const getReasonGroup = (reason) => {
+    if (!reason) return '';
+    return reason.includes('::') ? reason.split('::')[0] : reason;
+  };
+
   const filtered = useMemo(() => {
     if (selectedReason === "all") return data;
-    return data.filter(d => d.block_reason === selectedReason);
+    return data.filter(d => getReasonGroup(d.block_reason) === selectedReason);
   }, [data, selectedReason]);
 
   const reasonList = useMemo(() => {
-    return Array.from(new Set(data.map(d => d.block_reason).filter(Boolean))).sort();
+    return Array.from(new Set(data.map(d => getReasonGroup(d.block_reason)).filter(Boolean))).sort();
   }, [data]);
 
   const cols = [
     { key: "symbol", header: "Symbol", sortable: true },
     { key: "timeframe", header: "TF", sortable: true },
-    { key: "block_reason", header: "Block Reason", sortable: true, render: v => <span className="text-xs text-red-400">{v || '-'}</span> },
+    { key: "block_reason", header: "Block Reason", sortable: true, render: v => <span className="text-xs text-red-400" title={v}>{v ? getReasonGroup(v) : '-'}</span> },
     { key: "total_score", header: "Score", sortable: true, align: "right", render: v => <span className={`font-mono text-sm ${Number(v)>=8?'text-emerald-400':Number(v)>=6?'text-yellow-400':'text-red-400'}`}>{Number(v||0).toFixed(2)}</span> },
     { key: "ml_prob", header: "ML Prob", sortable: true, align: "right", render: v => v != null ? Number(v).toFixed(3) : '-' },
     { key: "trend_score", header: "Trend", align: "right", render: v => v != null ? Number(v).toFixed(2) : '-' },
