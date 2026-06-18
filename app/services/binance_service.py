@@ -13,26 +13,33 @@ from urllib3.util.retry import Retry
 # ─────────────────────────────────────────────
 # VALID SYMBOLS (CACHED)
 # ─────────────────────────────────────────────
+# ✅ CACHE
+_valid_symbols_cache = None
+_valid_symbols_ts = 0
+VALID_SYMBOLS_TTL = 3600  # 1 giờ
 
-# Blacklist: tài sản không phải crypto thuần
-# Tokenized commodities, index, synthetic, v.v.
+# ─────────────────────────────────────────────
+# SYMBOL FILTERS
+# ─────────────────────────────────────────────
+
+# Base assets không muốn trade
 # NOTE: maintain list này khi Binance thêm loại mới
 SYMBOL_BASE_BLACKLIST = {
-    "PAXG",     # tokenized gold
-    "XAUT",     # tokenized gold
-    "BTCDOM",   # BTC dominance index
-    "DEFI",     # DeFi index
-    "BLUEBIRD", # synthetic / index
-    "BSVBULL",  # leveraged token artifact
-    "BSVBEAR",  # leveraged token artifact
-    "ETHBTC",   # cross-pair, not USDT quote nhưng phòng thủ
+    "PAXG",      # tokenized gold
+    "XAUT",      # tokenized gold
+    "BTCDOM",    # BTC dominance index
+    "DEFI",      # DeFi index
+    "BLUEBIRD",  # synthetic / index
+    "BSVBULL",   # leveraged token artifact
+    "BSVBEAR",   # leveraged token artifact
 }
 
-# Cách 1: Định nghĩa rõ ràng là set rỗng nếu không có phần tử nào
-SYMBOL_BLACKLIST = {f"{base}USDT" for base in SYMBOL_BASE_BLACKLIST}.union({
-    # Thêm các symbol cụ thể vào đây dưới dạng set
-    # Ví dụ: "BTCUSDT", "ETHUSDT"
-})
+# Full symbols không muốn trade
+SYMBOL_BLACKLIST = {
+    *(f"{base}USDT" for base in SYMBOL_BASE_BLACKLIST),
+    # thêm full symbol nếu cần:
+    # "FOOUSDT",
+}
 
 
 retry_strategy = Retry(
@@ -45,10 +52,7 @@ adapter = HTTPAdapter(max_retries=retry_strategy)
 _session.mount("https://", adapter)
 _session.mount("http://", adapter)
 
-# ✅ CACHE
-_valid_symbols_cache = None
-_valid_symbols_ts = 0
-VALID_SYMBOLS_TTL = 3600  # 1 giờ
+
 
 
 # ─────────────────────────────────────────────
@@ -99,29 +103,33 @@ def get_valid_symbols():
     symbols = []
 
     for s in data.get("symbols", []):
-        if (
+        if not (
             s.get("contractType") == "PERPETUAL"
             and s.get("quoteAsset") == "USDT"
             and s.get("status") == "TRADING"
             and s.get("underlyingType") == "COIN"
         ):
-            base = s.get("baseAsset", "")
+            continue
 
-            if not base.isalpha() or len(base) > 12:
-                continue
+        base = str(s.get("baseAsset", "")).strip().upper()
+        sym = str(s.get("symbol", "")).strip().upper()
 
-            sym = s["symbol"]
+        if not base.isalpha() or len(base) > 12:
+            continue
 
-            # Blacklist filter
-            if base.upper() in SYMBOL_BASE_BLACKLIST:
-                continue
-            if sym in SYMBOL_BLACKLIST:
-                continue
+        # Blacklist filter
+        if base in SYMBOL_BASE_BLACKLIST:
+            continue
 
-            symbols.append(sym)
+        if sym in SYMBOL_BLACKLIST:
+            continue
+
+        symbols.append(sym)
 
     _valid_symbols_cache = symbols
     _valid_symbols_ts = now
+
+    return _valid_symbols_cache
 
 
 
