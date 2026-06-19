@@ -2,6 +2,11 @@
 Backtest Replay — Signal Loader
 =================================
 Load signals thật từ DB để replay.
+
+IMPORTANT:
+- initial_stop_loss và initial_take_profit phải lấy từ pending_signals
+  vì signals.stop_loss có thể đã bị protection replace mutate.
+- Nếu không có pending link, fallback signals.stop_loss nhưng đánh dấu.
 """
 
 from datetime import datetime
@@ -22,8 +27,11 @@ def load_closed_signals(
     include_manual: bool = False,
 ) -> List[Dict[str, Any]]:
     """
-    Load signals đã đóng (WIN/LOSS/MANUAL) trong khoảng thời gian chỉ định.
-    Resolve entry_time từ pending.filled_at hoặc fallback signals.created_at.
+    Load signals đã đóng (WIN/LOSS/MANUAL).
+    Resolve:
+    - entry_time từ pending.filled_at hoặc fallback signals.created_at
+    - initial_stop_loss từ pending.stop_loss gốc (trước protection mutate)
+    - initial_take_profit từ pending.take_profit gốc
     """
     date_from = ensure_utc(date_from)
     date_to = ensure_utc(date_to)
@@ -55,22 +63,31 @@ def load_closed_signals(
         signals = query.all()
 
         for sig in signals:
-            entry_time = _resolve_entry_time(db, sig)
+            entry_time, initial_sl, initial_tp, sl_source = _resolve_initial_params(db, sig)
 
             entry_price = float(sig.entry_price or 0)
-            stop_loss = float(sig.stop_loss or 0)
 
-            if entry_price <= 0 or stop_loss <= 0:
+            if entry_price <= 0 or initial_sl <= 0:
                 continue
 
-            r_value = abs(entry_price - stop_loss)
+            r_value = abs(entry_price - initial_sl)
             if r_value <= 0:
+                continue
+
+            # Validate: initial stop phải ở phía risk đúng
+            if sig.direction == "LONG" and initial_sl >= entry_price:
+                continue
+            if sig.direction == "SHORT" and initial_sl <= entry_price:
                 continue
 
             if sig.direction == "LONG":
                 tp_2r = entry_price + 2 * r_value
             else:
                 tp_2r = entry_price - 2 * r_value
+
+            # Nếu có TP gốc từ pending thì dùng, không thì tính từ R
+            if initial_tp and initial_tp > 0:
+                tp_2r = initial_tp
 
             results.append({
                 "signal_id": sig.id,
@@ -81,9 +98,10 @@ def load_closed_signals(
                 "direction": sig.direction,
                 "entry_time": entry_time.isoformat(),
                 "entry_price": entry_price,
-                "initial_stop_loss": stop_loss,
+                "initial_stop_loss": round(initial_sl, 8),
                 "tp_2r_price": round(tp_2r, 8),
                 "r_value_abs": round(r_value, 8),
+                "sl_source": sl_source,
                 "actual_exit_time": sig.exit_time.isoformat() if sig.exit_time else None,
                 "actual_exit_price": float(sig.exit_price) if sig.exit_price else None,
                 "actual_exit_reason": sig.exit_reason,
@@ -94,15 +112,61 @@ def load_closed_signals(
     return results
 
 
-def _resolve_entry_time(db, signal: Signal) -> datetime:
+def _resolve_initial_params(db, signal: Signal):
     """
-    Ưu tiên pending.filled_at, fallback signals.created_at.
+    Resolve:
+    1. entry_time: pending.filled_at > signals.created_at
+    2. initial_stop_loss: pending gốc (chưa bị protection mutate)
+    3. initial_take_profit: pending gốc
+    4. sl_source: "pending" hoặc "signal_fallback"
+
+    IMPORTANT:
+    - signals.stop_loss có thể đã bị dời bởi protection replace
+    - pending_signals giữ giá trị ban đầu (hoặc sau reprice nhưng trước protection)
     """
     pending = db.query(PendingSignal).filter(
         PendingSignal.signal_id == signal.id
     ).order_by(PendingSignal.created_at.desc()).first()
 
+    # Entry time
     if pending and pending.filled_at:
-        return ensure_utc(pending.filled_at)
+        entry_time = ensure_utc(pending.filled_at)
+    else:
+        entry_time = ensure_utc(signal.created_at)
 
-    return ensure_utc(signal.created_at)
+    # Initial stop/tp từ pending
+    if pending:
+        # Lấy từ pending — đây là giá trị trước protection replace
+        # Vì protection replace chỉ sửa signals.stop_loss, không sửa pending.stop_loss gốc
+        #
+        # NHƯNG: nếu pending.stop_loss cũng đã bị code cũ update
+        # thì ta cần check thêm
+        pending_sl = float(pending.stop_loss or 0)
+        pending_tp = float(pending.take_profit or 0)
+        entry_price = float(signal.entry_price or 0)
+
+        # Validate pending stop ở phía risk đúng
+        if signal.direction == "LONG" and pending_sl > 0 and pending_sl < entry_price:
+            return entry_time, pending_sl, pending_tp, "pending"
+
+        if signal.direction == "SHORT" and pending_sl > 0 and pending_sl > entry_price:
+            return entry_time, pending_sl, pending_tp, "pending"
+
+        # Nếu pending stop cũng đã mutate (hiếm), thử tìm từ market_context
+        ctx = signal.market_context or {}
+        plan = ctx.get("plan", {})
+        plan_sl = float(plan.get("initial_stop_loss", 0) or 0)
+        plan_tp = float(plan.get("initial_take_profit", 0) or 0)
+
+        if plan_sl > 0:
+            return entry_time, plan_sl, plan_tp, "market_context_plan"
+
+        # Cuối cùng fallback pending dù sai
+        if pending_sl > 0:
+            return entry_time, pending_sl, pending_tp, "pending_unvalidated"
+
+    # Fallback signal (có thể sai nếu đã bị protection mutate)
+    sig_sl = float(signal.stop_loss or 0)
+    sig_tp = float(signal.take_profit or 0)
+
+    return entry_time, sig_sl, sig_tp, "signal_fallback"

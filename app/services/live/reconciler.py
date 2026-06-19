@@ -558,6 +558,10 @@ def _create_signal_from_pending(db, pending: PendingSignal, snapshot: SymbolSnap
                 "sl_order_id": pending.sl_order_id,
                 "tp_order_id": pending.tp_order_id,
             }
+            "plan": {
+                "initial_stop_loss": float(pending.stop_loss),
+                "initial_take_profit": float(pending.take_profit),
+            }
         },
         trading_mode=mode.value,
     )
