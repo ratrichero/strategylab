@@ -48,6 +48,7 @@ from app.api.dashboard.config_api import router as dash_config_router
 from app.api.dashboard.performance_api import router as dash_perf_router
 from app.api.dashboard.pending_api import router as dash_pending_router
 from app.api.price_feed_status import router as price_feed_status_router
+from app.api.backtest_replay import router as backtest_replay_router
 
 from asyncio import Queue as AsyncQueue
 import logging
@@ -427,7 +428,7 @@ for r in [
     retrain_router, signal_analysis_router, system_router,
     dash_signals_router, dash_research_router, dash_analysis_router,
     dash_edge_router, dash_config_router, dash_perf_router,
-    dash_pending_router, price_feed_status_router, account_router,
+    dash_pending_router, price_feed_status_router, account_router, backtest_replay_router,
 ]:
     app.include_router(r)
 

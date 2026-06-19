@@ -15,7 +15,8 @@ import { ManualBehaviorPage } from './pages/ManualBehaviorPage';
 import { ScanTestPage } from './pages/ScanTestPage';
 import { QueryLab } from './pages/QueryLabPage';
 import { SettingsPage } from './pages/SettingsPage';
-import { MarketPage, EnginePage, BlockedPage, SimulationPage } from './pages/PlaceholderPages';
+import { MarketPage, EnginePage, BlockedPage } from './pages/PlaceholderPages';
+import { SimulationPage } from './pages/SimulationPage';
 
 export default function App() {
   const isMobile = useIsMobile();
