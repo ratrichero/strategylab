@@ -12,6 +12,7 @@ import { Indicators } from './pages/IndicatorsPage';
 import { PendingSignalsPage as PendingSignals } from './pages/PendingSignalsPage';
 import { AccountPage } from './pages/AccountPage';
 import { ManualBehaviorPage } from './pages/ManualBehaviorPage';
+import { ScanTestPage } from './pages/ScanTestPage';
 import { QueryLab } from './pages/QueryLabPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { MarketPage, EnginePage, BlockedPage, SimulationPage } from './pages/PlaceholderPages';
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/manual-behavior" element={<ManualBehaviorPage />} />
           <Route path="/engine" element={<EnginePage />} />
           <Route path="/blocked" element={<BlockedPage />} />
+          <Route path="/scan-test" element={<ScanTestPage />} />
           <Route path="/simulation" element={<SimulationPage />} />
           <Route path="/query-lab" element={<QueryLab />} />
           <Route path="/settings" element={<SettingsPage />} />

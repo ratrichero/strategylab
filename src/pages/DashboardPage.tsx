@@ -668,8 +668,8 @@ export function Dashboard() {
 
       {/* RECENT (UNFILTERED) */}
       <Card>
-        <CardHeader title="Recent Trades" subtitle={`${filteredClosed.length} closed trades • By exit time`} />
-        <DataTable columns={recentColumns} data={filteredClosed} pageSize={10} emptyMessage="No closed trades today" />
+        <CardHeader title="Recent Trades" subtitle={`${metricClosed.length} closed trades • By exit time`} />
+        <DataTable columns={recentColumns} data={metricClosed} pageSize={10} emptyMessage="No closed trades today" />
       </Card>
 
       {/* HEATMAP (UNFILTERED) */}
