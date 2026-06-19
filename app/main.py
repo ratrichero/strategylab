@@ -1,3 +1,4 @@
+import app.core.env_bootstrap
 import os
 import asyncio
 import threading
@@ -10,14 +11,19 @@ from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.config import TELEGRAM_TOKEN
-from app.core.trading_mode import get_trading_mode, get_current_mode, TradingMode
+from app.core.trading_mode import get_current_mode, TradingMode
 from app.core.time_utils import utc_now, vn_now_str
+from app.core.bg_runner import (
+    clear_shutdown,
+    mark_shutdown,
+    is_shutting_down,
+    start_daemon_job,
+)
 from app.services.price_feed import (
     start_price_feed, stop_price_feed,
     get_price_feed, add_price_callback
 )
-from app.services.config_service import get_runtime_config
+from app.services.config_service import get_runtime_config, get_connection_value
 from app.api.account import router as account_router
 
 # ── Routers ───────────────────────────────────────────────────
@@ -42,21 +48,6 @@ from app.api.dashboard.config_api import router as dash_config_router
 from app.api.dashboard.performance_api import router as dash_perf_router
 from app.api.dashboard.pending_api import router as dash_pending_router
 from app.api.price_feed_status import router as price_feed_status_router
-
-from app.services.strategy_debug_scanner import run_debug_scan
-async def debug_scan_loop():
-    """
-    Chạy debug scan mỗi 4 giờ.
-    Ghi CSV, không đụng DB.
-    """
-    while True:
-        try:
-            cfg = get_runtime_config()
-            if cfg.get("ENABLE_SCHEDULER", True):
-                await asyncio.to_thread(run_debug_scan)
-        except Exception as e:
-            print(f"[DEBUG SCAN ERROR] {e}")
-        await asyncio.sleep(1 * 3600)  # mỗi 1 giờ
 
 from asyncio import Queue as AsyncQueue
 import logging
@@ -84,7 +75,10 @@ def on_price_update(price_map: dict):
     if _main_loop is None or _main_loop.is_closed():
         return
 
-    # LIVE mode: price callback không trigger monitor
+    if is_shutting_down():
+        return
+
+    # LIVE mode: price callback không trigger paper monitor
     if get_current_mode() != TradingMode.PAPER:
         return
 
@@ -111,7 +105,7 @@ async def _process_price_update_paper(price_map: dict):
         return
 
     try:
-        await asyncio.to_thread(_run_paper_monitor, price_map)
+        start_daemon_job("paper_monitor", _run_paper_monitor, price_map)
     except Exception as e:
         print(f"[PAPER MONITOR ERROR] {e}")
         traceback.print_exc()
@@ -150,16 +144,31 @@ def _run_paper_monitor(price_map: dict):
             _monitor_running = False
 
 
+# ── Scan helpers ─────────────────────────────────────────────
+
+def _run_scan_job(timeframe: str):
+    print(f"🚀 [SCAN] {timeframe} | {vn_now_str()}")
+    from app.services.signal_service import run_market_scan_single_tf
+    run_market_scan_single_tf(timeframe)
+    print(f"✅ [SCAN DONE] {timeframe} | {vn_now_str()}")
+
+
 # ── Background Tasks ─────────────────────────────────────────
 
 async def scan_worker():
     while True:
         timeframe = await scan_queue.get()
         try:
-            print(f"🚀 [SCAN] {timeframe} | {vn_now_str()}")
-            from app.services.signal_service import run_market_scan_single_tf
-            await asyncio.to_thread(run_market_scan_single_tf, timeframe)
-            print(f"✅ [SCAN DONE] {timeframe} | {vn_now_str()}")
+            while True:
+                if is_shutting_down():
+                    break
+
+                started = start_daemon_job("scan_worker", _run_scan_job, timeframe)
+                if started:
+                    break
+
+                await asyncio.sleep(0.5)
+
         except Exception as e:
             print(f"[SCAN ERROR] {e}")
             traceback.print_exc()
@@ -175,11 +184,10 @@ async def scheduler_loop():
             await asyncio.sleep(5)
             continue
 
-        # Dùng UTC để schedule — không dùng local time
         now = utc_now()
 
         # LIVE scheduler pause gate:
-        # nếu saturated thì không enqueue scan auto
+        # nếu saturated và local queue đã đủ reserve thì không enqueue scan auto
         if get_current_mode() != TradingMode.PAPER:
             try:
                 from app.db.session import SessionLocal
@@ -215,7 +223,9 @@ async def heartbeat_loop():
     while True:
         await asyncio.sleep(30)
         try:
-            await asyncio.to_thread(update_heartbeat)
+            if is_shutting_down():
+                return
+            start_daemon_job("heartbeat", update_heartbeat)
         except Exception as e:
             print(f"[HEARTBEAT] {e}")
 
@@ -224,8 +234,10 @@ async def mv_refresh_loop():
     while True:
         await asyncio.sleep(600)
         try:
+            if is_shutting_down():
+                return
             from app.services.mv_refresh import _do_refresh
-            await asyncio.to_thread(_do_refresh)
+            start_daemon_job("mv_refresh", _do_refresh)
         except Exception as e:
             print(f"[MV REFRESH] {e}")
 
@@ -235,27 +247,28 @@ async def report_scheduler_loop():
     while True:
         await asyncio.sleep(60)
         try:
-            # Dùng VN time để check giờ gửi report
-            vn = vn_now_str()
+            if is_shutting_down():
+                return
+
             from app.core.time_utils import vn_now
             now_vn = vn_now()
 
             if now_vn.hour == 8 and now_vn.minute == 0 and _ld != now_vn.date():
                 _ld = now_vn.date()
                 from app.services.report_service import send_daily
-                await asyncio.to_thread(send_daily)
+                start_daemon_job("report_daily", send_daily)
 
             if (now_vn.weekday() == 0 and now_vn.hour == 8
                     and now_vn.minute == 0 and _lw != now_vn.date()):
                 _lw = now_vn.date()
                 from app.services.report_service import send_weekly
-                await asyncio.to_thread(send_weekly)
+                start_daemon_job("report_weekly", send_weekly)
 
             if (now_vn.day == 1 and now_vn.hour == 8
                     and now_vn.minute == 0 and _lm != now_vn.month):
                 _lm = now_vn.month
                 from app.services.report_service import send_monthly
-                await asyncio.to_thread(send_monthly)
+                start_daemon_job("report_monthly", send_monthly)
 
         except Exception as e:
             print(f"[REPORT] {e}")
@@ -265,6 +278,9 @@ async def report_scheduler_loop():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _main_loop
+    
+    clear_shutdown()
 
     # 1. FAIL-FAST: Kiểm tra schema trước tiên
     from app.services.schema_guard import assert_schema_ok
@@ -276,9 +292,6 @@ async def lifespan(app: FastAPI):
         print(f"❌ CRITICAL ERROR: {e}")
         raise e
 
-    global _main_loop
-
-    # Set main loop TRƯỚC KHI start price feed
     _main_loop = asyncio.get_running_loop()
 
     print("=" * 60)
@@ -311,7 +324,7 @@ async def lifespan(app: FastAPI):
         if cfg.get("ENABLE_SCHEDULER", True):
             print("  ⚠️ LIVE scheduler is ENABLED — scanner may create real pending/orders automatically")
 
-    # Price Feed — đăng ký callback TRƯỚC khi start
+    # Price Feed
     print("\n📡 Price Feed...")
     add_price_callback(on_price_update)
     start_price_feed()
@@ -322,7 +335,7 @@ async def lifespan(app: FastAPI):
     else:
         print("⚠️ Feed: timeout, running in fallback mode")
 
-    # Background tasks — common
+    # Background tasks
     print("⚙️  Background tasks...")
     tasks = [
         asyncio.create_task(heartbeat_loop(),        name="heartbeat"),
@@ -330,33 +343,41 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(scan_worker(),           name="scan_worker"),
         asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
         asyncio.create_task(report_scheduler_loop(), name="report"),
-        #asyncio.create_task(debug_scan_loop(),       name="debug_scan"),
     ]
 
-    # LIVE mode: thêm live loops riêng
     if mode != TradingMode.PAPER:
         from app.services.live.runtime import (
             live_intent_loop,
             live_reconcile_loop,
             live_advisory_loop,
         )
-        tasks.append(asyncio.create_task(live_intent_loop(),     name="live_intent"))
-        tasks.append(asyncio.create_task(live_reconcile_loop(),  name="live_reconcile"))
-        tasks.append(asyncio.create_task(live_advisory_loop(),   name="live_advisory"))
+        tasks.append(asyncio.create_task(live_intent_loop(),    name="live_intent"))
+        tasks.append(asyncio.create_task(live_reconcile_loop(), name="live_reconcile"))
+        tasks.append(asyncio.create_task(live_advisory_loop(),  name="live_advisory"))
         print("  ✅ LIVE loops registered (intent + reconcile + advisory)")
     else:
         print("  📋 PAPER mode — using price callback monitor")
 
+    # Telegram bot — resolve token/runtime config here
     def start_bot():
         try:
+            token = (
+                get_connection_value("TELEGRAM_BOT_TOKEN", "")
+                or get_connection_value("TELEGRAM_TOKEN", "")
+            )
+
+            if not token:
+                print("🤖 Bot disabled: no telegram token configured")
+                return
+
+            print("🤖 Bot start requested")
             from app.bot.telegram_bot import run_bot
-            #run_bot(TELEGRAM_TOKEN)
+            run_bot(token)
         except Exception as e:
             print(f"[BOT] {e}")
 
-    #threading.Thread(target=start_bot, daemon=True, name="Bot").start()
+    threading.Thread(target=start_bot, daemon=True, name="Bot").start()
 
-    print("🤖 Bot started")
     print("✅ All systems GO")
     print("=" * 60)
 
@@ -364,15 +385,22 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     print("\n🛑 Shutting down...")
+    mark_shutdown()
+
+    _main_loop = None
+
     stop_price_feed()
+
     for t in tasks:
         t.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+
     try:
         from app.db.async_pool import close_async_pool
         await close_async_pool()
     except Exception:
         pass
+
     print("✅ Shutdown complete")
 
 

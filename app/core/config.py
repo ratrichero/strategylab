@@ -1,16 +1,13 @@
-from dotenv import load_dotenv
-
-load_dotenv()
-
 """
 Core Config
 ===========
 - BINANCE_BASE: constant cho binance_service.py
-- Getter functions: dùng cho runtime override
-- Backward-compatible constants: để code cũ không vỡ
+- Getter functions: dùng cho runtime override khi cần
+- Backward-compatible constants: chỉ đọc env thuần để tránh circular import
 """
 
 import os
+import app.core.env_bootstrap
 
 # ── Constant giữ nguyên ──────────────────────────────────────
 BINANCE_BASE = os.getenv("BINANCE_BASE", "https://fapi.binance.com")
@@ -22,6 +19,11 @@ BINANCE_BASE = os.getenv("BINANCE_BASE", "https://fapi.binance.com")
 # ── Getter functions ─────────────────────────────────────────
 
 def get_telegram_token() -> str:
+    """
+    Runtime getter:
+    Có thể dùng DB override qua config_service nếu cần.
+    Không nên gọi ở import-time của module nền tảng.
+    """
     from app.services.config_service import get_connection_value
     return (
         get_connection_value("TELEGRAM_BOT_TOKEN", "")
@@ -30,7 +32,10 @@ def get_telegram_token() -> str:
 
 
 def get_telegram_chat_id() -> str:
-    # Chat ID hiện chưa override qua DB, cứ giữ env
+    """
+    Hiện giữ env-only như cũ.
+    Nếu sau này cần override qua DB thì nâng cấp sau.
+    """
     return os.getenv("TELEGRAM_CHAT_ID", "")
 
 
@@ -45,11 +50,12 @@ def get_gemini_api_key() -> str:
 
 
 # ── Backward-compatible constants ────────────────────────────
-# Để các file cũ import kiểu:
-#   from app.core.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
-# vẫn không bị vỡ
+# QUAN TRỌNG:
+# - Chỉ đọc ENV thuần
+# - KHÔNG gọi get_connection_value / DB ở import-time
+# - Mục tiêu: tránh circular import cho các module cũ
 
-TELEGRAM_TOKEN   = get_telegram_token()
-TELEGRAM_CHAT_ID = get_telegram_chat_id()
-GROQ_API_KEY     = get_groq_api_key()
-GEMINI_API_KEY   = get_gemini_api_key()
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
+GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")

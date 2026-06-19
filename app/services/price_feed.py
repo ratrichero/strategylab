@@ -1,3 +1,4 @@
+import app.core.env_bootstrap
 import asyncio
 import json
 import time

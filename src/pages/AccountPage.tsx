@@ -79,6 +79,8 @@ export function AccountPage() {
   const [hStartDate, setHStartDate] = useState("");
   const [hEndDate, setHEndDate] = useState("");
   const [incomeType, setIncomeType] = useState("all");
+  const [incStartDate, setIncStartDate] = useState("");
+  const [incEndDate, setIncEndDate] = useState("");
 
   const currentTarget = tradingMode?.mode === "TESTNET" ? "testnet" : "live";
 
@@ -154,7 +156,21 @@ export function AccountPage() {
     });
   }, [tradeHistory, hSymbol, hSide, hStartDate, hEndDate]);
 
-  const filteredIncome = useMemo(() => incomeHistory.filter(i => incomeType === "all" || i.incomeType === incomeType), [incomeHistory, incomeType]);
+  const filteredIncome = useMemo(() => {
+    return incomeHistory.filter(i => {
+      if (incomeType !== "all" && i.incomeType !== incomeType) return false;
+      if (incStartDate || incEndDate) {
+        const ts = Number(i.time || 0);
+        if (!ts) return false;
+        const VN_MS = 7 * 3600 * 1000;
+        const vn = new Date(ts + VN_MS);
+        const vnStr = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,"0")}-${String(vn.getUTCDate()).padStart(2,"0")}`;
+        if (incStartDate && vnStr < incStartDate) return false;
+        if (incEndDate && vnStr > incEndDate) return false;
+      }
+      return true;
+    });
+  }, [incomeHistory, incomeType, incStartDate, incEndDate]);
   const incomeTypes = useMemo(() => Array.from(new Set(incomeHistory.map(i => i.incomeType).filter(Boolean))).sort(), [incomeHistory]);
   const tradeStats = useMemo(() => {
     if (!filteredTrades.length) return { total: 0, volume: 0, commission: 0, pnl: 0 };
@@ -259,7 +275,14 @@ export function AccountPage() {
         </div>)}
 
         {tab === "income" && (<div className="space-y-6">
-          <Card><div className="flex items-center gap-3 mb-3"><span className="text-sm font-semibold text-white">Filter</span><Select value={incomeType} onChange={setIncomeType} options={[{ value: "all", label: "All Types" }, ...incomeTypes.map(t => ({ value: t, label: t }))]} className="w-48" /></div></Card>
+          <Card><div className="flex items-center gap-3 mb-3"><span className="text-sm font-semibold text-white">Filter</span></div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Select label="Type" value={incomeType} onChange={setIncomeType} options={[{ value: "all", label: "All Types" }, ...incomeTypes.map(t => ({ value: t, label: t }))]} />
+              <Input type="date" label="Start" value={incStartDate} onChange={e => setIncStartDate(e.target.value)} />
+              <Input type="date" label="End" value={incEndDate} onChange={e => setIncEndDate(e.target.value)} />
+              <div className="flex items-end"><Button variant="ghost" onClick={() => { setIncomeType("all"); setIncStartDate(""); setIncEndDate(""); }}>Clear</Button></div>
+            </div>
+          </Card>
           {incomeStats.length > 0 && (<div className="grid grid-cols-2 md:grid-cols-4 gap-3">{incomeStats.slice(0, 8).map(({ type, total }) => (<Card key={type} className="p-3 text-center"><p className="text-xs text-slate-400">{type}</p><p className={`text-lg font-bold font-mono ${pnlClr(total)}`}>{total >= 0 ? "+" : ""}${$n(total, 4)}</p></Card>))}</div>)}
           <Card><CardHeader title="Income History" subtitle={`${filteredIncome.length} records`} /><DataTable columns={incomeColumns} data={[...filteredIncome].sort((a, b) => Number(b.time) - Number(a.time))} pageSize={20} emptyMessage="No income records" /></Card>
         </div>)}

@@ -1,8 +1,12 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, declarative_base
 import os
+import app.core.env_bootstrap
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is empty after env bootstrap")
 
 engine = create_engine(
     DATABASE_URL,

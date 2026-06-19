@@ -5,7 +5,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Zap, ExternalLink, Maximize2, Minimize2, Settings2 } from 'lucide-react';
 
-const DEFAULT_URL = '/scanner/';
+const DEFAULT_URL = '/scanner/index.html';
 
 export function ScanTestPage() {
   const [scannerUrl, setScannerUrl] = useState(() => {

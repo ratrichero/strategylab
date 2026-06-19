@@ -437,7 +437,8 @@ def run_market_scan_multi_tf():
     now = utc_now()
 
     with SessionLocal() as db:
-        # LIVE scan pause gate
+        # LIVE scan pause gate:
+        # nếu saturated và local queue đã đủ reserve thì dừng sớm
         if get_current_mode() != TradingMode.PAPER:
             c_config = int(runtime_cfg.get("MAX_OPEN_TRADES", 10) or 10)
             cap = get_capacity_snapshot(db, c_config)
@@ -445,7 +446,8 @@ def run_market_scan_multi_tf():
             if should_pause_scan(cap):
                 print(
                     f"⏸️ [SCAN PAUSED] LIVE saturated "
-                    f"| open={cap.c_open} new={cap.c_new} total={cap.total_risk}/{cap.max_risk}"
+                    f"| open={cap.c_open} new={cap.c_new} local={cap.c_local} "
+                    f"| total={cap.total_risk}/{cap.max_risk}"
                 )
                 return
 
@@ -466,7 +468,7 @@ def run_market_scan_single_tf(timeframe):
 
     with SessionLocal() as db:
         # LIVE scan pause gate:
-        # nếu saturated thì dừng sớm, không tạo scan_run/debug/pending
+        # nếu saturated và local queue đã đủ reserve thì dừng sớm
         if get_current_mode() != TradingMode.PAPER:
             c_config = int(runtime_cfg.get("MAX_OPEN_TRADES", 10) or 10)
             cap = get_capacity_snapshot(db, c_config)
@@ -474,7 +476,8 @@ def run_market_scan_single_tf(timeframe):
             if should_pause_scan(cap):
                 print(
                     f"⏸️ [SCAN PAUSED] LIVE saturated "
-                    f"| open={cap.c_open} new={cap.c_new} total={cap.total_risk}/{cap.max_risk}"
+                    f"| open={cap.c_open} new={cap.c_new} local={cap.c_local} "
+                    f"| total={cap.total_risk}/{cap.max_risk}"
                 )
                 return {
                     "timeframe": timeframe,
@@ -482,6 +485,7 @@ def run_market_scan_single_tf(timeframe):
                     "reason": "LIVE_CAPACITY_PAUSED",
                     "open": cap.c_open,
                     "new": cap.c_new,
+                    "local": cap.c_local,
                     "total": cap.total_risk,
                     "max_risk": cap.max_risk,
                 }

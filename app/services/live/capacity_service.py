@@ -9,7 +9,8 @@ Definitions:
 - C_NEW    = distinct symbols with PendingSignal:
              status=WAIT, exchange_order_id IS NOT NULL,
              executed_qty <= 0, exchange chưa terminal
-- C_LOCAL  = pending local chưa place -> KHÔNG tính risk cap
+- C_LOCAL  = pending local chưa place -> KHÔNG tính hard risk cap,
+             nhưng dùng để quyết định pause scan hay chưa.
 
 Rules:
 - Hard risk ceiling:
@@ -19,9 +20,8 @@ Rules:
     OR
     C_OPEN + C_NEW >= C_CONFIG + 2
 - Pause scan when:
-    C_OPEN >= C_CONFIG
-    OR
-    C_OPEN + C_NEW >= C_CONFIG + 2
+    (C_OPEN >= C_CONFIG OR C_OPEN + C_NEW >= C_CONFIG + 2)
+    AND C_LOCAL >= LOCAL_QUEUE_RESERVE
 - Cleanup when:
     C_OPEN + C_NEW > C_CONFIG + 2
 
@@ -38,6 +38,7 @@ from app.db.models import Signal, PendingSignal
 
 
 TERMINAL_EXCHANGE_STATUSES = {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}
+LOCAL_QUEUE_RESERVE = 6
 
 
 def is_exchange_terminal_status(status: str) -> bool:
@@ -82,8 +83,10 @@ class CapacitySnapshot:
     c_config: int
     c_open: int
     c_new: int
+    c_local: int
     total_risk: int
     max_risk: int
+    local_queue_reserve: int = LOCAL_QUEUE_RESERVE
 
     @property
     def place_blocked(self) -> bool:
@@ -91,7 +94,8 @@ class CapacitySnapshot:
 
     @property
     def scan_paused(self) -> bool:
-        return self.c_open >= self.c_config or self.total_risk >= self.max_risk
+        saturated = (self.c_open >= self.c_config) or (self.total_risk >= self.max_risk)
+        return saturated and self.c_local >= self.local_queue_reserve
 
     @property
     def cleanup_needed(self) -> bool:
@@ -131,16 +135,27 @@ def get_new_zero_fill_symbols(db) -> Set[str]:
     return {row[0] for row in rows if row and row[0]}
 
 
+def get_local_queue_symbols(db) -> Set[str]:
+    rows = db.query(PendingSignal.symbol).filter(
+        PendingSignal.status == "WAIT",
+        PendingSignal.exchange_order_id == None  # noqa: E711
+    ).distinct().all()
+
+    return {row[0] for row in rows if row and row[0]}
+
+
 # ============================================================
 # New API
 # ============================================================
 
-def get_capacity_snapshot(db, c_config: int) -> CapacitySnapshot:
+def get_capacity_snapshot(db, c_config: int, local_queue_reserve: int = LOCAL_QUEUE_RESERVE) -> CapacitySnapshot:
     open_symbols = get_open_signal_symbols(db)
     new_symbols = get_new_zero_fill_symbols(db)
+    local_symbols = get_local_queue_symbols(db)
 
     c_open = len(open_symbols)
     c_new = len(new_symbols)
+    c_local = len(local_symbols)
     total_risk = c_open + c_new
     max_risk = int(c_config) + 2
 
@@ -148,8 +163,10 @@ def get_capacity_snapshot(db, c_config: int) -> CapacitySnapshot:
         c_config=int(c_config),
         c_open=c_open,
         c_new=c_new,
+        c_local=c_local,
         total_risk=total_risk,
         max_risk=max_risk,
+        local_queue_reserve=int(local_queue_reserve),
     )
 
 
