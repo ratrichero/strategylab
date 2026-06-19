@@ -1013,6 +1013,14 @@ def place_close_position_exit_orders(symbol: str, direction: str, stop_loss: flo
 
 
 def get_algo_order_status(algo_id: str) -> Dict:
+    """
+    Single algo detail query.
+
+    NOTE:
+    - Không dùng làm source of truth cho active protection nữa.
+    - openAlgoOrders(symbol) mới là source of truth cho lệnh đang mở.
+    - Hàm này chỉ giữ lại cho forensic/debug đặc biệt.
+    """
     mode = get_trading_mode()
     if mode.is_paper:
         return {
@@ -1037,12 +1045,31 @@ def get_algo_order_status(algo_id: str) -> Dict:
             "raw": data,
         }
     except Exception as e:
+        err = str(e)
+
+        # silent missing / false-negative style responses
+        if "-2013" in err or "Order does not exist" in err:
+            return {
+                "algo_status": "MISSING",
+                "actual_order_id": None,
+                "actual_price": None,
+                "actual_qty": None,
+                "trigger_price": None,
+                "working_type": None,
+                "trigger_time": None,
+                "raw": None,
+            }
+
         print(f"[EXEC] get_algo_order_status error algoId={algo_id}: {e}")
         return {
             "algo_status": "UNKNOWN",
             "actual_order_id": None,
             "actual_price": None,
             "actual_qty": None,
+            "trigger_price": None,
+            "working_type": None,
+            "trigger_time": None,
+            "raw": None,
         }
 
 

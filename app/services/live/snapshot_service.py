@@ -3,15 +3,11 @@ Snapshot Service — LIVE
 =======================
 Lấy exchange snapshot chuẩn hóa cho reconciler.
 
-OPTIMIZATIONS:
-- Algo order status chỉ query khi:
-    + có sl_order_id / tp_order_id trong pending
-    + VÀ pending đã có fill (executed_qty > 0)
-  Nếu pending chưa fill, không cần query algo vì chưa place protection.
-
-- Open algo orders query cho symbol chỉ khi có fill.
-
-- Entry order status chỉ query khi có exchange_order_id.
+RULE:
+- Với position / protection đang ACTIVE:
+    open algo orders là source of truth
+- Không query individual algo detail mỗi vòng nữa
+  vì endpoint single algo status đang cho false negative (-2013)
 """
 
 from dataclasses import dataclass
@@ -22,7 +18,6 @@ from app.services.execution_service import (
     get_entry_order_status,
     get_open_algo_orders,
     get_open_orders,
-    get_algo_order_status,
     get_position_info_by_symbol,
 )
 
@@ -72,21 +67,27 @@ class SymbolSnapshot:
     error: Optional[str] = None
 
 
-def _algo_from_status(algo_id: Optional[str]) -> Optional[AlgoSnapshot]:
-    if not algo_id:
+def _algo_from_open_order(row: Optional[Dict]) -> Optional[AlgoSnapshot]:
+    if not row:
         return None
 
-    data = get_algo_order_status(algo_id)
     return AlgoSnapshot(
-        algo_id=str(algo_id),
-        algo_status=data.get("algo_status"),
-        actual_order_id=data.get("actual_order_id"),
-        actual_price=data.get("actual_price"),
-        actual_qty=data.get("actual_qty"),
-        trigger_price=data.get("trigger_price"),
-        trigger_time=data.get("trigger_time"),
-        raw=data.get("raw"),
+        algo_id=str(row.get("algoId", "")) if row.get("algoId") is not None else None,
+        algo_status=row.get("algoStatus"),
+        actual_order_id=row.get("actualOrderId"),
+        actual_price=float(row.get("actualPrice", 0) or 0) if row.get("actualPrice") is not None else None,
+        actual_qty=float(row.get("actualQty", 0) or 0) if row.get("actualQty") is not None else None,
+        trigger_price=float(row.get("triggerPrice", 0) or 0) if row.get("triggerPrice") is not None else None,
+        trigger_time=row.get("triggerTime"),
+        raw=row,
     )
+
+
+def _find_open_algo_by_type(open_algo_orders: List[Dict], order_type: str) -> Optional[Dict]:
+    for o in open_algo_orders or []:
+        if str(o.get("orderType", "")).upper() == order_type.upper():
+            return o
+    return None
 
 
 _EMPTY_ENTRY = EntrySnapshot(
@@ -110,22 +111,11 @@ _EMPTY_POSITION = PositionSnapshot(
 def build_symbol_snapshot(
     symbol: str,
     pending=None,
-    need_algo_detail: bool = True,
+    need_algo_detail: bool = True,  # giữ param cho backward compatibility
 ) -> SymbolSnapshot:
-    """
-    Build exchange snapshot for 1 symbol.
-
-    Args:
-        symbol: trading pair
-        pending: PendingSignal row (optional)
-        need_algo_detail: nếu False, skip individual algo order query
-            (dùng khi chưa cần chi tiết SL/TP status)
-    """
     try:
         order_id = getattr(pending, "exchange_order_id", None) if pending else None
-        has_fill = float(getattr(pending, "executed_qty", 0) or 0) > 0
 
-        # ── Entry order status ───────────────────────────
         if order_id:
             entry_info = get_entry_order_status(symbol, order_id)
         else:
@@ -136,35 +126,14 @@ def build_symbol_snapshot(
                 "orig_qty": 0.0,
             }
 
-        # ── Position ─────────────────────────────────────
         position = get_position_info_by_symbol(symbol)
-
-        # ── Normal open orders ───────────────────────────
         open_normal_orders = get_open_orders(symbol)
 
-        # ── Algo orders ──────────────────────────────────
-        # Chỉ query open algo khi đã có fill hoặc có position
-        if has_fill or position:
-            open_algo_orders = get_open_algo_orders(symbol)
-        else:
-            open_algo_orders = []
+        # Chỉ cần open algo orders là đủ cho active protection truth
+        open_algo_orders = get_open_algo_orders(symbol)
 
-        # ── Individual algo status ───────────────────────
-        # Chỉ query khi:
-        # 1) need_algo_detail = True
-        # 2) pending có fill (protection đã place)
-        # 3) pending có sl/tp order id
-        sl_algo = None
-        tp_algo = None
-
-        if need_algo_detail and has_fill and pending:
-            sl_id = getattr(pending, "sl_order_id", None)
-            tp_id = getattr(pending, "tp_order_id", None)
-
-            if sl_id:
-                sl_algo = _algo_from_status(sl_id)
-            if tp_id:
-                tp_algo = _algo_from_status(tp_id)
+        sl_open = _find_open_algo_by_type(open_algo_orders, "STOP_MARKET")
+        tp_open = _find_open_algo_by_type(open_algo_orders, "TAKE_PROFIT_MARKET")
 
         return SymbolSnapshot(
             symbol=symbol,
@@ -189,8 +158,8 @@ def build_symbol_snapshot(
             ),
             open_normal_orders=open_normal_orders or [],
             open_algo_orders=open_algo_orders or [],
-            sl_algo=sl_algo,
-            tp_algo=tp_algo,
+            sl_algo=_algo_from_open_order(sl_open),
+            tp_algo=_algo_from_open_order(tp_open),
             snapshot_time=utc_now(),
             ok=True,
             error=None,
