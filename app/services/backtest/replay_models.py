@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 # ============================================================
 
 class ReplayRunRequest(BaseModel):
-    date_from: Optional[str] = None
-    date_to: Optional[str] = None
+    date_from: Optional[datetime] = None
+    date_to: Optional[datetime] = None
     timeframes: List[str] = Field(default_factory=lambda: ["15m", "1h", "4h"])
     symbols: List[str] = Field(default_factory=list)
     strategies: List[str] = Field(default_factory=list)
