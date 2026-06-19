@@ -7,6 +7,36 @@ Chạy toàn bộ replay job.
 import traceback
 from datetime import datetime
 from typing import List, Dict, Any
+from datetime import datetime, timezone, timedelta
+
+
+def _parse_date(raw, fallback_days_ago=None, fallback_future=False):
+    """
+    Parse date string linh hoạt:
+    - "2026-06-01" -> datetime
+    - "2026-06-01T00:00:00Z" -> datetime
+    - None -> fallback
+    """
+    if not raw:
+        if fallback_future:
+            return datetime.now(timezone.utc) + timedelta(days=1)
+        if fallback_days_ago:
+            return datetime.now(timezone.utc) - timedelta(days=fallback_days_ago)
+        return datetime.now(timezone.utc) - timedelta(days=30)
+
+    raw = str(raw).strip()
+
+    # "2026-06-01" -> thêm time
+    if len(raw) == 10:
+        raw = raw + "T00:00:00Z"
+
+    # "2026-06-01T00:00:00" -> thêm Z
+    if not raw.endswith("Z") and "+" not in raw:
+        raw = raw + "Z"
+
+    # Parse
+    raw = raw.replace("Z", "+00:00")
+    return datetime.fromisoformat(raw)
 
 from app.services.backtest.replay_models import (
     ReplaySummary,
@@ -46,12 +76,13 @@ def run_replay_job(job_id: str, params: dict):
         set_job_running(job_id, "Loading signals...")
 
         signals = load_closed_signals(
-            date_from=datetime.fromisoformat(params["date_from"]),
-            date_to=datetime.fromisoformat(params["date_to"]),
+            date_from=_parse_date(params.get("date_from"), fallback_days_ago=90),
+            date_to=_parse_date(params.get("date_to"), fallback_future=True),
             timeframes=params.get("timeframes", []),
             symbols=params.get("symbols", []),
             strategies=params.get("strategies", []),
             limit=params.get("limit", 500),
+            include_manual=params.get("include_manual", False),
         )
 
         if not signals:

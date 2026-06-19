@@ -14,12 +14,13 @@ from pydantic import BaseModel, Field
 # ============================================================
 
 class ReplayRunRequest(BaseModel):
-    date_from: datetime
-    date_to: datetime
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
     timeframes: List[str] = Field(default_factory=lambda: ["15m", "1h", "4h"])
     symbols: List[str] = Field(default_factory=list)
     strategies: List[str] = Field(default_factory=list)
     limit: int = Field(default=500, ge=1, le=2000)
+    include_manual: bool = False
 
 
 # ============================================================

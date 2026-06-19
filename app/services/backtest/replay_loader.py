@@ -21,7 +21,18 @@ def load_closed_signals(
     symbols: List[str],
     strategies: List[str],
     limit: int = 500,
+    include_manual: bool = False,
 ) -> List[Dict[str, Any]]:
+    
+    allowed_statuses = ["WIN", "LOSS"]
+    if include_manual:
+        allowed_statuses.append("MANUAL")
+
+    query = db.query(Signal).filter(
+        Signal.status.in_(allowed_statuses),
+        Signal.created_at >= date_from,
+        Signal.created_at <= date_to,
+    )
     """
     Load signals đã đóng (WIN/LOSS) trong khoảng thời gian chỉ định.
     Resolve entry_time từ pending.filled_at hoặc fallback signals.created_at.
@@ -30,8 +41,12 @@ def load_closed_signals(
     date_to = ensure_utc(date_to)
 
     with SessionLocal() as db:
+        allowed_statuses = ["WIN", "LOSS"]
+        # Phase 1 mặc định chỉ WIN/LOSS
+        # Nhưng FE có option include_manual
+
         query = db.query(Signal).filter(
-            Signal.status.in_(["WIN", "LOSS"]),
+            Signal.status.in_(allowed_statuses),
             Signal.created_at >= date_from,
             Signal.created_at <= date_to,
         )
