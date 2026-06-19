@@ -55,8 +55,29 @@ export function Dashboard() {
 
   const [allRegimes, setAllRegimes] = useState([]);
   const [allPatterns, setAllPatterns] = useState([]);
-  const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', fixedSize: 1000 });
+  const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', capPsize: '10000|1000' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
+  const [statusMode, setStatusMode] = useState('WL'); // WL = WIN/LOSS only, ALL = all statuses
+
+  // Parse CAP|PSize from filter
+  const parseCapPsize = (v) => {
+    const parts = (v || '10000|1000').split('|');
+    return { cap: parseFloat(parts[0]) || 10000, psize: parseFloat(parts[1]) || 1000 };
+  };
+  // Derive WIN/LOSS from entry/exit/direction for non-standard statuses
+  const deriveStatus = (s) => {
+    if (s.status === 'WIN' || s.status === 'LOSS') return s.status;
+    const entry = Number(s.entry_price) || 0, exit = Number(s.exit_price) || 0;
+    if (!entry || !exit) return 'LOSS';
+    const pnl = s.direction === 'LONG' ? exit - entry : entry - exit;
+    return pnl >= 0 ? 'WIN' : 'LOSS';
+  };
+  const deriveResultPct = (s) => {
+    if (s.status === 'WIN' || s.status === 'LOSS') return s.result_percent || 0;
+    const entry = Number(s.entry_price) || 0, exit = Number(s.exit_price) || 0;
+    if (!entry || !exit) return 0;
+    return s.direction === 'LONG' ? ((exit - entry) / entry) * 100 : ((entry - exit) / entry) * 100;
+  };
 
   const setFilterInstant = (key, value) => {
     const next = { ...filters, [key]: value };
@@ -140,15 +161,27 @@ export function Dashboard() {
 
   // ========== DATA SPLITS ==========
   const allOpen = useMemo(() => allSignals.filter(s => s.status === 'OPEN').sort((a, b) => new Date(b.candle_time || 0).getTime() - new Date(a.candle_time || 0).getTime()), [allSignals]);
-  const allClosed = useMemo(() => allSignals.filter(s => s.status === 'WIN' || s.status === 'LOSS').sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || '')), [allSignals]);
+  const allClosed = useMemo(() => {
+    const isWL = statusMode === 'WL';
+    return allSignals.filter(s => {
+      if (isWL) return s.status === 'WIN' || s.status === 'LOSS';
+      return s.status !== 'OPEN' && s.exit_time;
+    }).map(s => ({
+      ...s,
+      _derivedStatus: deriveStatus(s),
+      _derivedPct: deriveResultPct(s),
+    })).sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || ''));
+  }, [allSignals, statusMode]);
 
-  // VN date range filtering is done locally from allSignals (single source of truth)
+  // VN date range filtering
   const metricClosed = useMemo(() => {
     const VN_MS = 7 * 3600 * 1000;
     const startVN = appliedFilters.startDate;
     const endVN = appliedFilters.endDate;
+    const isWL = statusMode === 'WL';
     return allSignals.filter(s => {
-      if (s.status !== 'WIN' && s.status !== 'LOSS') return false;
+      if (isWL) { if (s.status !== 'WIN' && s.status !== 'LOSS') return false; }
+      else { if (s.status === 'OPEN' || !s.exit_time) return false; }
       if (!s.exit_time) return false;
       const exitMs = parseUtcMs(s.exit_time);
       if (!exitMs) return false;
@@ -157,8 +190,12 @@ export function Dashboard() {
       if (startVN && vnDateStr < startVN) return false;
       if (endVN && vnDateStr > endVN) return false;
       return true;
-    }).sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || ''));
-  }, [allSignals, appliedFilters.startDate, appliedFilters.endDate]);
+    }).map(s => ({
+      ...s,
+      _derivedStatus: deriveStatus(s),
+      _derivedPct: deriveResultPct(s),
+    })).sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || ''));
+  }, [allSignals, appliedFilters.startDate, appliedFilters.endDate, statusMode]);
 
   // Date filter is already done server-side. Client-side only: timeframe, engine, score, strategy.
   const filteredClosed = useMemo(() => {
@@ -178,6 +215,7 @@ export function Dashboard() {
   }, [metricClosed, appliedFilters]);
 
   // ========== TRADE-LEVEL METRICS ==========
+  const { cap: appliedCap, psize: appliedPsize } = parseCapPsize(appliedFilters.capPsize);
   const filteredTradesCount = filteredClosed.length;
   const tradesTodayCount = useMemo(() => {
     const VN_MS = 7 * 3600 * 1000;
@@ -191,26 +229,26 @@ export function Dashboard() {
     }).length;
   }, [allClosed, todayVN]);
 
-  const wins = filteredClosed.filter(s => s.status === 'WIN').length;
+  const wins = filteredClosed.filter(s => s._derivedStatus === 'WIN').length;
   const winRate = filteredTradesCount > 0 ? (wins / filteredTradesCount) * 100 : 0;
 
   const profitFactor = useMemo(() => {
-    const gp = filteredClosed.filter(s => (s.result_percent || 0) > 0).reduce((a, s) => a + (s.result_percent || 0), 0);
-    const gl = Math.abs(filteredClosed.filter(s => (s.result_percent || 0) < 0).reduce((a, s) => a + (s.result_percent || 0), 0));
+    const gp = filteredClosed.filter(s => (s._derivedPct || 0) > 0).reduce((a, s) => a + (s._derivedPct || 0), 0);
+    const gl = Math.abs(filteredClosed.filter(s => (s._derivedPct || 0) < 0).reduce((a, s) => a + (s._derivedPct || 0), 0));
     return gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
   }, [filteredClosed]);
 
   const expectancy = useMemo(() => {
     if (!filteredTradesCount) return 0;
-    const wA = filteredClosed.filter(s => (s.result_percent || 0) > 0);
-    const lA = filteredClosed.filter(s => (s.result_percent || 0) < 0);
-    const avgW = wA.length ? wA.reduce((a, s) => a + (s.result_percent || 0), 0) / wA.length : 0;
-    const avgL = lA.length ? Math.abs(lA.reduce((a, s) => a + (s.result_percent || 0), 0) / lA.length) : 0;
+    const wA = filteredClosed.filter(s => (s._derivedPct || 0) > 0);
+    const lA = filteredClosed.filter(s => (s._derivedPct || 0) < 0);
+    const avgW = wA.length ? wA.reduce((a, s) => a + (s._derivedPct || 0), 0) / wA.length : 0;
+    const avgL = lA.length ? Math.abs(lA.reduce((a, s) => a + (s._derivedPct || 0), 0) / lA.length) : 0;
     return (wins / filteredTradesCount) * avgW - ((filteredTradesCount - wins) / filteredTradesCount) * avgL;
   }, [filteredClosed, filteredTradesCount, wins]);
 
   const tradeSharpe = useMemo(() => {
-    const r = filteredClosed.map(s => s.result_percent || 0);
+    const r = filteredClosed.map(s => s._derivedPct || 0);
     if (r.length < 2) return 0;
     const avg = r.reduce((a, b) => a + b, 0) / r.length;
     const std = Math.sqrt(r.reduce((s, x) => s + (x - avg) ** 2, 0) / r.length);
@@ -221,7 +259,7 @@ export function Dashboard() {
     const calc = (arr) => {
       let mw = 0, ml = 0, cw = 0, cl = 0;
       arr.forEach(s => {
-        if (s.status === 'WIN') { cw++; cl = 0; mw = Math.max(mw, cw); }
+        if (s._derivedStatus === 'WIN') { cw++; cl = 0; mw = Math.max(mw, cw); }
         else { cl++; cw = 0; ml = Math.max(ml, cl); }
       });
       return { maxWin: mw, maxLoss: ml };
@@ -235,8 +273,8 @@ export function Dashboard() {
   const longShortWR = useMemo(() => {
     const longs = filteredClosed.filter(s => s.direction === 'LONG');
     const shorts = filteredClosed.filter(s => s.direction === 'SHORT');
-    const longWins = longs.filter(s => s.status === 'WIN').length;
-    const shortWins = shorts.filter(s => s.status === 'WIN').length;
+    const longWins = longs.filter(s => s._derivedStatus === 'WIN').length;
+    const shortWins = shorts.filter(s => s._derivedStatus === 'WIN').length;
     return {
       longWR: longs.length > 0 ? (longWins / longs.length) * 100 : 0, longTotal: longs.length,
       shortWR: shorts.length > 0 ? (shortWins / shorts.length) * 100 : 0, shortTotal: shorts.length,
@@ -257,50 +295,52 @@ export function Dashboard() {
 
   // ========== PORTFOLIO: COMPOUNDING ==========
   const pComp = useMemo(() => {
-    const fsInput = appliedFilters.fixedSize || 1000;
+    const fsInput = appliedPsize;
+    const IC = appliedCap;
     const sorted = [...filteredClosed].sort((a, b) => parseUtcMs(a.exit_time || '') - parseUtcMs(b.exit_time || ''));
-    let nav = INIT_CAP, peakNav = nav, troughNav = nav, maxDD = 0, maxGain = 0;
+    let nav = IC, peakNav = nav, troughNav = nav, maxDD = 0, maxGain = 0;
     const curve = [];
     const pnlList = [];
     sorted.forEach(s => {
-      const rp = s.result_percent || 0;
-      const dynamicPosSize = fsInput * (nav / INIT_CAP);
+      const rp = s._derivedPct || 0;
+      const dynamicPosSize = fsInput * (nav / IC);
       const pnl = dynamicPosSize * (rp / 100);
       nav += pnl; pnlList.push(pnl);
       peakNav = Math.max(peakNav, nav); troughNav = Math.min(troughNav, nav);
       const dd = (peakNav - nav) / peakNav * 100;
-      maxDD = Math.max(maxDD, dd); maxGain = Math.max(maxGain, (nav - INIT_CAP) / INIT_CAP * 100);
+      maxDD = Math.max(maxDD, dd); maxGain = Math.max(maxGain, (nav - IC) / IC * 100);
       curve.push({ time: s.exit_time ? utcToVN(s.exit_time) : '', nav: Math.round(nav * 100) / 100, dd: Math.round(dd * 100) / 100, symbol: s.symbol, pnl: Math.round(pnl * 100) / 100, rp });
     });
-    const ret = ((nav - INIT_CAP) / INIT_CAP) * 100;
-    const pctReturns = pnlList.map(p => (p / INIT_CAP) * 100);
+    const ret = ((nav - IC) / IC) * 100;
+    const pctReturns = pnlList.map(p => (p / IC) * 100);
     const avg = pctReturns.length ? pctReturns.reduce((a, b) => a + b, 0) / pctReturns.length : 0;
     const std = pctReturns.length ? Math.sqrt(pctReturns.reduce((s, x) => s + (x - avg) ** 2, 0) / pctReturns.length) : 0;
-    return { nav, pnl: nav - INIT_CAP, ret, maxDD, maxGain, peakNav, troughNav, sharpe: std > 0 ? avg / std : 0, calmar: maxDD > 0 ? ret / maxDD : 0, curve };
-  }, [filteredClosed, appliedFilters.fixedSize]);
+    return { nav, pnl: nav - IC, ret, maxDD, maxGain, peakNav, troughNav, sharpe: std > 0 ? avg / std : 0, calmar: maxDD > 0 ? ret / maxDD : 0, curve };
+  }, [filteredClosed, appliedFilters.capPsize]);
 
   // ========== PORTFOLIO: FIXED SIZE ==========
   const pFixed = useMemo(() => {
-    const fs = appliedFilters.fixedSize || 1000;
+    const fs = appliedPsize;
+    const IC = appliedCap;
     const sorted = [...filteredClosed].sort((a, b) => parseUtcMs(a.exit_time || '') - parseUtcMs(b.exit_time || ''));
-    let nav = INIT_CAP, peakNav = nav, troughNav = nav, maxDD = 0, maxGain = 0;
+    let nav = IC, peakNav = nav, troughNav = nav, maxDD = 0, maxGain = 0;
     const curve = [];
     const pnlList = [];
     sorted.forEach(s => {
-      const rp = s.result_percent || 0;
+      const rp = s._derivedPct || 0;
       const pnl = fs * (rp / 100);
       nav += pnl; pnlList.push(pnl);
       peakNav = Math.max(peakNav, nav); troughNav = Math.min(troughNav, nav);
       const dd = (peakNav - nav) / peakNav * 100;
-      maxDD = Math.max(maxDD, dd); maxGain = Math.max(maxGain, (nav - INIT_CAP) / INIT_CAP * 100);
+      maxDD = Math.max(maxDD, dd); maxGain = Math.max(maxGain, (nav - IC) / IC * 100);
       curve.push({ time: s.exit_time ? utcToVN(s.exit_time) : '', nav: Math.round(nav * 100) / 100, dd: Math.round(dd * 100) / 100, symbol: s.symbol, pnl: Math.round(pnl * 100) / 100, rp });
     });
-    const ret = ((nav - INIT_CAP) / INIT_CAP) * 100;
-    const pctReturns = pnlList.map(p => (p / INIT_CAP) * 100);
+    const ret = ((nav - IC) / IC) * 100;
+    const pctReturns = pnlList.map(p => (p / IC) * 100);
     const avg = pctReturns.length ? pctReturns.reduce((a, b) => a + b, 0) / pctReturns.length : 0;
     const std = pctReturns.length ? Math.sqrt(pctReturns.reduce((s, x) => s + (x - avg) ** 2, 0) / pctReturns.length) : 0;
-    return { nav, pnl: nav - INIT_CAP, ret, maxDD, maxGain, peakNav, troughNav, sharpe: std > 0 ? avg / std : 0, calmar: maxDD > 0 ? ret / maxDD : 0, curve };
-  }, [filteredClosed, appliedFilters.fixedSize]);
+    return { nav, pnl: nav - IC, ret, maxDD, maxGain, peakNav, troughNav, sharpe: std > 0 ? avg / std : 0, calmar: maxDD > 0 ? ret / maxDD : 0, curve };
+  }, [filteredClosed, appliedFilters.capPsize]);
 
   // ========== REGIME ==========
   const regimeBreakdown = useMemo(() => {
@@ -309,7 +349,7 @@ export function Dashboard() {
       const r = s.regime || 'UNKNOWN';
       if (!reg[r]) reg[r] = { total: 0, wins: 0, returns: [] };
       reg[r].total++; if (s.status === 'WIN') reg[r].wins++;
-      reg[r].returns.push(s.result_percent || 0);
+      reg[r].returns.push(s._derivedPct || 0);
     });
     return Object.entries(reg).map(([regime, d]) => {
       const wr = d.total > 0 ? (d.wins / d.total) * 100 : 0;
@@ -537,8 +577,11 @@ export function Dashboard() {
           <Select label="Regime" value={filters.regime} onChange={v => setFilterInstant('regime', v)} options={[{ value: 'all', label: 'All' }, ...allRegimes.map(r => ({ value: r, label: r }))]} />
           <Select label="TF" value={filters.timeframe} onChange={v => setFilterInstant('timeframe', v)} options={[{ value: 'all', label: 'All' }, { value: '15m', label: '15m' }, { value: '1h', label: '1h' }, { value: '4h', label: '4h' }]} />
           <Select label="Score" value={getScorePreset()} onChange={setScoreFilter} options={[{ value: 'all', label: 'All' }, { value: '6-7', label: '6 ~ 7' }, { value: '7-8', label: '7 ~ 8' }, { value: '8-9', label: '8 ~ 9' }, { value: '9-10', label: '9 ~ 10' }]} />
-          <Input type="number" label="Fixed Size ($)" value={filters.fixedSize} onChange={e => setFilters({ ...filters, fixedSize: Number(e.target.value) || 1000 })} />
-          <div className="flex items-end"><Button variant="primary" onClick={handleApply} className="w-full">Apply</Button></div>
+          <Input type="text" label="CAP / PSize($)" value={filters.capPsize} onChange={e => setFilters({ ...filters, capPsize: e.target.value })} placeholder="10000|1000" />
+          <div className="flex items-end gap-2">
+            <button onClick={() => setStatusMode(statusMode === 'WL' ? 'ALL' : 'WL')} className={`px-3 py-2 rounded-lg text-xs font-bold border transition-colors ${statusMode === 'WL' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-orange-600 text-white border-orange-500'}`} title={statusMode === 'WL' ? 'WIN/LOSS only' : 'All statuses (derived)'}>{statusMode}</button>
+            <Button variant="primary" onClick={handleApply}>Apply</Button>
+          </div>
         </div>
       </Card>
 
@@ -563,9 +606,9 @@ export function Dashboard() {
 
         {/* Portfolio Compounding */}
         <Card>
-          <CardHeader title="Portfolio (Compounding)" subtitle={`Size = $${appliedFilters.fixedSize} × (NAV/$${INIT_CAP.toLocaleString()})`} />
+          <CardHeader title="Portfolio (Compounding)" subtitle={`Size = $${appliedPsize} × (NAV/$${appliedCap.toLocaleString()})`} />
           <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${INIT_CAP.toLocaleString()}</span></div>
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${appliedCap.toLocaleString()}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Final NAV</span><span className={`font-bold ${clr(pComp.pnl)}`}>${$(pComp.nav)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Total P&L</span><span className={`font-bold ${clr(pComp.pnl)}`}>{pComp.pnl >= 0 ? '+' : ''}${$(pComp.pnl)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Peak NAV</span><span className="font-bold text-emerald-400">${$(pComp.peakNav)}</span></div>
@@ -581,7 +624,7 @@ export function Dashboard() {
         <Card>
           <CardHeader title={`Portfolio (Fixed $${appliedFilters.fixedSize})`} subtitle={`Size always = $${appliedFilters.fixedSize}`} />
           <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${INIT_CAP.toLocaleString()}</span></div>
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${appliedCap.toLocaleString()}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Final NAV</span><span className={`font-bold ${clr(pFixed.pnl)}`}>${$(pFixed.nav)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Total P&L</span><span className={`font-bold ${clr(pFixed.pnl)}`}>{pFixed.pnl >= 0 ? '+' : ''}${$(pFixed.pnl)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Peak NAV</span><span className="font-bold text-emerald-400">${$(pFixed.peakNav)}</span></div>
