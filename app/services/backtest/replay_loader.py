@@ -5,9 +5,7 @@ Load signals thật từ DB để replay.
 """
 
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-
-from sqlalchemy import and_
+from typing import List, Dict, Any
 
 from app.db.session import SessionLocal
 from app.db.models import Signal, PendingSignal
@@ -23,27 +21,19 @@ def load_closed_signals(
     limit: int = 500,
     include_manual: bool = False,
 ) -> List[Dict[str, Any]]:
-    
-    allowed_statuses = ["WIN", "LOSS"]
-    if include_manual:
-        allowed_statuses.append("MANUAL")
-
-    query = db.query(Signal).filter(
-        Signal.status.in_(allowed_statuses),
-        Signal.created_at >= date_from,
-        Signal.created_at <= date_to,
-    )
     """
-    Load signals đã đóng (WIN/LOSS) trong khoảng thời gian chỉ định.
+    Load signals đã đóng (WIN/LOSS/MANUAL) trong khoảng thời gian chỉ định.
     Resolve entry_time từ pending.filled_at hoặc fallback signals.created_at.
     """
     date_from = ensure_utc(date_from)
     date_to = ensure_utc(date_to)
 
+    results = []
+
     with SessionLocal() as db:
         allowed_statuses = ["WIN", "LOSS"]
-        # Phase 1 mặc định chỉ WIN/LOSS
-        # Nhưng FE có option include_manual
+        if include_manual:
+            allowed_statuses.append("MANUAL")
 
         query = db.query(Signal).filter(
             Signal.status.in_(allowed_statuses),
@@ -64,7 +54,6 @@ def load_closed_signals(
 
         signals = query.all()
 
-        results = []
         for sig in signals:
             entry_time = _resolve_entry_time(db, sig)
 
@@ -102,7 +91,7 @@ def load_closed_signals(
                 "actual_result_pct": float(sig.result_percent) if sig.result_percent else None,
             })
 
-        return results
+    return results
 
 
 def _resolve_entry_time(db, signal: Signal) -> datetime:

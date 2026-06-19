@@ -75,7 +75,7 @@ export function SimulationPage() {
         if (data.status === 'DONE') {
           loadResults(jobId);
         } else if (data.status === 'FAILED') {
-          setJobError(data.message || 'Job failed');
+          setJobError(data.error || data.message || 'Job failed');
         }
       } catch (e) { console.error(e); }
     };
