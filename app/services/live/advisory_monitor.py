@@ -1,264 +1,163 @@
 """
-Profit Protection Service — LIVE
-================================
-Percent-based protection levels, đọc config từ DB (app_config).
+Live Advisory Monitor
+=====================
+- Profit Protection trigger
+- Profit Lock check
 
-Roles:
-- Tính điều kiện trigger protection level
-- Quản lý state markers trong market_context
-- KHÔNG trực tiếp cancel/place exchange
-- Protection replace thực thi theo 2-phase trong reconciler
-
-Config key: PROTECTION_LEVELS_CONFIG
+QUAN TRỌNG:
+- Protection trigger phải carry level_key xuống command
+- Nếu level đã apply rồi thì không được lặp lại
 """
 
-from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any
+from datetime import timedelta
+from typing import Optional, Dict
 
-from app.db.models import Signal
-from app.core.time_utils import utc_now, ensure_utc
-
-
-_DEFAULT_PROTECTION = {
-    "enabled": True,
-    "timeframes": {
-        "15m": {"levels": [
-            {"trigger_pct": 0.02, "action": "move_to_entry", "buffer_pct": 0.002},
-        ]},
-        "1h": {"levels": [
-            {"trigger_pct": 0.025, "action": "move_to_entry", "buffer_pct": 0.0025},
-        ]},
-        "4h": {"levels": [
-            {"trigger_pct": 0.03, "action": "move_to_entry", "buffer_pct": 0.003},
-        ]},
-    }
-}
-
-BREAKEVEN_RETRY_BACKOFF_SECONDS = 30
-PROTECTION_CHANGE_COOLDOWN_SECONDS = 15
+from app.core.time_utils import utc_now
+from app.db.session import SessionLocal
+from app.db.models import Signal, ExecutionCommand
+from app.services.live.protection_service import (
+    is_protection_enabled,
+    check_breakeven_condition,
+)
+from app.services.live.command_service import (
+    request_protection_replace,
+    has_open_command,
+    CMD_PROTECTION_REPLACE,
+)
 
 
-# ============================================================
-# CONFIG LOADER
-# ============================================================
-
-def _get_protection_config() -> dict:
-    try:
-        from app.services.config_service import get_runtime_config
-        cfg = get_runtime_config()
-        return cfg.get("PROTECTION_LEVELS_CONFIG", _DEFAULT_PROTECTION)
-    except Exception:
-        return _DEFAULT_PROTECTION
+CMD_PROFIT_LOCK = "PROFIT_LOCK"
 
 
-def is_protection_enabled() -> bool:
-    return _get_protection_config().get("enabled", True)
-
-
-# ============================================================
-# LEVEL KEY
-# ============================================================
-
-def make_level_key(level_cfg: dict) -> str:
+def run_advisory_cycle(price_map: Optional[Dict[str, float]] = None):
     """
-    Stable key để track level đã apply.
+    Main entry point cho advisory monitor.
+    Gọi từ live_advisory_loop.
     """
-    action = str(level_cfg.get("action", "") or "")
-    trigger_pct = float(level_cfg.get("trigger_pct", 0) or 0)
-
-    if action == "move_to_entry":
-        buffer_pct = float(level_cfg.get("buffer_pct", 0) or 0)
-        return f"{action}|trigger={trigger_pct}|buffer={buffer_pct}"
-
-    if action == "move_stop_to_profit_pct":
-        target_profit_pct = float(level_cfg.get("target_profit_pct", 0) or 0)
-        return f"{action}|trigger={trigger_pct}|target={target_profit_pct}"
-
-    return f"{action}|trigger={trigger_pct}"
-
-
-# ============================================================
-# PROTECTION CONDITION CHECK
-# ============================================================
-
-def check_breakeven_condition(
-    trade: Signal,
-    current_price: float,
-) -> Tuple[bool, Optional[float], Optional[str], Optional[Dict[str, Any]]]:
-    """
-    Percent-based multi-level protection check.
-
-    Returns:
-        (
-          should_trigger: bool,
-          new_sl_price: Optional[float],
-          level_key: Optional[str],
-          level_cfg: Optional[dict]
-        )
-    """
-    ctx = trade.market_context or {}
-    applied_levels = ctx.get("protection_levels_applied", [])
-
-    cfg = _get_protection_config()
-    if not cfg.get("enabled", True):
-        return False, None, None, None
-
-    next_retry_at = ctx.get("breakeven_next_retry_at")
-    if next_retry_at:
+    if not price_map:
         try:
-            retry_dt = ensure_utc(datetime.fromisoformat(next_retry_at))
-            if retry_dt > utc_now():
-                return False, None, None, None
+            from app.services.price_feed import get_all_current_prices
+            price_map = get_all_current_prices()
+        except Exception:
+            price_map = {}
+
+    if not price_map:
+        return
+
+    if is_protection_enabled():
+        _check_all_protection(price_map)
+
+    _check_profit_lock(price_map)
+
+
+def _check_all_protection(price_map: dict):
+    with SessionLocal() as db:
+        open_trades = db.query(Signal).filter(
+            Signal.status == "OPEN"
+        ).all()
+
+        if not open_trades:
+            return
+
+        for trade in open_trades:
+            try:
+                _check_trade_protection(db, trade, price_map)
+            except Exception as e:
+                print(f"[ADVISORY] {trade.symbol}: {type(e).__name__}: {e}")
+
+
+def _check_trade_protection(db, trade: Signal, price_map: dict):
+    current = price_map.get(trade.symbol)
+    if current is None:
+        return
+
+    current = float(current)
+
+    if has_open_command(db, trade.symbol, [CMD_PROTECTION_REPLACE]):
+        return
+
+    should_trigger, new_sl, level_key, level_cfg = check_breakeven_condition(trade, current)
+
+    if not should_trigger or new_sl is None or not level_key:
+        return
+
+    result = request_protection_replace(
+        signal_id=trade.id,
+        new_sl_price=float(new_sl),
+        level_key=level_key,
+        level_cfg=level_cfg or {},
+    )
+
+    if result.get("success") and not result.get("deduped"):
+        print(
+            f"🛡️ [ADVISORY] {trade.symbol} hit protection trigger "
+            f"| current={current:.4f} new_sl={new_sl:.4f}"
+        )
+
+
+def _check_profit_lock(price_map: dict):
+    """
+    Auto close tất cả positions khi tổng PnL thực tế >= threshold.
+
+    PnL tính theo % (KHÔNG tính leverage):
+      LONG:  (current - entry) / entry * 100
+      SHORT: (entry - current) / entry * 100
+      Tổng = sum of all OPEN trades
+    """
+    try:
+        from app.services.live.profit_lock_service import (
+            check_profit_lock_condition,
+            mark_triggered,
+        )
+
+        with SessionLocal() as db:
+            existing_lock = db.query(ExecutionCommand).filter(
+                ExecutionCommand.command_type == CMD_PROFIT_LOCK,
+                ExecutionCommand.status.in_(["REQUESTED", "SENT"]),
+                ExecutionCommand.created_at >= utc_now() - timedelta(minutes=5),
+            ).first()
+
+            if existing_lock:
+                return
+
+        if not check_profit_lock_condition(price_map):
+            return
+
+        print("🎯 [PROFIT LOCK] Executing profit lock...")
+
+        from app.services.live.command_service import request_kill_switch_all
+        result = request_kill_switch_all()
+        mark_triggered()
+
+        try:
+            with SessionLocal() as db:
+                recent_cmds = db.query(ExecutionCommand).filter(
+                    ExecutionCommand.command_type == "KILL_SWITCH",
+                    ExecutionCommand.created_at >= utc_now() - timedelta(seconds=10),
+                ).all()
+
+                for cmd in recent_cmds:
+                    cmd.command_type = CMD_PROFIT_LOCK
+                    if cmd.request_payload:
+                        payload = dict(cmd.request_payload)
+                        payload["reason"] = "PROFIT_LOCK"
+                        cmd.request_payload = payload
+
+                db.commit()
+        except Exception as e:
+            print(f"[PROFIT LOCK] Re-tag error: {e}")
+
+        print(f"🎯 [PROFIT LOCK] Result: {result}")
+
+        try:
+            from app.services.telegram_service import send_telegram
+            send_telegram(
+                f"🎯 <b>PROFIT LOCK TRIGGERED</b>\n\n"
+                f"Tổng PnL đạt ngưỡng chốt lãi.\n"
+                f"Đã đóng tất cả vị thế."
+            )
         except Exception:
             pass
 
-    entry = float(trade.entry_price or 0)
-    if entry <= 0:
-        return False, None, None, None
-
-    tf = trade.timeframe or "1h"
-    tf_cfg = cfg.get("timeframes", {}).get(tf, {})
-    levels = tf_cfg.get("levels", [])
-
-    if not levels:
-        return False, None, None, None
-
-    levels = sorted(levels, key=lambda x: float(x.get("trigger_pct", 0) or 0))
-
-    if trade.direction == "LONG":
-        current_profit_pct = (current_price - entry) / entry
-    else:
-        current_profit_pct = (entry - current_price) / entry
-
-    best_level = None
-    best_level_key = None
-
-    for lv in levels:
-        trigger_pct = float(lv.get("trigger_pct", 0) or 0)
-        level_key = make_level_key(lv)
-
-        if level_key in applied_levels:
-            continue
-
-        if current_profit_pct >= trigger_pct:
-            best_level = lv
-            best_level_key = level_key
-
-    if not best_level:
-        return False, None, None, None
-
-    action = best_level.get("action", "move_to_entry")
-
-    if action == "move_to_entry":
-        buffer_pct = float(best_level.get("buffer_pct", 0.002) or 0.002)
-        if trade.direction == "LONG":
-            new_sl = entry * (1 + buffer_pct)
-        else:
-            new_sl = entry * (1 - buffer_pct)
-
-    elif action == "move_stop_to_profit_pct":
-        target_profit_pct = float(best_level.get("target_profit_pct", 0) or 0)
-        if trade.direction == "LONG":
-            new_sl = entry * (1 + target_profit_pct)
-        else:
-            new_sl = entry * (1 - target_profit_pct)
-    else:
-        return False, None, None, None
-
-    if trade.direction == "LONG" and new_sl >= current_price:
-        return False, None, None, None
-    if trade.direction == "SHORT" and new_sl <= current_price:
-        return False, None, None, None
-
-    return True, new_sl, best_level_key, best_level
-
-
-# ============================================================
-# STATE MARKERS
-# ============================================================
-
-def set_breakeven_retry_backoff(trade: Signal, reason: str, seconds: int = BREAKEVEN_RETRY_BACKOFF_SECONDS):
-    ctx = dict(trade.market_context or {})
-    ctx["breakeven_last_error"] = reason
-    ctx["breakeven_last_attempt_at"] = utc_now().isoformat()
-    ctx["breakeven_next_retry_at"] = (
-        utc_now() + timedelta(seconds=seconds)
-    ).isoformat()
-    trade.market_context = ctx
-
-
-def clear_breakeven_retry_backoff(trade: Signal):
-    ctx = dict(trade.market_context or {})
-    ctx.pop("breakeven_last_error", None)
-    ctx.pop("breakeven_last_attempt_at", None)
-    ctx.pop("breakeven_next_retry_at", None)
-    trade.market_context = ctx
-
-
-def mark_protection_changed(
-    trade: Signal,
-    sl_price: Optional[float] = None,
-    sl_id: Optional[str] = None,
-):
-    ctx = dict(trade.market_context or {})
-    exec_ctx = dict(ctx.get("execution") or {})
-
-    if sl_id:
-        exec_ctx["sl_order_id"] = sl_id
-        ctx["protection_change_sl_id"] = sl_id
-
-    if sl_price is not None:
-        ctx["protection_change_sl_price"] = float(sl_price)
-
-    ctx["execution"] = exec_ctx
-    ctx["protection_change_at"] = utc_now().isoformat()
-    trade.market_context = ctx
-
-
-def protection_change_cooldown_active(
-    trade: Signal,
-    seconds: int = PROTECTION_CHANGE_COOLDOWN_SECONDS
-) -> bool:
-    ctx = trade.market_context or {}
-    ts = ctx.get("protection_change_at")
-    if not ts:
-        return False
-
-    try:
-        changed_at = ensure_utc(datetime.fromisoformat(ts))
-        age = (utc_now() - changed_at).total_seconds()
-        return age < seconds
-    except Exception:
-        return False
-
-
-def mark_breakeven_applied(
-    trade: Signal,
-    new_sl_price: float,
-    new_sl_id: Optional[str] = None,
-    level_key: Optional[str] = None,
-):
-    """
-    Đánh dấu protection level đã được apply.
-    """
-    mark_protection_changed(
-        trade=trade,
-        sl_price=float(new_sl_price),
-        sl_id=new_sl_id,
-    )
-
-    ctx = dict(trade.market_context or {})
-    ctx["breakeven_applied"] = True
-    ctx["breakeven_sl"] = float(new_sl_price)
-    ctx["breakeven_at"] = utc_now().isoformat()
-
-    applied = ctx.get("protection_levels_applied", [])
-    if level_key and level_key not in applied:
-        applied.append(level_key)
-    ctx["protection_levels_applied"] = applied
-
-    ctx.pop("breakeven_last_error", None)
-    ctx.pop("breakeven_last_attempt_at", None)
-    ctx.pop("breakeven_next_retry_at", None)
-
-    trade.market_context = ctx
+    except Exception as e:
+        print(f"[ADVISORY PROFIT LOCK] {e}")
