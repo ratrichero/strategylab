@@ -353,7 +353,15 @@ def _process_protection_replace_command(db, signal: Signal, pending: Optional[Pe
         pending.stop_loss = rounded_sl
         signal.stop_loss = rounded_sl
 
-        mark_breakeven_applied(signal, rounded_sl, new_sl_id)
+        req_level_key = req.get("level_key")
+
+        mark_breakeven_applied(
+            signal,
+            rounded_sl,
+            new_sl_id,
+            level_key=req_level_key,
+        )
+        
         clear_breakeven_retry_backoff(signal)
 
         cmd.status = COMMAND_CONFIRMED

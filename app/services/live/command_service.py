@@ -450,7 +450,7 @@ def request_kill_switch_all() -> Dict[str, Any]:
 
     return result
 
-def request_protection_replace(signal_id: int, new_sl_price: float) -> Dict[str, Any]:
+def request_protection_replace(signal_id: int, new_sl_price: float, level_key: Optional[str] = None, level_cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     with SessionLocal() as db:
         trade = db.query(Signal).get(signal_id)
         if not trade:
@@ -487,8 +487,10 @@ def request_protection_replace(signal_id: int, new_sl_price: float) -> Dict[str,
             pending_id=pending.id,
             signal_id=trade.id,
             request_payload={
-                "reason": "BREAKEVEN",
+                "reason": "PROTECTION_LEVEL",
                 "new_sl_price": float(new_sl_price),
+                "level_key": level_key,
+                "level_cfg": level_cfg or {},
             },
         )
         db.commit()
