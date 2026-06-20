@@ -325,6 +325,18 @@ def _build_trade_row(trade: dict, sim_result: dict, actual_rr: float) -> TradeRo
 def _empty_summary(job_id: str, params: dict = None) -> ReplaySummary:
     return ReplaySummary(job_id=job_id, sample_size=0)
 
+def _level_name(lv: dict) -> str:
+    action = lv.get("action", "")
+    if action == "move_to_entry":
+        return "BE"
+    if action == "move_to_r":
+        target = lv.get("target_r", 0)
+        return f"LOCK_{target}R"
+    if action == "move_stop_to_profit_pct":
+        target = lv.get("target_profit_pct", 0)
+        return f"LOCK_{target}PCT"
+    return "LEVEL"
+
 def _build_summary(job_id: str, rows: List[TradeRow], params: dict = None) -> ReplaySummary:
     if not rows:
         return _empty_summary(job_id)
@@ -372,28 +384,32 @@ def _build_summary(job_id: str, rows: List[TradeRow], params: dict = None) -> Re
         total_rr_realized_diff=round((sim_summary.total_rr_realized or 0) - (actual_summary.total_rr_realized or 0), 4),
     )
 
+    policy_cfg = _resolve_policy(params or {})
+
+    policy_levels_info = []
+    for lv in policy_cfg.get("levels", []):
+        policy_levels_info.append(
+            PolicyLevel(
+                name=_level_name(lv),
+                trigger_r=float(lv.get("trigger_r", 0) or 0),
+                action=lv.get("action", ""),
+                trigger_price=None,
+                stop_after_trigger=None,
+                buffer_pct=lv.get("buffer_pct"),
+                target_r=lv.get("target_r"),
+            )
+        )
+
     policy = PolicyInfo(
-        name="current_policy_v1",
-        tp_r=2.0,
-        levels=[
-            PolicyLevel(
-                name="BE",
-                trigger_r=1.0,
-                action="move_to_entry_plus_buffer",
-            ),
-            PolicyLevel(
-                name="LOCK_0_5R",
-                trigger_r=1.5,
-                action="move_to_0_5R",
-                target_r=0.5,
-            ),
-        ],
+        name="custom_policy" if params and params.get("policy") else "default_policy_v1",
+        tp_r=float(policy_cfg.get("tp_r", 2.0)),
+        levels=policy_levels_info,
         intrabar_mode="conservative",
     )
 
     return ReplaySummary(
         job_id=job_id,
-        sample_size=n,
+        sample_size=len(rows),
         policy=policy,
         actual=actual_summary,
         simulated=sim_summary,
@@ -401,7 +417,6 @@ def _build_summary(job_id: str, rows: List[TradeRow], params: dict = None) -> Re
         sim_exit_breakdown=exit_breakdown,
         ambiguous_bars=ambiguous_count,
     )
-
 
 def _empty_summary(job_id: str, params: dict = None) -> ReplaySummary:
     return ReplaySummary(job_id=job_id, sample_size=0)
