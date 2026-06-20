@@ -897,9 +897,83 @@ def _notify_live_close(signal: Signal):
     except Exception as e:
         print(f"[LIVE CLOSE NOTIFY] {e}")
 
+def _enrich_snapshot_for_close(snapshot: SymbolSnapshot, pending: Optional[PendingSignal]) -> SymbolSnapshot:
+    """
+    Khi position đã đóng, triggered algo orders biến mất khỏi openAlgoOrders.
+    Phải query lại detail cho sl/tp order ID đã lưu trong pending
+    để xác định close reason (TP hay SL).
+    """
+    from app.services.execution_service import get_algo_order_status
+    from app.services.live.snapshot_service import AlgoSnapshot
+
+    # Nếu snapshot đã có algo info thì dùng luôn
+    if snapshot.sl_algo or snapshot.tp_algo:
+        return snapshot
+
+    if not pending:
+        return snapshot
+
+    sl_algo = None
+    tp_algo = None
+
+    # Query detail cho SL
+    sl_id = pending.sl_order_id
+    if sl_id:
+        try:
+            data = get_algo_order_status(str(sl_id))
+            if data and data.get("algo_status") not in (None, "UNKNOWN", "MISSING"):
+                sl_algo = AlgoSnapshot(
+                    algo_id=str(sl_id),
+                    algo_status=data.get("algo_status"),
+                    actual_order_id=data.get("actual_order_id"),
+                    actual_price=data.get("actual_price"),
+                    actual_qty=data.get("actual_qty"),
+                    trigger_price=data.get("trigger_price"),
+                    trigger_time=data.get("trigger_time"),
+                    raw=data.get("raw"),
+                )
+        except Exception as e:
+            print(f"[CLOSE ENRICH] SL query error {sl_id}: {e}")
+
+    # Query detail cho TP
+    tp_id = pending.tp_order_id
+    if tp_id:
+        try:
+            data = get_algo_order_status(str(tp_id))
+            if data and data.get("algo_status") not in (None, "UNKNOWN", "MISSING"):
+                tp_algo = AlgoSnapshot(
+                    algo_id=str(tp_id),
+                    algo_status=data.get("algo_status"),
+                    actual_order_id=data.get("actual_order_id"),
+                    actual_price=data.get("actual_price"),
+                    actual_qty=data.get("actual_qty"),
+                    trigger_price=data.get("trigger_price"),
+                    trigger_time=data.get("trigger_time"),
+                    raw=data.get("raw"),
+                )
+        except Exception as e:
+            print(f"[CLOSE ENRICH] TP query error {tp_id}: {e}")
+
+    # Tạo snapshot mới với algo info bổ sung
+    return SymbolSnapshot(
+        symbol=snapshot.symbol,
+        entry=snapshot.entry,
+        position=snapshot.position,
+        open_normal_orders=snapshot.open_normal_orders,
+        open_algo_orders=snapshot.open_algo_orders,
+        sl_algo=sl_algo or snapshot.sl_algo,
+        tp_algo=tp_algo or snapshot.tp_algo,
+        snapshot_time=snapshot.snapshot_time,
+        ok=snapshot.ok,
+        error=snapshot.error,
+    )
 
 def _finalize_signal_close(db, signal: Signal, pending: Optional[PendingSignal], snapshot: SymbolSnapshot, commands):
-    reason, exit_price = _derive_close_reason(signal, pending, snapshot, commands)
+    # Nếu snapshot không có algo info (vì triggered algo biến khỏi open list),
+    # phải query lại detail cho sl/tp order đã lưu trong pending
+    enriched_snapshot = _enrich_snapshot_for_close(snapshot, pending)
+
+    reason, exit_price = _derive_close_reason(signal, pending, enriched_snapshot, commands)
 
     signal.exit_reason = reason
     signal.exit_time = utc_now()
@@ -923,13 +997,15 @@ def _finalize_signal_close(db, signal: Signal, pending: Optional[PendingSignal],
 
     _cleanup_after_close(signal, pending, snapshot)
 
-     # Outcome analytics: chạy deferred, không block reconcile critical path
     feature = db.query(SignalFeature).filter(
         SignalFeature.signal_id == signal.id
     ).first()
 
     if feature:
-        _schedule_outcome_save(signal.id)
+        try:
+            _schedule_outcome_save(signal.id)
+        except Exception as e:
+            print(f"[LIVE OUTCOME] {e}")
 
     confirm_commands_for_symbol(
         db,
