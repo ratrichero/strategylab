@@ -188,21 +188,23 @@ export function BlockedPage() {
   const [data, setData] = useState([]);
   const [reasons, setReasons] = useState([]);
   const [selectedReason, setSelectedReason] = useState("all");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const [debugRes, reasonRes] = await Promise.all([
-          fetch(`${API}/scan-debug?limit=500`).then(r => r.json()).catch(() => ({ data: [] })),
-          fetch(`${API}/scan-debug/block-reasons`).then(r => r.json()).catch(() => []),
-        ]);
-        setData(debugRes.data || []);
-        setReasons(Array.isArray(reasonRes) ? reasonRes : []);
-      } catch (e) { console.error(e); }
-      finally { setLoading(false); }
-    })();
-  }, []);
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [debugRes, reasonRes] = await Promise.all([
+        fetch(`${API}/scan-debug?limit=1000`).then(r => r.json()).catch(() => ({ data: [] })),
+        fetch(`${API}/scan-debug/block-reasons`).then(r => r.json()).catch(() => []),
+      ]);
+      setData(debugRes.data || []);
+      setReasons(Array.isArray(reasonRes) ? reasonRes : []);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadData(); }, []);
 
   // Group block reasons: "HTF::abc" → "HTF", "OTF::xyz" → "OTF", else unique
   const getReasonGroup = (reason) => {
@@ -211,9 +213,20 @@ export function BlockedPage() {
   };
 
   const filtered = useMemo(() => {
-    if (selectedReason === "all") return data;
-    return data.filter(d => getReasonGroup(d.block_reason) === selectedReason);
-  }, [data, selectedReason]);
+    const VN_MS = 7 * 3600 * 1000;
+    return data.filter(d => {
+      if (selectedReason !== "all" && getReasonGroup(d.block_reason) !== selectedReason) return false;
+      if (startDate || endDate) {
+        const ts = d.created_at ? new Date(d.created_at).getTime() : 0;
+        if (!ts) return false;
+        const vn = new Date(ts + VN_MS);
+        const vnStr = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,'0')}-${String(vn.getUTCDate()).padStart(2,'0')}`;
+        if (startDate && vnStr < startDate) return false;
+        if (endDate && vnStr > endDate) return false;
+      }
+      return true;
+    });
+  }, [data, selectedReason, startDate, endDate]);
 
   const reasonList = useMemo(() => {
     return Array.from(new Set(data.map(d => getReasonGroup(d.block_reason)).filter(Boolean))).sort();
@@ -222,7 +235,7 @@ export function BlockedPage() {
   const cols = [
     { key: "symbol", header: "Symbol", sortable: true },
     { key: "timeframe", header: "TF", sortable: true },
-    { key: "block_reason", header: "Block Reason", sortable: true, render: v => <span className="text-xs text-red-400" title={v}>{v ? getReasonGroup(v) : '-'}</span> },
+    { key: "block_reason", header: "Block Reason", sortable: true, render: v => <span className="text-xs text-red-400">{v || '-'}</span> },
     { key: "total_score", header: "Score", sortable: true, align: "right", render: v => <span className={`font-mono text-sm ${Number(v)>=8?'text-emerald-400':Number(v)>=6?'text-yellow-400':'text-red-400'}`}>{Number(v||0).toFixed(2)}</span> },
     { key: "ml_prob", header: "ML Prob", sortable: true, align: "right", render: v => v != null ? Number(v).toFixed(3) : '-' },
     { key: "trend_score", header: "Trend", align: "right", render: v => v != null ? Number(v).toFixed(2) : '-' },
@@ -248,8 +261,10 @@ export function BlockedPage() {
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">Filtered</p><p className="text-2xl font-bold text-white">{filtered.length}</p></Card>
       </div>
       <Card>
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex items-center gap-3 mb-4 flex-wrap">
           <Select label="Block Reason" value={selectedReason} onChange={setSelectedReason} options={[{ value: "all", label: "All Reasons" }, ...reasonList.map(r => ({ value: r, label: r }))]} className="w-64" />
+          <div><label className="block text-sm font-medium text-slate-400 mb-1.5">From</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
+          <div><label className="block text-sm font-medium text-slate-400 mb-1.5">To</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
         </div>
         <DataTable columns={cols} data={filtered} pageSize={20} emptyMessage="No blocked signals" />
       </Card>

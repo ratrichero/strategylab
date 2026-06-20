@@ -34,6 +34,62 @@ DEFAULT_POLICY = {
     ],
 }
 
+def _convert_percent_policy_to_r(trade: Dict, policy_config: Dict) -> Dict:
+    """
+    Convert percent-based policy sang R-based cho 1 trade cụ thể.
+
+    Input (percent):
+        timeframes.15m.sl_pct = 0.03  (3%)
+        timeframes.15m.tp_pct = 0.05  (5%)
+        timeframes.15m.levels[0].trigger_pct = 0.02  (2%)
+
+    Output (R-based):
+        tp_r = 5/3 = 1.667
+        levels[0].trigger_r = 2/3 = 0.667
+    """
+    tf = trade.get("timeframe", "15m")
+    entry = float(trade.get("entry_price", 0))
+    initial_sl = float(trade.get("initial_stop_loss", 0))
+
+    r_value = abs(entry - initial_sl)
+    if r_value <= 0 or entry <= 0:
+        return {"tp_r": 2.0, "levels": []}
+
+    tf_cfg = policy_config.get("timeframes", {}).get(tf, {})
+
+    sl_pct = float(tf_cfg.get("sl_pct", 0) or 0)
+    tp_pct = float(tf_cfg.get("tp_pct", 0) or 0)
+
+    # Nếu không có sl_pct trong policy, suy từ initial stop thật
+    if sl_pct <= 0:
+        sl_pct = r_value / entry
+
+    if tp_pct <= 0:
+        tp_pct = sl_pct * 2
+
+    tp_r = tp_pct / sl_pct if sl_pct > 0 else 2.0
+
+    levels = []
+    for lv in tf_cfg.get("levels", []):
+        trigger_pct = float(lv.get("trigger_pct", 0) or 0)
+        action = lv.get("action", "move_to_entry")
+
+        trigger_r = trigger_pct / sl_pct if sl_pct > 0 else 0
+
+        r_level = {"trigger_r": round(trigger_r, 4), "action": action}
+
+        if action == "move_to_entry":
+            r_level["buffer_pct"] = float(lv.get("buffer_pct", 0.002) or 0.002)
+
+        elif action == "move_stop_to_profit_pct":
+            target_profit_pct = float(lv.get("target_profit_pct", 0) or 0)
+            target_r = target_profit_pct / sl_pct if sl_pct > 0 else 0
+            r_level["action"] = "move_to_r"
+            r_level["target_r"] = round(target_r, 4)
+
+        levels.append(r_level)
+
+    return {"tp_r": round(tp_r, 4), "levels": levels}
 
 def simulate_trade(
     trade: Dict[str, Any],
@@ -52,6 +108,10 @@ def simulate_trade(
     """
     if policy_config is None:
         policy_config = dict(DEFAULT_POLICY)
+    
+    # Convert percent-based to R-based nếu cần
+    if policy_config and policy_config.get("mode") == "percent":
+        policy_config = _convert_percent_policy_to_r(trade, policy_config)
 
     direction = trade["direction"]
     entry_price = float(trade["entry_price"])
@@ -311,3 +371,50 @@ def _format_r_label(value: float) -> str:
     s = f"{value}".rstrip("0").rstrip(".")
     s = s.replace(".", "_")
     return f"{s}R"
+
+def _convert_percent_policy_to_r(trade: Dict, policy_config: Dict) -> Dict:
+    """
+    Convert percent-based policy sang R-based cho 1 trade cụ thể.
+    """
+    tf = trade.get("timeframe", "15m")
+    entry = float(trade.get("entry_price", 0))
+    initial_sl = float(trade.get("initial_stop_loss", 0))
+
+    r_value = abs(entry - initial_sl)
+    if r_value <= 0 or entry <= 0:
+        return {"tp_r": 2.0, "levels": []}
+
+    tf_cfg = policy_config.get("timeframes", {}).get(tf, {})
+
+    sl_pct = float(tf_cfg.get("sl_pct", 0) or 0)
+    tp_pct = float(tf_cfg.get("tp_pct", 0) or 0)
+
+    if sl_pct <= 0:
+        sl_pct = r_value / entry
+
+    if tp_pct <= 0:
+        tp_pct = sl_pct * 2
+
+    tp_r = tp_pct / sl_pct if sl_pct > 0 else 2.0
+
+    levels = []
+    for lv in tf_cfg.get("levels", []):
+        trigger_pct = float(lv.get("trigger_pct", 0) or 0)
+        action = lv.get("action", "move_to_entry")
+
+        trigger_r = trigger_pct / sl_pct if sl_pct > 0 else 0
+
+        r_level = {"trigger_r": round(trigger_r, 4), "action": action}
+
+        if action == "move_to_entry":
+            r_level["buffer_pct"] = float(lv.get("buffer_pct", 0.002) or 0.002)
+
+        elif action == "move_stop_to_profit_pct":
+            target_profit_pct = float(lv.get("target_profit_pct", 0) or 0)
+            target_r = target_profit_pct / sl_pct if sl_pct > 0 else 0
+            r_level["action"] = "move_to_r"
+            r_level["target_r"] = round(target_r, 4)
+
+        levels.append(r_level)
+
+    return {"tp_r": round(tp_r, 4), "levels": levels}

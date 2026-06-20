@@ -19,11 +19,12 @@ class ReplayRunRequest(BaseModel):
     timeframes: List[str] = Field(default_factory=lambda: ["15m", "1h", "4h"])
     symbols: List[str] = Field(default_factory=list)
     strategies: List[str] = Field(default_factory=list)
-    limit: int = Field(default=500, ge=1, le=2000)
-    include_manual: bool = False
     directions: List[str] = Field(default_factory=list)
     patterns: List[str] = Field(default_factory=list)
     regimes: List[str] = Field(default_factory=list)
+    limit: int = Field(default=500, ge=1, le=2000)
+    include_manual: bool = False
+    policy: Optional[Dict[str, Any]] = None
 
 
 # ============================================================
@@ -54,6 +55,17 @@ class PolicyLevel(BaseModel):
     buffer_pct: Optional[float] = None
     target_r: Optional[float] = None
 
+class PolicyLevelInputPercent(BaseModel):
+    trigger_pct: float
+    action: str  # "move_to_entry" | "move_stop_to_profit_pct"
+    buffer_pct: Optional[float] = None
+    target_profit_pct: Optional[float] = None
+
+
+class PolicyInputPercent(BaseModel):
+    mode: str = "percent"
+    timeframes: Dict[str, Any] = Field(default_factory=dict)
+    # mỗi tf: { "sl_pct": float, "tp_pct": float, "levels": [...] }
 
 class PolicyInfo(BaseModel):
     name: str = "current_policy_v1"

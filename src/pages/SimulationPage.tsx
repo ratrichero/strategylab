@@ -17,36 +17,84 @@ const EXIT_COLORS = {
   SL_INITIAL: 'text-red-400',
   SL_BE: 'text-yellow-400',
   SL_LOCK_0_5R: 'text-orange-400',
+  SL_LOCK_1R: 'text-orange-400',
+  SL_LOCK_1_5R: 'text-orange-400',
   HORIZON: 'text-slate-400',
   AMBIGUOUS_SL: 'text-red-300',
 };
 
 const ACTIONS = [
   { value: 'move_to_entry', label: 'Move to Entry + Buffer (BE)' },
-  { value: 'move_to_r', label: 'Move to R Level (Lock Profit)' },
+  { value: 'move_stop_to_profit_pct', label: 'Move Stop to Profit %' },
 ];
 
+const TIMEFRAMES = ['15m', '1h', '4h'];
+
 const DEFAULT_POLICY = {
-  tp_r: 2.0,
-  levels: [
-    { trigger_r: 1.0, action: 'move_to_entry', buffer_pct: 0.002 },
-    { trigger_r: 1.5, action: 'move_to_r', target_r: 0.5 },
-  ],
+  mode: 'percent',
+  timeframes: {
+    '15m': {
+      sl_pct: 2.0,
+      tp_pct: 4.0,
+      levels: [
+        { trigger_pct: 2.0, action: 'move_to_entry', buffer_pct: 0.2 },
+        { trigger_pct: 3.0, action: 'move_stop_to_profit_pct', target_profit_pct: 1.5 },
+      ],
+    },
+    '1h': {
+      sl_pct: 2.5,
+      tp_pct: 5.0,
+      levels: [
+        { trigger_pct: 2.5, action: 'move_to_entry', buffer_pct: 0.25 },
+      ],
+    },
+    '4h': {
+      sl_pct: 3.0,
+      tp_pct: 6.0,
+      levels: [
+        { trigger_pct: 3.0, action: 'move_to_entry', buffer_pct: 0.3 },
+      ],
+    },
+  },
 };
 
-function cleanLevels(levels) {
-  return levels.map(lv => {
-    const clean = {
-      trigger_r: parseFloat(lv.trigger_r) || 0,
-      action: lv.action || 'move_to_entry',
+// Convert display % (e.g. 2.0) to decimal (0.02) for API
+function pctToDecimal(v) {
+  return (parseFloat(v) || 0) / 100;
+}
+
+// Convert decimal (0.02) to display % (2.0)
+function decimalToPct(v) {
+  return parseFloat(((parseFloat(v) || 0) * 100).toFixed(4));
+}
+
+function buildApiPolicy(displayPolicy) {
+  const result = { mode: 'percent', timeframes: {} };
+  for (const tf of TIMEFRAMES) {
+    const src = displayPolicy.timeframes[tf];
+    if (!src) continue;
+    result.timeframes[tf] = {
+      sl_pct: pctToDecimal(src.sl_pct),
+      tp_pct: pctToDecimal(src.tp_pct),
+      levels: (src.levels || []).map(lv => {
+        const out = {
+          trigger_pct: pctToDecimal(lv.trigger_pct),
+          action: lv.action,
+        };
+        if (lv.action === 'move_to_entry') {
+          out.buffer_pct = pctToDecimal(lv.buffer_pct);
+        } else if (lv.action === 'move_stop_to_profit_pct') {
+          out.target_profit_pct = pctToDecimal(lv.target_profit_pct);
+        }
+        return out;
+      }),
     };
-    if (clean.action === 'move_to_entry') {
-      clean.buffer_pct = parseFloat(lv.buffer_pct) || 0.002;
-    } else if (clean.action === 'move_to_r') {
-      clean.target_r = parseFloat(lv.target_r) || 0;
-    }
-    return clean;
-  });
+  }
+  return result;
+}
+
+function deepClone(obj) {
+  return JSON.parse(JSON.stringify(obj));
 }
 
 export function SimulationPage() {
@@ -62,11 +110,9 @@ export function SimulationPage() {
   const [limit, setLimit] = useState(500);
   const [includeManual, setIncludeManual] = useState(false);
 
-  // Policy Config
-  const [policyTpR, setPolicyTpR] = useState(DEFAULT_POLICY.tp_r);
-  const [policyLevels, setPolicyLevels] = useState(
-    JSON.parse(JSON.stringify(DEFAULT_POLICY.levels))
-  );
+  // Policy Config (display values in %)
+  const [policy, setPolicy] = useState(deepClone(DEFAULT_POLICY));
+  const [activeTf, setActiveTf] = useState('15m');
 
   // Job state
   const [jobId, setJobId] = useState(null);
@@ -99,17 +145,44 @@ export function SimulationPage() {
   }, []);
 
   // Policy helpers
-  const updateLevel = (idx, key, val) => {
-    const next = [...policyLevels];
-    next[idx] = { ...next[idx], [key]: val };
-    setPolicyLevels(next);
+  const getTfPolicy = (tf) => policy.timeframes[tf] || { sl_pct: 2.0, tp_pct: 4.0, levels: [] };
+
+  const updateTfField = (tf, key, val) => {
+    setPolicy(prev => ({
+      ...prev,
+      timeframes: {
+        ...prev.timeframes,
+        [tf]: { ...getTfPolicy(tf), [key]: parseFloat(val) || 0 },
+      },
+    }));
   };
-  const removeLevel = (idx) => setPolicyLevels(prev => prev.filter((_, i) => i !== idx));
-  const addLevel = () => setPolicyLevels(prev => [...prev, { trigger_r: 2.0, action: 'move_to_r', target_r: 1.0 }]);
-  const resetPolicy = () => {
-    setPolicyTpR(DEFAULT_POLICY.tp_r);
-    setPolicyLevels(JSON.parse(JSON.stringify(DEFAULT_POLICY.levels)));
+
+  const updateLevel = (tf, idx, key, val) => {
+    setPolicy(prev => {
+      const tfp = { ...getTfPolicy(tf) };
+      const levels = [...(tfp.levels || [])];
+      levels[idx] = { ...levels[idx], [key]: key === 'action' ? val : (parseFloat(val) || 0) };
+      return { ...prev, timeframes: { ...prev.timeframes, [tf]: { ...tfp, levels } } };
+    });
   };
+
+  const removeLevel = (tf, idx) => {
+    setPolicy(prev => {
+      const tfp = { ...getTfPolicy(tf) };
+      const levels = (tfp.levels || []).filter((_, i) => i !== idx);
+      return { ...prev, timeframes: { ...prev.timeframes, [tf]: { ...tfp, levels } } };
+    });
+  };
+
+  const addLevel = (tf) => {
+    setPolicy(prev => {
+      const tfp = { ...getTfPolicy(tf) };
+      const levels = [...(tfp.levels || []), { trigger_pct: 3.0, action: 'move_stop_to_profit_pct', target_profit_pct: 1.0 }];
+      return { ...prev, timeframes: { ...prev.timeframes, [tf]: { ...tfp, levels } } };
+    });
+  };
+
+  const resetPolicy = () => setPolicy(deepClone(DEFAULT_POLICY));
 
   // Poll
   useEffect(() => {
@@ -124,14 +197,9 @@ export function SimulationPage() {
         setJobStatus(data.status);
         setJobProgress(data.progress_pct || 0);
         setJobMessage(data.message || '');
-        if (data.status === 'DONE') {
-          loadResults(jobId);
-        } else if (data.status === 'FAILED') {
-          setJobError(data.error || data.message || 'Job failed');
-        }
-      } catch (e) {
-        console.error(e);
-      }
+        if (data.status === 'DONE') loadResults(jobId);
+        else if (data.status === 'FAILED') setJobError(data.error || data.message || 'Job failed');
+      } catch (e) { console.error(e); }
     };
     pollRef.current = setInterval(poll, 3000);
     poll();
@@ -148,21 +216,13 @@ export function SimulationPage() {
       setRows(rowsRes.items || []);
       setTotalRows(rowsRes.total_rows || 0);
       toast.success(`Backtest complete: ${sumRes.sample_size} trades`);
-    } catch {
-      toast.error('Failed to load results');
-    }
+    } catch { toast.error('Failed to load results'); }
   };
 
   const runBacktest = async () => {
-    setJobError('');
-    setSummary(null);
-    setRows([]);
-    setSelectedTrade(null);
-    setTradeDetail(null);
-
+    setJobError(''); setSummary(null); setRows([]); setSelectedTrade(null); setTradeDetail(null);
     try {
       const body = { limit };
-
       if (dateFrom) body.date_from = dateFrom;
       if (dateTo) body.date_to = dateTo;
       if (timeframes.length) body.timeframes = timeframes;
@@ -173,53 +233,28 @@ export function SimulationPage() {
       if (fRegimes.length) body.regimes = fRegimes;
       if (includeManual) body.include_manual = true;
 
-      // LUÔN gửi policy, dùng state hiện tại của panel
-      body.policy = {
-        tp_r: parseFloat(policyTpR) || 2.0,
-        levels: cleanLevels(policyLevels),
-      };
+      body.policy = buildApiPolicy(policy);
 
       console.log('[BACKTEST] Request body:', JSON.stringify(body, null, 2));
 
       const res = await fetch(`${API}/backtest/replay/run`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-
-      if (!res.ok) {
-        const e = await res.json();
-        throw new Error(e.detail || 'Failed');
-      }
-
+      if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
       const data = await res.json();
-      setJobId(data.job_id);
-      setJobStatus('QUEUED');
-      setJobProgress(0);
-      setJobMessage('Job queued...');
-    } catch (e) {
-      toast.error(e.message);
-      setJobError(e.message);
-    }
+      setJobId(data.job_id); setJobStatus('QUEUED'); setJobProgress(0); setJobMessage('Job queued...');
+    } catch (e) { toast.error(e.message); setJobError(e.message); }
   };
 
   const loadDetail = async (signalId) => {
     try {
       const res = await fetch(`${API}/backtest/replay/jobs/${jobId}/rows/${signalId}`);
       setTradeDetail(await res.json());
-    } catch {
-      toast.error('Failed to load detail');
-    }
+    } catch { toast.error('Failed to load detail'); }
   };
 
-  const toggleArr = (setter, val) => setter(prev =>
-    prev.includes(val) ? prev.filter(x => x !== val) : [...prev, val]
-  );
-
-  const $n = (v, d = 2) => Number(v || 0).toLocaleString(undefined, {
-    minimumFractionDigits: d,
-    maximumFractionDigits: d,
-  });
+  const toggleArr = (setter, val) => setter(prev => prev.includes(val) ? prev.filter(x => x !== val) : [...prev, val]);
+  const $n = (v, d = 2) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d });
   const pnlClr = v => Number(v) >= 0 ? 'text-emerald-400' : 'text-red-400';
   const diffClr = v => Number(v) > 0 ? 'text-emerald-400' : Number(v) < 0 ? 'text-red-400' : 'text-slate-400';
   const isRunning = jobStatus === 'QUEUED' || jobStatus === 'RUNNING';
@@ -240,13 +275,16 @@ export function SimulationPage() {
     { key: 'simulated', header: 'L2', align: 'center', render: v => v?.level_2_hit ? <span className="text-emerald-400">✓</span> : <span className="text-slate-600">–</span> },
   ];
 
+  const currentTfPolicy = getTfPolicy(activeTf);
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center gap-3">
         <FlaskConical className="w-7 h-7 text-purple-400" />
         <div>
           <h2 className="text-2xl font-bold text-white">Signal Replay Backtest</h2>
-          <p className="text-slate-400 mt-0.5">Replay tín hiệu thật bằng Binance Mark Price 1m theo policy</p>
+          <p className="text-slate-400 mt-0.5">Replay tín hiệu thật theo policy % — so sánh Actual vs Simulated</p>
         </div>
       </div>
 
@@ -265,7 +303,7 @@ export function SimulationPage() {
               <div className="col-span-2">
                 <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">TF</p>
                 <div className="flex gap-1">
-                  {['15m', '1h', '4h'].map(tf => (
+                  {TIMEFRAMES.map(tf => (
                     <button key={tf} onClick={() => toggleArr(setTimeframes, tf)} className={`px-2.5 py-1.5 rounded text-xs ${timeframes.includes(tf) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
                   ))}
                 </div>
@@ -314,11 +352,11 @@ export function SimulationPage() {
           </Card>
         </div>
 
-        {/* RIGHT: Policy Config */}
+        {/* RIGHT: Policy Config (percent-based, per timeframe) */}
         <Card>
           <CardHeader
-            title="Policy Config"
-            subtitle={`${policyLevels.length} level${policyLevels.length !== 1 ? 's' : ''} · TP=${policyTpR}R`}
+            title="Policy Config (%)"
+            subtitle={`${activeTf} · ${currentTfPolicy.levels?.length || 0} levels`}
             action={
               <button onClick={resetPolicy} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                 <RotateCcw className="w-3 h-3" />Reset
@@ -326,56 +364,81 @@ export function SimulationPage() {
             }
           />
           <div className="space-y-4">
-            <div>
-              <label className="block text-xs text-slate-400 mb-1">TP Target (R)</label>
-              <input
-                type="number"
-                step="0.1"
-                value={policyTpR}
-                onChange={e => setPolicyTpR(parseFloat(e.target.value) || 2)}
-                className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
+            {/* TF selector */}
+            <div className="flex gap-1">
+              {TIMEFRAMES.map(tf => (
+                <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1.5 rounded text-xs font-medium ${activeTf === tf ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
+              ))}
             </div>
+
+            {/* SL / TP */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">SL %</label>
+                <input type="number" step="0.1" value={currentTfPolicy.sl_pct || ''} onChange={e => updateTfField(activeTf, 'sl_pct', e.target.value)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">TP %</label>
+                <input type="number" step="0.1" value={currentTfPolicy.tp_pct || ''} onChange={e => updateTfField(activeTf, 'tp_pct', e.target.value)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+              </div>
+            </div>
+
+            {/* Protection Levels */}
             <div>
-              <p className="text-xs text-slate-400 mb-2">Protection Levels</p>
-              {policyLevels.map((lv, i) => (
+              <p className="text-xs text-slate-400 mb-2">Protection Levels ({activeTf})</p>
+              {(currentTfPolicy.levels || []).map((lv, i) => (
                 <div key={i} className="p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 mb-2">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs text-slate-300 font-medium">Level {i + 1}</span>
-                    <button onClick={() => removeLevel(i)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+                    <button onClick={() => removeLevel(activeTf, i)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
                   </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Trigger (R)</label>
-                      <input type="number" step="0.1" value={lv.trigger_r} onChange={e => updateLevel(i, 'trigger_r', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
+                      <label className="block text-[10px] text-slate-500 mb-0.5">Trigger %</label>
+                      <input type="number" step="0.1" value={lv.trigger_pct || ''} onChange={e => updateLevel(activeTf, i, 'trigger_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
                     </div>
                     <div>
                       <label className="block text-[10px] text-slate-500 mb-0.5">Action</label>
-                      <select value={lv.action} onChange={e => updateLevel(i, 'action', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white">
+                      <select value={lv.action} onChange={e => updateLevel(activeTf, i, 'action', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white">
                         {ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                       </select>
                     </div>
                   </div>
                   {lv.action === 'move_to_entry' && (
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Buffer (%)</label>
-                      <input type="number" step="0.001" value={lv.buffer_pct || 0} onChange={e => updateLevel(i, 'buffer_pct', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
+                      <label className="block text-[10px] text-slate-500 mb-0.5">Buffer %</label>
+                      <input type="number" step="0.01" value={lv.buffer_pct || ''} onChange={e => updateLevel(activeTf, i, 'buffer_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
                     </div>
                   )}
-                  {lv.action === 'move_to_r' && (
+                  {lv.action === 'move_stop_to_profit_pct' && (
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Target (R)</label>
-                      <input type="number" step="0.1" value={lv.target_r || 0} onChange={e => updateLevel(i, 'target_r', parseFloat(e.target.value) || 0)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
+                      <label className="block text-[10px] text-slate-500 mb-0.5">Target Profit %</label>
+                      <input type="number" step="0.1" value={lv.target_profit_pct || ''} onChange={e => updateLevel(activeTf, i, 'target_profit_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
                     </div>
                   )}
                 </div>
               ))}
-              <button onClick={addLevel} className="w-full py-2 border border-dashed border-slate-600 rounded-lg text-xs text-slate-400 hover:border-slate-500 hover:text-slate-300 flex items-center justify-center gap-1">
+              <button onClick={() => addLevel(activeTf)} className="w-full py-2 border border-dashed border-slate-600 rounded-lg text-xs text-slate-400 hover:border-slate-500 hover:text-slate-300 flex items-center justify-center gap-1">
                 <Plus className="w-3 h-3" />Add Level
               </button>
             </div>
+
+            {/* Info */}
             <div className="text-[10px] text-slate-600">
-              Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d
+              Tất cả giá trị nhập theo %. VD: SL=2 nghĩa là 2%.
+              <br />Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d
+            </div>
+
+            {/* Quick summary */}
+            <div className="p-2 bg-slate-900/70 rounded text-[10px] text-slate-400 font-mono space-y-0.5">
+              {TIMEFRAMES.map(tf => {
+                const p = policy.timeframes[tf] || {};
+                return (
+                  <div key={tf}>
+                    <span className="text-slate-300">{tf}:</span> SL={p.sl_pct || 0}% TP={p.tp_pct || 0}% Levels={p.levels?.length || 0}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </Card>
@@ -487,7 +550,7 @@ export function SimulationPage() {
           <div className="text-center">
             <FlaskConical className="w-12 h-12 text-slate-700 mx-auto mb-3" />
             <p className="text-slate-500">Chưa có kết quả backtest</p>
-            <p className="text-xs text-slate-600 mt-1">Cấu hình bộ lọc và nhấn Run Backtest</p>
+            <p className="text-xs text-slate-600 mt-1">Cấu hình bộ lọc và policy, nhấn Run Backtest</p>
           </div>
         </Card>
       )}
@@ -503,9 +566,7 @@ export function SimulationPage() {
                 <span className="text-xs text-slate-400">{tradeDetail.timeframe} · {tradeDetail.strategy_name}</span>
                 {tradeDetail.pattern && <span className="text-xs text-yellow-400">{tradeDetail.pattern}</span>}
               </div>
-              <button onClick={() => { setSelectedTrade(null); setTradeDetail(null); }} className="text-slate-400 hover:text-white">
-                <X className="w-5 h-5" />
-              </button>
+              <button onClick={() => { setSelectedTrade(null); setTradeDetail(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="p-4 bg-slate-900/50 rounded-lg">
@@ -514,13 +575,10 @@ export function SimulationPage() {
                   {[['Entry', tradeDetail.entry_price], ['Initial SL', tradeDetail.initial_stop_loss], ['TP', tradeDetail.tp_2r_price], ['R Value', tradeDetail.r_value_abs]].map(([l, v]) => (
                     <div key={l} className="flex justify-between">
                       <span className="text-slate-400">{l}</span>
-                      <span className="text-white font-mono">{v?.toFixed(v > 100 ? 2 : 4)}</span>
+                      <span className="text-white font-mono">{v?.toFixed(v > 100 ? 2 : 6)}</span>
                     </div>
                   ))}
-                  <div className="flex justify-between">
-                    <span className="text-slate-400">Entry Time</span>
-                    <span className="text-slate-300">{utcToVN(tradeDetail.entry_time)}</span>
-                  </div>
+                  <div className="flex justify-between"><span className="text-slate-400">Entry Time</span><span className="text-slate-300">{utcToVN(tradeDetail.entry_time)}</span></div>
                 </div>
               </div>
               <div className="space-y-4">
@@ -539,7 +597,7 @@ export function SimulationPage() {
                     <div className="flex justify-between"><span className="text-slate-400">RR</span><span className={`font-bold ${pnlClr(tradeDetail.simulated?.rr_realized)}`}>{$n(tradeDetail.simulated?.rr_realized, 3)}</span></div>
                     <div className="flex justify-between"><span className="text-slate-400">Max RR</span><span className="text-white">{$n(tradeDetail.simulated?.max_rr_seen, 3)}</span></div>
                     <div className="flex justify-between"><span className="text-slate-400">L1/L2</span><span>{tradeDetail.simulated?.level_1_hit ? '✅' : '—'} / {tradeDetail.simulated?.level_2_hit ? '✅' : '—'}</span></div>
-                    {tradeDetail.simulated?.ambiguous_bar && <div className="text-xs text-orange-400 mt-2">⚠️ Ambiguous bar — conservative mode</div>}
+                    {tradeDetail.simulated?.ambiguous_bar && <div className="text-xs text-orange-400 mt-2">⚠️ Ambiguous bar — conservative</div>}
                   </div>
                 </div>
               </div>

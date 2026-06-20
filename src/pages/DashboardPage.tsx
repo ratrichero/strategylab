@@ -593,6 +593,7 @@ export function Dashboard() {
             <div><h3 className="text-lg font-semibold text-white">Strategy Metrics</h3><p className="text-sm text-slate-400">Trade-Level</p></div>
           </div>
           <div className="space-y-3">
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Win / Loss</span><span className="font-bold"><span className="text-emerald-400">{wins}</span> / <span className="text-red-400">{filteredTradesCount - wins}</span></span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Profit Factor</span><span className={`font-bold ${profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Expectancy</span><span className={`font-bold ${clr(expectancy)}`}>{expectancy.toFixed(2)}%</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Sharpe</span><span className="font-bold text-white">{tradeSharpe.toFixed(2)}</span></div>

@@ -22,6 +22,7 @@ CMD_MANUAL_CANCEL_PENDING = "MANUAL_CANCEL_PENDING"
 CMD_KILL_SWITCH = "KILL_SWITCH"
 CMD_PROTECTION_REPLACE = "PROTECTION_REPLACE"
 CMD_EMERGENCY_CLOSE = "EMERGENCY_CLOSE"
+CMD_PROFIT_LOCK = "PROFIT_LOCK"
 
 
 def _get_price_hint(symbol: str) -> Optional[float]:
@@ -501,3 +502,33 @@ def request_protection_replace(signal_id: int, new_sl_price: float) -> Dict[str,
             "status": cmd.status,
             "deduped": False,
         }
+    
+def request_profit_lock_all() -> Dict[str, Any]:
+    """
+    Profit Lock: close all positions + cancel all pending NEW.
+    Giống kill-switch nhưng trigger bởi PnL dương.
+    """
+    from app.services.live.profit_lock_service import mark_profit_lock_triggered
+
+    result = request_kill_switch_all()
+
+    # Override command type cho audit trail
+    with SessionLocal() as db:
+        recent_cmds = db.query(ExecutionCommand).filter(
+            ExecutionCommand.command_type == CMD_KILL_SWITCH,
+            ExecutionCommand.created_at >= utc_now() - __import__('datetime').timedelta(seconds=10),
+        ).all()
+
+        for cmd in recent_cmds:
+            cmd.command_type = CMD_PROFIT_LOCK
+            if cmd.request_payload:
+                payload = dict(cmd.request_payload)
+                payload["reason"] = "PROFIT_LOCK"
+                cmd.request_payload = payload
+
+        db.commit()
+
+    mark_profit_lock_triggered()
+
+    result["trigger"] = "PROFIT_LOCK"
+    return result

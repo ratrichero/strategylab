@@ -48,6 +48,27 @@ DEFAULTS = {
         "default_leverage": 3,
         "max_position_usdt": 500,
     }),
+    "PROFIT_LOCK_CONFIG": json.dumps({
+    "enabled": False,
+    "threshold_pct": 20,
+    "min_open_trades": 3,
+    "cooldown_minutes": 60
+    }),
+    "PROTECTION_LEVELS_CONFIG": json.dumps({
+        "enabled": True,
+        "timeframes": {
+            "15m": {"levels": [
+                {"trigger_pct": 0.02, "action": "move_to_entry", "buffer_pct": 0.002},
+                {"trigger_pct": 0.04, "action": "move_stop_to_profit_pct", "target_profit_pct": 0.015}
+            ]},
+            "1h": {"levels": [
+                {"trigger_pct": 0.025, "action": "move_to_entry", "buffer_pct": 0.0025}
+            ]},
+            "4h": {"levels": [
+                {"trigger_pct": 0.03, "action": "move_to_entry", "buffer_pct": 0.003}
+            ]}
+        }
+    }),
     "CONNECTION_OVERRIDE": "false",
     "STRATEGY_CONFIG": json.dumps({
         "candlestick": {
@@ -131,6 +152,8 @@ def get_runtime_config(force_reload=False):
         "POSITION_SIZE_CONFIG":  parse_json("POSITION_SIZE_CONFIG"),
         "CONNECTION_OVERRIDE":   config.get("CONNECTION_OVERRIDE", DEFAULTS["CONNECTION_OVERRIDE"]),
         "STRATEGY_CONFIG":       parse_json("STRATEGY_CONFIG"),
+        "PROFIT_LOCK_CONFIG":       parse_json("PROFIT_LOCK_CONFIG"),
+        "PROTECTION_LEVELS_CONFIG": parse_json("PROTECTION_LEVELS_CONFIG"),
         
     }
     return _runtime_cache
@@ -142,7 +165,7 @@ def update_runtime_config(data: dict):
     for k, v in data.items():
         if k in ["RISK_CONFIG","DERIVATIVE_CONFIG","PENDING_CONFIG",
                  "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS",
-                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG","STRATEGY_CONFIG"]:
+                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG","STRATEGY_CONFIG","PROFIT_LOCK_CONFIG","PROTECTION_LEVELS_CONFIG"]:
             try: json.loads(v)
             except: db.close(); raise ValueError(f"{k} is invalid JSON")
         db.execute(text("""

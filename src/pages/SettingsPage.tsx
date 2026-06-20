@@ -65,6 +65,14 @@ export function SettingsPage() {
   const [posLeverage,setPosLeverage]=useState("3"); const [posMaxUsdt,setPosMaxUsdt]=useState("500");
   const [sLt,setSLt]=useState(false); const [svLt,setSvLt]=useState(false);
   const [bnConnecting,setBnConnecting]=useState(false); const [bnAccount,setBnAccount]=useState(null);
+  // Profit Lock
+  const [plEnabled,setPlEnabled]=useState(false); const [plThreshold,setPlThreshold]=useState("20"); const [plMinTrades,setPlMinTrades]=useState("3"); const [plCooldown,setPlCooldown]=useState("60");
+  // Protection Levels
+  const [protEnabled,setProtEnabled]=useState(true); const [protLevels,setProtLevels]=useState({
+    "15m":{levels:[{trigger_pct:0.02,action:"move_to_entry",buffer_pct:0.002}]},
+    "1h":{levels:[{trigger_pct:0.025,action:"move_to_entry",buffer_pct:0.0025}]},
+    "4h":{levels:[{trigger_pct:0.03,action:"move_to_entry",buffer_pct:0.003}]}
+  });
   const [modeInfo,setModeInfo]=useState(null); const [feedInfo,setFeedInfo]=useState(null); const [mlInfo,setMlInfo]=useState(null);
   const [retraining,setRetraining]=useState(false); const [retainResult,setRetainResult]=useState(null);
   const [scanning, setScanning] = useState(false);
@@ -82,6 +90,8 @@ export function SettingsPage() {
     try{const l=JSON.parse(c["LIMIT_ORDER_CONFIG"]||"{}");setLimitEnabled(l.enabled!==false);setLimitRp15m(String(l.entry_reprice_pct?.["15m"]??""));setLimitRp1h(String(l.entry_reprice_pct?.["1h"]??""));setLimitRp4h(String(l.entry_reprice_pct?.["4h"]??""));}catch{setLimitEnabled(true);setLimitRp15m("");setLimitRp1h("");setLimitRp4h("");}
     try{const ps=JSON.parse(c["POSITION_SIZE_CONFIG"]||"{}");setPosSizeMode(ps.mode||"fixed_usdt");setPosFixedUsdt(String(ps.fixed_usdt_per_trade??"200"));setPosRiskPct(String(ps.risk_per_trade_pct??"0.01"));setPosLeverage(String(ps.default_leverage??"3"));setPosMaxUsdt(String(ps.max_position_usdt??"500"));}catch{setPosSizeMode("fixed_usdt");setPosFixedUsdt("200");setPosRiskPct("0.01");setPosLeverage("3");setPosMaxUsdt("500");}
     setEngVer(c["ENGINE_VERSION"]||""); setTopLimit(c["TOP_LIMIT"]||""); setTimeframe(c["TIMEFRAME"]||"15m"); setScheduler(c["ENABLE_SCHEDULER"]?.toLowerCase()==="true"); setMonitor(c["ENABLE_MONITOR"]?.toLowerCase()==="true"); setMaxOpenTrades(c["MAX_OPEN_TRADES"]||"50");
+    try{const pl=JSON.parse(c["PROFIT_LOCK_CONFIG"]||"{}");setPlEnabled(pl.enabled===true);setPlThreshold(String(pl.threshold_pct??"20"));setPlMinTrades(String(pl.min_open_trades??"3"));setPlCooldown(String(pl.cooldown_minutes??"60"));}catch{}
+    try{const pr=JSON.parse(c["PROTECTION_LEVELS_CONFIG"]||"{}");setProtEnabled(pr.enabled!==false);if(pr.timeframes)setProtLevels(pr.timeframes);}catch{}
     if(c["THEME"]) setStoreTheme(c["THEME"]);
     setConnOverride(c["CONNECTION_OVERRIDE"]?.toLowerCase()==="true");
     setConnBnKey(c["BINANCE_API_KEY"]||""); setConnBnSecret(c["BINANCE_API_SECRET"]||""); setConnTgToken(c["TELEGRAM_BOT_TOKEN"]||""); setConnGroq(c["GROQ_API_KEY"]||""); setConnGemini(c["GEMINI_API_KEY"]||"");
@@ -111,7 +121,9 @@ export function SettingsPage() {
   const savePf=async()=>{setSPf(true);setSvPf(false);try{const wlSymbols=wlInput.trim().split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>0).map(s=>s.endsWith("USDT")?s:s+"USDT");const configToSave={...pfConfig,whitelist:wlSymbols.length>0?wlSymbols:[]};await prefillApi.save(configToSave);setPfConfig(configToSave);setSvPf(true);setTimeout(()=>setSvPf(false),3000);toast.success("Pre-Fill Config saved");}catch(e){toast.error(e.message);}finally{setSPf(false);}};
   const toggleStrat=(name)=>{setStratsList(prev=>prev.map(s=>s.name===name?{...s,active:!s.active}:s));};
   const saveStrats=async()=>{setSSt(true);setSvSt(false);try{const active=stratsList.filter(s=>s.active).map(s=>s.name);if(!active.length)active.push("candlestick");await saveConfigKeys({ACTIVE_STRATEGIES:active.join(",")});setSvSt(true);setTimeout(()=>setSvSt(false),3000);toast.success("Strategies saved");}catch(e){toast.error(e.message);}finally{setSSt(false);}};
-  const saveLiveTrading=async()=>{setSLt(true);setSvLt(false);try{await saveConfigKeys({LIMIT_ORDER_CONFIG:buildLimitJson(),POSITION_SIZE_CONFIG:buildPosSizeJson(),MAX_OPEN_TRADES:maxOpenTrades});setSvLt(true);setTimeout(()=>setSvLt(false),3000);toast.success("Live Trading config saved");}catch(e){toast.error(e.message);}finally{setSLt(false);}};
+  const buildProfitLockJson=()=>JSON.stringify({enabled:plEnabled,threshold_pct:parseFloat(plThreshold)||20,min_open_trades:parseInt(plMinTrades)||3,cooldown_minutes:parseInt(plCooldown)||60});
+  const buildProtLevelsJson=()=>JSON.stringify({enabled:protEnabled,timeframes:protLevels});
+  const saveLiveTrading=async()=>{setSLt(true);setSvLt(false);try{await saveConfigKeys({LIMIT_ORDER_CONFIG:buildLimitJson(),POSITION_SIZE_CONFIG:buildPosSizeJson(),MAX_OPEN_TRADES:maxOpenTrades,PROFIT_LOCK_CONFIG:buildProfitLockJson(),PROTECTION_LEVELS_CONFIG:buildProtLevelsJson()});setSvLt(true);setTimeout(()=>setSvLt(false),3000);toast.success("Live Trading config saved");}catch(e){toast.error(e.message);}finally{setSLt(false);}};
   const switchMode=async(mode)=>{if(mode==="LIVE"&&!confirm("⚠️ LIVE mode uses REAL MONEY. Confirm?"))return;try{const r=await tmApi.set(mode);setModeInfo(r);const{setTradingMode}=useAppStore.getState();setTradingMode(r);toast.success(`Mode → ${mode}`);}catch(e){toast.error(e.message);}};
   const retrain=async()=>{setRetraining(true);setRetainResult(null);try{const r=await ml.retrain(false);setRetainResult(r);}catch(e){toast.error(e.message);}finally{setRetraining(false);}};
   const saveConn=async()=>{setSConn(true);setSvConn(false);try{const u={CONNECTION_OVERRIDE:String(connOverride)};if(connBnKey)u["BINANCE_API_KEY"]=connBnKey;if(connBnSecret)u["BINANCE_API_SECRET"]=connBnSecret;if(connTgToken)u["TELEGRAM_BOT_TOKEN"]=connTgToken;if(connGroq)u["GROQ_API_KEY"]=connGroq;if(connGemini)u["GEMINI_API_KEY"]=connGemini;await saveConfigKeys(u);setSvConn(true);setTimeout(()=>setSvConn(false),3000);toast.success("Connection saved");}catch(e){toast.error(e.message);}finally{setSConn(false);}};
@@ -178,7 +190,34 @@ export function SettingsPage() {
           <div className="flex gap-3 mb-5">{[{id:"fixed_usdt",label:"Fixed USDT",desc:"Cố định $ mỗi lệnh"},{id:"risk_based",label:"Risk Based",desc:"% vốn chịu rủi ro"}].map(m=>(<button key={m.id} onClick={()=>setPosSizeMode(m.id)} className={`flex-1 py-3 px-4 rounded-lg border text-sm font-medium transition text-left ${posSizeMode===m.id?"border-indigo-500 bg-indigo-600/20 text-indigo-300":"border-slate-600 bg-slate-800 text-slate-400 hover:border-slate-500"}`}><div className="font-semibold">{m.label}</div><div className="text-xs opacity-70 mt-0.5">{m.desc}</div></button>))}</div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4"><div className={posSizeMode!=="fixed_usdt"?"opacity-30 pointer-events-none":""}><NumField label="USDT per trade" value={posFixedUsdt} onChange={setPosFixedUsdt} step="10"/></div><div className={posSizeMode!=="risk_based"?"opacity-30 pointer-events-none":""}><NumField label="Risk per trade %" value={posRiskPct} onChange={setPosRiskPct} step="0.001"/></div><NumField label="Default leverage" value={posLeverage} onChange={setPosLeverage} step="1"/><NumField label="Max position USDT" value={posMaxUsdt} onChange={setPosMaxUsdt} step="50"/></div>
         </div>
-        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><h4 className="text-sm font-semibold text-slate-300 mb-4">SAFETY — Hard Cap</h4><div className="grid grid-cols-2 gap-4"><NumField label="MAX_OPEN_TRADES" value={maxOpenTrades} onChange={setMaxOpenTrades} hint="Hard fuse cuối cùng" step="1"/><div className="flex items-end pb-2"><p className="text-xs text-slate-500"><span className="text-amber-400 font-medium">Hard fuse</span> — dù OTF pass, quá số này thì không mở thêm</p></div></div></div>
+        {/* SAFETY + Profit Lock — 2 columns */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">SAFETY — Hard Cap</h4><NumField label="MAX_OPEN_TRADES" value={maxOpenTrades} onChange={setMaxOpenTrades} hint="Hard fuse — dù OTF pass, quá số này thì không mở thêm" step="1"/></div>
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">PROFIT_LOCK_CONFIG</h4><div className="space-y-3"><BoolField label="Profit Lock Enabled" value={plEnabled} onChange={setPlEnabled}/><NumField label="Threshold PnL %" value={plThreshold} onChange={setPlThreshold} hint="Ngưỡng tổng PnL % thực tế" step="1"/><NumField label="Min Open Trades" value={plMinTrades} onChange={setPlMinTrades} hint="Tối thiểu bao nhiêu lệnh mở" step="1"/><NumField label="Cooldown (minutes)" value={plCooldown} onChange={setPlCooldown} hint="Không trigger lại trong N phút" step="5"/></div></div>
+        </div>
+        {/* PROTECTION_LEVELS_CONFIG */}
+        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6">
+          <div className="flex items-center justify-between mb-4"><h4 className="text-sm font-semibold text-slate-300">PROTECTION_LEVELS_CONFIG</h4><div className="flex items-center gap-3"><button onClick={()=>{setProtEnabled(!protEnabled);}} className={`relative w-12 h-6 rounded-full transition flex-shrink-0 ${protEnabled?"bg-green-500":"bg-slate-600"}`}><span className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${protEnabled?"translate-x-6":"translate-x-1"}`}/></button><span className={`text-xs ${protEnabled?"text-green-400":"text-slate-500"}`}>{protEnabled?"ON":"OFF"}</span></div></div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {["15m","1h","4h"].map(tf=>{const tfData=protLevels[tf]||{levels:[]};return(
+              <div key={tf} className="bg-slate-800/50 rounded-lg p-3"><h5 className="text-xs font-semibold text-slate-400 mb-2">{tf}</h5>
+                {(tfData.levels||[]).map((lv,i)=>(
+                  <div key={i} className="p-2 bg-slate-900/50 rounded border border-slate-700/50 mb-2 space-y-2">
+                    <div className="flex items-center justify-between"><span className="text-[10px] text-slate-500">Level {i+1}</span><button onClick={()=>{const next={...protLevels};next[tf]={levels:(tfData.levels||[]).filter((_,j)=>j!==i)};setProtLevels(next);}} className="text-[10px] text-red-400">Remove</button></div>
+                    <div className="grid grid-cols-2 gap-1">
+                      <div><label className="block text-[10px] text-slate-500">Trigger %</label><input type="number" step="0.001" value={lv.trigger_pct||0} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].trigger_pct=parseFloat(e.target.value)||0;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>
+                      <div><label className="block text-[10px] text-slate-500">Action</label><select value={lv.action||"move_to_entry"} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].action=e.target.value;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white"><option value="move_to_entry">BE + Buffer</option><option value="move_stop_to_profit_pct">Lock Profit %</option></select></div>
+                    </div>
+                    {lv.action==="move_to_entry"&&<div><label className="block text-[10px] text-slate-500">Buffer %</label><input type="number" step="0.001" value={lv.buffer_pct||0} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].buffer_pct=parseFloat(e.target.value)||0;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>}
+                    {lv.action==="move_stop_to_profit_pct"&&<div><label className="block text-[10px] text-slate-500">Target Profit %</label><input type="number" step="0.001" value={lv.target_profit_pct||0} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].target_profit_pct=parseFloat(e.target.value)||0;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>}
+                  </div>
+                ))}
+                <button onClick={()=>{const next=JSON.parse(JSON.stringify(protLevels));if(!next[tf])next[tf]={levels:[]};next[tf].levels.push({trigger_pct:0.03,action:"move_to_entry",buffer_pct:0.002});setProtLevels(next);}} className="w-full py-1.5 border border-dashed border-slate-600 rounded text-[10px] text-slate-400 hover:border-slate-500">+ Add Level</button>
+              </div>
+            );})}
+          </div>
+        </div>
+        {/* LIMIT_ORDER_CONFIG */}
         <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">LIMIT_ORDER_CONFIG</h4><div className="space-y-3"><BoolField label="Limit Order Enabled" value={limitEnabled} onChange={setLimitEnabled}/><div className="grid grid-cols-3 gap-4"><NumField label="Reprice · 15m" value={limitRp15m} onChange={setLimitRp15m} step="0.001"/><NumField label="Reprice · 1h" value={limitRp1h} onChange={setLimitRp1h} step="0.001"/><NumField label="Reprice · 4h" value={limitRp4h} onChange={setLimitRp4h} step="0.001"/></div></div></div>
         <SaveRow saving={sLt} saved={svLt} onSave={saveLiveTrading} onCancel={()=>applyConfig(orig)}/></Card>)}
 
