@@ -3,14 +3,14 @@ Backtest Replay — Policy Simulator
 =====================================
 Replay exit policy trên mark price 1m bars.
 
-Policy Phase 1:
-- TP = 2R
-- Level 1: 1.0R → BE + buffer
-- Level 2: 1.5R → lock 0.5R
-- Intrabar: conservative (SL ưu tiên nếu cùng bar)
+Policy-driven:
+- tp_r lấy từ policy_config
+- levels lấy từ policy_config
+- nếu không có policy_config -> dùng default
+- intrabar mode: conservative (SL ưu tiên nếu cùng bar)
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import pandas as pd
 
 from app.services.backtest.replay_models import (
@@ -26,63 +26,102 @@ BUFFER_PCT_MAP = {
     "4h": 0.003,
 }
 
+DEFAULT_POLICY = {
+    "tp_r": 2.0,
+    "levels": [
+        {"trigger_r": 1.0, "action": "move_to_entry", "buffer_pct": None},
+        {"trigger_r": 1.5, "action": "move_to_r", "target_r": 0.5},
+    ],
+}
+
 
 def simulate_trade(
     trade: Dict[str, Any],
     bars: pd.DataFrame,
+    policy_config: Dict[str, Any] = None,
 ) -> Dict[str, Any]:
     """
-    Simulate 1 trade theo policy hiện tại.
+    Simulate 1 trade theo policy config.
 
-    Returns dict với keys:
-    - simulated: SimulatedOutcome
-    - policy_levels: List[PolicyLevel]
-    - timeline: List[TimelineEvent]
+    Returns:
+        {
+          "simulated": SimulatedOutcome,
+          "policy_levels": List[PolicyLevel],
+          "timeline": List[TimelineEvent],
+        }
     """
+    if policy_config is None:
+        policy_config = dict(DEFAULT_POLICY)
+
     direction = trade["direction"]
     entry_price = float(trade["entry_price"])
     initial_sl = float(trade["initial_stop_loss"])
-    tp_price = float(trade["tp_2r_price"])
     r_value = float(trade["r_value_abs"])
     timeframe = trade["timeframe"]
 
-    buffer_pct = BUFFER_PCT_MAP.get(timeframe, 0.002)
+    tp_r = float(policy_config.get("tp_r", 2.0))
+    levels_cfg = policy_config.get("levels", []) or []
 
-    # Build policy levels
+    # Sort ascending theo trigger_r
+    levels_cfg = sorted(
+        levels_cfg,
+        key=lambda x: float(x.get("trigger_r", 0) or 0)
+    )
+
+    default_buffer = BUFFER_PCT_MAP.get(timeframe, 0.002)
+
+    # TP price
     if direction == "LONG":
-        be_stop = entry_price * (1 + buffer_pct)
-        lock_stop = entry_price + 0.5 * r_value
-        level_1_trigger = entry_price + 1.0 * r_value
-        level_2_trigger = entry_price + 1.5 * r_value
+        tp_price = entry_price + tp_r * r_value
     else:
-        be_stop = entry_price * (1 - buffer_pct)
-        lock_stop = entry_price - 0.5 * r_value
-        level_1_trigger = entry_price - 1.0 * r_value
-        level_2_trigger = entry_price - 1.5 * r_value
+        tp_price = entry_price - tp_r * r_value
 
-    policy_levels = [
-        PolicyLevel(
-            name="BE",
-            trigger_r=1.0,
-            action="move_to_entry_plus_buffer",
-            trigger_price=round(level_1_trigger, 8),
-            stop_after_trigger=round(be_stop, 8),
-            buffer_pct=buffer_pct,
-        ),
-        PolicyLevel(
-            name="LOCK_0_5R",
-            trigger_r=1.5,
-            action="move_to_0_5R",
-            trigger_price=round(level_2_trigger, 8),
-            stop_after_trigger=round(lock_stop, 8),
-            target_r=0.5,
-        ),
-    ]
+    # Build runtime policy levels
+    policy_levels: List[PolicyLevel] = []
+    level_states = []
+
+    for lv_cfg in levels_cfg:
+        trigger_r = float(lv_cfg.get("trigger_r", 0) or 0)
+        action = str(lv_cfg.get("action", "move_to_entry") or "move_to_entry")
+        buffer_pct = float(lv_cfg.get("buffer_pct") or default_buffer)
+        target_r = float(lv_cfg.get("target_r", 0) or 0)
+
+        if direction == "LONG":
+            trigger_price = entry_price + trigger_r * r_value
+        else:
+            trigger_price = entry_price - trigger_r * r_value
+
+        if action == "move_to_entry":
+            stop_after = entry_price * (1 + buffer_pct) if direction == "LONG" else entry_price * (1 - buffer_pct)
+        elif action == "move_to_r":
+            stop_after = entry_price + target_r * r_value if direction == "LONG" else entry_price - target_r * r_value
+        else:
+            stop_after = initial_sl
+
+        name = _level_name_from_cfg(lv_cfg)
+
+        policy_levels.append(
+            PolicyLevel(
+                name=name,
+                trigger_r=trigger_r,
+                action=action,
+                trigger_price=round(trigger_price, 8),
+                stop_after_trigger=round(stop_after, 8),
+                buffer_pct=buffer_pct if action == "move_to_entry" else None,
+                target_r=target_r if action == "move_to_r" else None,
+            )
+        )
+
+        level_states.append({
+            "trigger_r": trigger_r,
+            "trigger_price": trigger_price,
+            "stop_after": stop_after,
+            "hit": False,
+            "name": name,
+        })
 
     # State
     current_sl = initial_sl
-    level_1_hit = False
-    level_2_hit = False
     max_rr_seen = 0.0
     ambiguous_bar = False
     timeline: List[Dict] = []
@@ -91,62 +130,45 @@ def simulate_trade(
     exit_price = None
     exit_reason = None
 
-    for i, bar in bars.iterrows():
+    for _, bar in bars.iterrows():
         bar_time = bar["time"].isoformat()
         bar_high = float(bar["high"])
         bar_low = float(bar["low"])
-        bar_close = float(bar["close"])
 
-        # Compute current R at extremes
+        # Max RR seen
         if direction == "LONG":
             current_max_r = (bar_high - entry_price) / r_value if r_value > 0 else 0
-            current_min_r = (bar_low - entry_price) / r_value if r_value > 0 else 0
         else:
             current_max_r = (entry_price - bar_low) / r_value if r_value > 0 else 0
-            current_min_r = (entry_price - bar_high) / r_value if r_value > 0 else 0
 
         max_rr_seen = max(max_rr_seen, current_max_r)
 
-        # Check SL hit (conservative: SL checked BEFORE TP)
-        sl_hit = False
+        # Conservative intrabar:
+        # Check SL BEFORE TP
         if direction == "LONG":
             sl_hit = bar_low <= current_sl
-        else:
-            sl_hit = bar_high >= current_sl
-
-        # Check TP hit
-        tp_hit = False
-        if direction == "LONG":
             tp_hit = bar_high >= tp_price
         else:
+            sl_hit = bar_high >= current_sl
             tp_hit = bar_low <= tp_price
 
-        # Conservative: if both hit same bar, SL wins
+        # If both hit same bar => SL wins
         if sl_hit and tp_hit:
             ambiguous_bar = True
             exit_time = bar_time
             exit_price = current_sl
+            exit_reason = _current_sl_reason(level_states)
 
-            if level_2_hit:
-                exit_reason = "SL_LOCK_0_5R"
-            elif level_1_hit:
-                exit_reason = "SL_BE"
-            else:
-                exit_reason = "SL_INITIAL"
-
-            timeline.append({"time": bar_time, "event": f"AMBIGUOUS_{exit_reason}"})
+            timeline.append({
+                "time": bar_time,
+                "event": f"AMBIGUOUS_{exit_reason}",
+            })
             break
 
         if sl_hit:
             exit_time = bar_time
             exit_price = current_sl
-
-            if level_2_hit:
-                exit_reason = "SL_LOCK_0_5R"
-            elif level_1_hit:
-                exit_reason = "SL_BE"
-            else:
-                exit_reason = "SL_INITIAL"
+            exit_reason = _current_sl_reason(level_states)
 
             timeline.append({
                 "time": bar_time,
@@ -167,36 +189,23 @@ def simulate_trade(
             })
             break
 
-        # Level triggers (hiệu lực từ bar KẾ TIẾP, theo conservative rule)
-        if not level_1_hit:
-            triggered = False
+        # Apply ladder triggers after exit checks (conservative)
+        for ls in level_states:
+            if ls["hit"]:
+                continue
+
             if direction == "LONG":
-                triggered = bar_high >= level_1_trigger
+                triggered = bar_high >= ls["trigger_price"]
             else:
-                triggered = bar_low <= level_1_trigger
+                triggered = bar_low <= ls["trigger_price"]
 
             if triggered:
-                level_1_hit = True
-                current_sl = be_stop
+                ls["hit"] = True
+                current_sl = ls["stop_after"]
+
                 timeline.append({
                     "time": bar_time,
-                    "event": "LEVEL_1_TRIGGERED",
-                    "new_stop": current_sl,
-                })
-
-        if level_1_hit and not level_2_hit:
-            triggered = False
-            if direction == "LONG":
-                triggered = bar_high >= level_2_trigger
-            else:
-                triggered = bar_low <= level_2_trigger
-
-            if triggered:
-                level_2_hit = True
-                current_sl = lock_stop
-                timeline.append({
-                    "time": bar_time,
-                    "event": "LEVEL_2_TRIGGERED",
+                    "event": f"{ls['name']}_TRIGGERED",
                     "new_stop": current_sl,
                 })
 
@@ -225,24 +234,80 @@ def simulate_trade(
         result_pct = 0.0
         rr_realized = 0.0
 
+    hit_levels = [ls for ls in level_states if ls["hit"]]
+
     sim = SimulatedOutcome(
         exit_time=exit_time,
-        exit_price=round(exit_price, 8) if exit_price else None,
+        exit_price=round(exit_price, 8) if exit_price is not None else None,
         exit_reason=exit_reason,
         result_pct=round(result_pct, 4),
         rr_realized=round(rr_realized, 4),
         max_rr_seen=round(max_rr_seen, 4),
-        level_1_hit=level_1_hit,
-        level_2_hit=level_2_hit,
+        level_1_hit=len(hit_levels) >= 1,
+        level_2_hit=len(hit_levels) >= 2,
         ambiguous_bar=ambiguous_bar,
     )
-
-    timeline_events = [
-        TimelineEvent(**evt) for evt in timeline
-    ]
 
     return {
         "simulated": sim,
         "policy_levels": policy_levels,
-        "timeline": timeline_events,
+        "timeline": [TimelineEvent(**evt) for evt in timeline],
     }
+
+
+def _current_sl_reason(level_states: list) -> str:
+    """
+    Derive exit reason based on last hit level.
+    Keeps FE-compatible naming:
+      - SL_INITIAL
+      - SL_BE
+      - SL_LOCK_0_5R
+      - SL_LOCK_1R
+      ...
+    """
+    hit_levels = [ls for ls in level_states if ls["hit"]]
+    if not hit_levels:
+        return "SL_INITIAL"
+
+    last_hit = hit_levels[-1]
+    name = str(last_hit.get("name", "")).upper()
+
+    if name.startswith("BE"):
+        return "SL_BE"
+
+    if name.startswith("LOCK_"):
+        return f"SL_{name}"
+
+    return f"SL_{name}"
+
+
+def _level_name_from_cfg(lv_cfg: dict) -> str:
+    """
+    Stable FE-friendly naming:
+      move_to_entry -> BE
+      move_to_r(0.5) -> LOCK_0_5R
+      move_to_r(1.0) -> LOCK_1R
+    """
+    action = lv_cfg.get("action", "")
+    trigger = float(lv_cfg.get("trigger_r", 0) or 0)
+
+    if action == "move_to_entry":
+        return "BE"
+
+    if action == "move_to_r":
+        target = float(lv_cfg.get("target_r", 0) or 0)
+        target_label = _format_r_label(target)
+        return f"LOCK_{target_label}"
+
+    return f"LEVEL_{_format_r_label(trigger)}"
+
+
+def _format_r_label(value: float) -> str:
+    """
+    0.5 -> 0_5R
+    1.0 -> 1R
+    1.25 -> 1_25R
+    """
+    s = f"{value}".rstrip("0").rstrip(".")
+    s = s.replace(".", "_")
+    return f"{s}R"
