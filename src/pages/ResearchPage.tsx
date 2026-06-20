@@ -226,7 +226,16 @@ export function Research() {
       const res = await fetch(`${API}/research/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setTrades((data.trades || []).map(normalizeTradeDates));
+      // Filter out invalid SL placement: LONG with SL >= entry, SHORT with SL <= entry
+      const validTrades = (data.trades || []).filter(t => {
+        const entry = Number(t.entry_price) || 0;
+        const sl = Number(t.stop_loss) || 0;
+        if (!entry || !sl) return true; // keep if missing data
+        if (t.direction === 'LONG' && sl >= entry) return false;
+        if (t.direction === 'SHORT' && sl <= entry) return false;
+        return true;
+      });
+      setTrades(validTrades.map(normalizeTradeDates));
     } catch (e) { console.error(e); }
     finally { setRunning(false); }
   };
