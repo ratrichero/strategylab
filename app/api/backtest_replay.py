@@ -41,6 +41,9 @@ def start_replay_job(req: ReplayRunRequest):
         "strategies": req.strategies,
         "limit": req.limit,
         "include_manual": req.include_manual,
+        "directions": req.directions,
+        "patterns": req.patterns,
+        "regimes": req.regimes,
     }
 
     job_id = create_job(params)

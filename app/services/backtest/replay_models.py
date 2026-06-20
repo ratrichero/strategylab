@@ -21,6 +21,9 @@ class ReplayRunRequest(BaseModel):
     strategies: List[str] = Field(default_factory=list)
     limit: int = Field(default=500, ge=1, le=2000)
     include_manual: bool = False
+    directions: List[str] = Field(default_factory=list)
+    patterns: List[str] = Field(default_factory=list)
+    regimes: List[str] = Field(default_factory=list)
 
 
 # ============================================================

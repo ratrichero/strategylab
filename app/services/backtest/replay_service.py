@@ -83,6 +83,9 @@ def run_replay_job(job_id: str, params: dict):
             strategies=params.get("strategies", []),
             limit=params.get("limit", 500),
             include_manual=params.get("include_manual", False),
+            directions=params.get("directions", []),
+            patterns=params.get("patterns", []),
+            regimes=params.get("regimes", []),
         )
 
         if not signals:

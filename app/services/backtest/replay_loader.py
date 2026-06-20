@@ -23,6 +23,9 @@ def load_closed_signals(
     timeframes: List[str],
     symbols: List[str],
     strategies: List[str],
+    directions: List[str] = None,
+    patterns: List[str] = None,
+    regimes: List[str] = None,
     limit: int = 500,
     include_manual: bool = False,
 ) -> List[Dict[str, Any]]:
@@ -35,6 +38,7 @@ def load_closed_signals(
     """
     date_from = ensure_utc(date_from)
     date_to = ensure_utc(date_to)
+    
 
     results = []
 
@@ -57,6 +61,13 @@ def load_closed_signals(
 
         if strategies:
             query = query.filter(Signal.strategy_name.in_(strategies))
+
+        if directions:
+            query = query.filter(Signal.direction.in_(directions))
+        if patterns:
+            query = query.filter(Signal.pattern.in_(patterns))
+        if regimes:
+            query = query.filter(Signal.regime.in_(regimes))
 
         query = query.order_by(Signal.created_at.asc()).limit(limit)
 
