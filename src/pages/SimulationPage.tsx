@@ -30,6 +30,8 @@ const ACTIONS = [
 
 const TIMEFRAMES = ['15m', '1h', '4h'];
 
+// Default values in DISPLAY format (user-friendly %)
+// VD: sl_pct=2.0 nghĩa là 2%, buffer_pct=0.2 nghĩa là 0.2%
 const DEFAULT_POLICY = {
   mode: 'percent',
   timeframes: {
@@ -58,44 +60,59 @@ const DEFAULT_POLICY = {
   },
 };
 
+// ── Helpers ──────────────────────────────────────────────────
+
 // Convert display % (e.g. 2.0) to decimal (0.02) for API
 function pctToDecimal(v) {
   return (parseFloat(v) || 0) / 100;
 }
 
-// Convert decimal (0.02) to display % (2.0)
-function decimalToPct(v) {
-  return parseFloat(((parseFloat(v) || 0) * 100).toFixed(4));
-}
-
-function buildApiPolicy(displayPolicy) {
-  const result = { mode: 'percent', timeframes: {} };
-  for (const tf of TIMEFRAMES) {
-    const src = displayPolicy.timeframes[tf];
-    if (!src) continue;
-    result.timeframes[tf] = {
-      sl_pct: pctToDecimal(src.sl_pct),
-      tp_pct: pctToDecimal(src.tp_pct),
-      levels: (src.levels || []).map(lv => {
-        const out = {
-          trigger_pct: pctToDecimal(lv.trigger_pct),
-          action: lv.action,
-        };
-        if (lv.action === 'move_to_entry') {
-          out.buffer_pct = pctToDecimal(lv.buffer_pct);
-        } else if (lv.action === 'move_stop_to_profit_pct') {
-          out.target_profit_pct = pctToDecimal(lv.target_profit_pct);
-        }
-        return out;
-      }),
-    };
-  }
-  return result;
-}
-
 function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
+
+function convertTfConfigToApi(src) {
+  return {
+    sl_pct: pctToDecimal(src.sl_pct),
+    tp_pct: pctToDecimal(src.tp_pct),
+    levels: (src.levels || []).map(lv => {
+      const out = {
+        trigger_pct: pctToDecimal(lv.trigger_pct),
+        action: lv.action,
+      };
+      if (lv.action === 'move_to_entry') {
+        out.buffer_pct = pctToDecimal(lv.buffer_pct);
+      } else if (lv.action === 'move_stop_to_profit_pct') {
+        out.target_profit_pct = pctToDecimal(lv.target_profit_pct);
+      }
+      return out;
+    }),
+  };
+}
+
+function buildApiPolicy(displayPolicy, uniformMode, activeTf) {
+  const result = { mode: 'percent', timeframes: {} };
+
+  if (uniformMode) {
+    // Uniform: copy activeTf config cho tất cả TF
+    const src = displayPolicy.timeframes[activeTf] || displayPolicy.timeframes['15m'] || {};
+    const converted = convertTfConfigToApi(src);
+    for (const tf of TIMEFRAMES) {
+      result.timeframes[tf] = converted;
+    }
+  } else {
+    // Per timeframe: mỗi TF config riêng
+    for (const tf of TIMEFRAMES) {
+      const src = displayPolicy.timeframes[tf];
+      if (!src) continue;
+      result.timeframes[tf] = convertTfConfigToApi(src);
+    }
+  }
+
+  return result;
+}
+
+// ── Component ───────────────────────────────────────────────
 
 export function SimulationPage() {
   // Filters
@@ -113,6 +130,7 @@ export function SimulationPage() {
   // Policy Config (display values in %)
   const [policy, setPolicy] = useState(deepClone(DEFAULT_POLICY));
   const [activeTf, setActiveTf] = useState('15m');
+  const [uniformMode, setUniformMode] = useState(true);
 
   // Job state
   const [jobId, setJobId] = useState(null);
@@ -182,7 +200,11 @@ export function SimulationPage() {
     });
   };
 
-  const resetPolicy = () => setPolicy(deepClone(DEFAULT_POLICY));
+  const resetPolicy = () => {
+    setPolicy(deepClone(DEFAULT_POLICY));
+    setUniformMode(true);
+    setActiveTf('15m');
+  };
 
   // Poll
   useEffect(() => {
@@ -233,7 +255,8 @@ export function SimulationPage() {
       if (fRegimes.length) body.regimes = fRegimes;
       if (includeManual) body.include_manual = true;
 
-      body.policy = buildApiPolicy(policy);
+      // Luôn gửi policy, convert display % sang decimal
+      body.policy = buildApiPolicy(policy, uniformMode, activeTf);
 
       console.log('[BACKTEST] Request body:', JSON.stringify(body, null, 2));
 
@@ -259,6 +282,8 @@ export function SimulationPage() {
   const diffClr = v => Number(v) > 0 ? 'text-emerald-400' : Number(v) < 0 ? 'text-red-400' : 'text-slate-400';
   const isRunning = jobStatus === 'QUEUED' || jobStatus === 'RUNNING';
 
+  const currentTfPolicy = getTfPolicy(activeTf);
+
   const columns = [
     { key: 'signal_id', header: 'ID', sortable: true, width: '60px' },
     { key: 'symbol', header: 'Symbol', sortable: true },
@@ -274,8 +299,6 @@ export function SimulationPage() {
     { key: 'simulated', header: 'L1', align: 'center', render: v => v?.level_1_hit ? <span className="text-emerald-400">✓</span> : <span className="text-slate-600">–</span> },
     { key: 'simulated', header: 'L2', align: 'center', render: v => v?.level_2_hit ? <span className="text-emerald-400">✓</span> : <span className="text-slate-600">–</span> },
   ];
-
-  const currentTfPolicy = getTfPolicy(activeTf);
 
   return (
     <div className="space-y-6">
@@ -352,11 +375,11 @@ export function SimulationPage() {
           </Card>
         </div>
 
-        {/* RIGHT: Policy Config (percent-based, per timeframe) */}
+        {/* RIGHT: Policy Config */}
         <Card>
           <CardHeader
             title="Policy Config (%)"
-            subtitle={`${activeTf} · ${currentTfPolicy.levels?.length || 0} levels`}
+            subtitle={uniformMode ? `Uniform · ${currentTfPolicy.levels?.length || 0} levels` : `${activeTf} · ${currentTfPolicy.levels?.length || 0} levels`}
             action={
               <button onClick={resetPolicy} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                 <RotateCcw className="w-3 h-3" />Reset
@@ -364,28 +387,67 @@ export function SimulationPage() {
             }
           />
           <div className="space-y-4">
-            {/* TF selector */}
-            <div className="flex gap-1">
-              {TIMEFRAMES.map(tf => (
-                <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1.5 rounded text-xs font-medium ${activeTf === tf ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
-              ))}
+            {/* Mode toggle: Uniform vs Per Timeframe */}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setUniformMode(true)}
+                className={`px-3 py-1.5 rounded text-xs font-medium ${uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}
+              >
+                Uniform
+              </button>
+              <button
+                onClick={() => setUniformMode(false)}
+                className={`px-3 py-1.5 rounded text-xs font-medium ${!uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}
+              >
+                Per Timeframe
+              </button>
             </div>
+
+            {/* Uniform mode hint */}
+            {uniformMode && (
+              <div className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded">
+                Uniform: cùng 1 bộ SL/TP/Levels áp cho tất cả TF
+              </div>
+            )}
+
+            {/* TF selector — chỉ hiện khi Per Timeframe */}
+            {!uniformMode && (
+              <div className="flex gap-1">
+                {TIMEFRAMES.map(tf => (
+                  <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1.5 rounded text-xs font-medium ${activeTf === tf ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
+                ))}
+              </div>
+            )}
 
             {/* SL / TP */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">SL %</label>
-                <input type="number" step="0.1" value={currentTfPolicy.sl_pct || ''} onChange={e => updateTfField(activeTf, 'sl_pct', e.target.value)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <label className="block text-xs text-slate-400 mb-1">SL (%)</label>
+                <input
+                  type="number" step="0.1"
+                  value={currentTfPolicy.sl_pct || ''}
+                  onChange={e => updateTfField(activeTf, 'sl_pct', e.target.value)}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="2.0"
+                />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">TP %</label>
-                <input type="number" step="0.1" value={currentTfPolicy.tp_pct || ''} onChange={e => updateTfField(activeTf, 'tp_pct', e.target.value)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                <label className="block text-xs text-slate-400 mb-1">TP (%)</label>
+                <input
+                  type="number" step="0.1"
+                  value={currentTfPolicy.tp_pct || ''}
+                  onChange={e => updateTfField(activeTf, 'tp_pct', e.target.value)}
+                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="4.0"
+                />
               </div>
             </div>
 
             {/* Protection Levels */}
             <div>
-              <p className="text-xs text-slate-400 mb-2">Protection Levels ({activeTf})</p>
+              <p className="text-xs text-slate-400 mb-2">
+                Protection Levels {!uniformMode && `(${activeTf})`}
+              </p>
               {(currentTfPolicy.levels || []).map((lv, i) => (
                 <div key={i} className="p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 mb-2">
                   <div className="flex items-center justify-between mb-2">
@@ -394,8 +456,8 @@ export function SimulationPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Trigger %</label>
-                      <input type="number" step="0.1" value={lv.trigger_pct || ''} onChange={e => updateLevel(activeTf, i, 'trigger_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
+                      <label className="block text-[10px] text-slate-500 mb-0.5">Trigger (%)</label>
+                      <input type="number" step="0.1" value={lv.trigger_pct || ''} onChange={e => updateLevel(activeTf, i, 'trigger_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="2.0" />
                     </div>
                     <div>
                       <label className="block text-[10px] text-slate-500 mb-0.5">Action</label>
@@ -406,14 +468,14 @@ export function SimulationPage() {
                   </div>
                   {lv.action === 'move_to_entry' && (
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Buffer %</label>
-                      <input type="number" step="0.01" value={lv.buffer_pct || ''} onChange={e => updateLevel(activeTf, i, 'buffer_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
+                      <label className="block text-[10px] text-slate-500 mb-0.5">Buffer (%)</label>
+                      <input type="number" step="0.01" value={lv.buffer_pct || ''} onChange={e => updateLevel(activeTf, i, 'buffer_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="0.2" />
                     </div>
                   )}
                   {lv.action === 'move_stop_to_profit_pct' && (
                     <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Target Profit %</label>
-                      <input type="number" step="0.1" value={lv.target_profit_pct || ''} onChange={e => updateLevel(activeTf, i, 'target_profit_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" />
+                      <label className="block text-[10px] text-slate-500 mb-0.5">Target Profit (%)</label>
+                      <input type="number" step="0.1" value={lv.target_profit_pct || ''} onChange={e => updateLevel(activeTf, i, 'target_profit_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="1.5" />
                     </div>
                   )}
                 </div>
@@ -429,16 +491,24 @@ export function SimulationPage() {
               <br />Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d
             </div>
 
-            {/* Quick summary */}
+            {/* Quick summary — hiện config tất cả TF */}
             <div className="p-2 bg-slate-900/70 rounded text-[10px] text-slate-400 font-mono space-y-0.5">
-              {TIMEFRAMES.map(tf => {
-                const p = policy.timeframes[tf] || {};
-                return (
-                  <div key={tf}>
-                    <span className="text-slate-300">{tf}:</span> SL={p.sl_pct || 0}% TP={p.tp_pct || 0}% Levels={p.levels?.length || 0}
-                  </div>
-                );
-              })}
+              {uniformMode ? (
+                <div>
+                  <span className="text-indigo-400">ALL TF:</span>{' '}
+                  SL={currentTfPolicy.sl_pct || 0}% TP={currentTfPolicy.tp_pct || 0}% Levels={currentTfPolicy.levels?.length || 0}
+                </div>
+              ) : (
+                TIMEFRAMES.map(tf => {
+                  const p = policy.timeframes[tf] || {};
+                  return (
+                    <div key={tf}>
+                      <span className={tf === activeTf ? 'text-indigo-400' : 'text-slate-300'}>{tf}:</span>{' '}
+                      SL={p.sl_pct || 0}% TP={p.tp_pct || 0}% Levels={p.levels?.length || 0}
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </Card>

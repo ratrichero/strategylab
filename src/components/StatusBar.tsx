@@ -32,7 +32,7 @@ export function StatusBar() {
     };
 
     load();
-    const id = setInterval(load, 10000);
+    const id = setInterval(load, 5000);
     return () => clearInterval(id);
   }, [setTradingMode, setPriceFeed]);
 
@@ -66,7 +66,7 @@ export function StatusBar() {
   const btcPrice = btcOverview?.price;
 
   return (
-    <div className="w-full flex items-center justify-between gap-3 px-4 py-2 border-b border-slate-800 bg-slate-950/80 backdrop-blur text-xs">
+    <div className="flex items-center gap-2 text-xs">
       <div className="flex items-center gap-2 flex-wrap">
 
         {/* Trading Mode */}
@@ -121,9 +121,7 @@ export function StatusBar() {
         )}
       </div>
 
-      <div className="text-slate-500 hidden md:block">
-        Quant Research Lab
-      </div>
+      
     </div>
   );
 }

@@ -403,5 +403,5 @@ def _build_summary(job_id: str, rows: List[TradeRow], params: dict = None) -> Re
     )
 
 
-def _empty_summary(job_id: str) -> ReplaySummary:
+def _empty_summary(job_id: str, params: dict = None) -> ReplaySummary:
     return ReplaySummary(job_id=job_id, sample_size=0)

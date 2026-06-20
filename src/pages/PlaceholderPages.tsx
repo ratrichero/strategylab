@@ -188,8 +188,9 @@ export function BlockedPage() {
   const [data, setData] = useState([]);
   const [reasons, setReasons] = useState([]);
   const [selectedReason, setSelectedReason] = useState("all");
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
+  const today = new Date(Date.now() + 7*3600*1000).toISOString().slice(0,10);
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
 
   const loadData = async () => {
     setLoading(true);
@@ -255,16 +256,17 @@ export function BlockedPage() {
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Blocked</p><p className="text-2xl font-bold text-white">{data.length}</p></Card>
-        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Unique Reasons</p><p className="text-2xl font-bold text-white">{reasonList.length}</p></Card>
-        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Avg Score</p><p className="text-2xl font-bold text-yellow-400">{data.length ? (data.reduce((s,d) => s + Number(d.total_score||0), 0) / data.length).toFixed(2) : '0'}</p></Card>
-        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Filtered</p><p className="text-2xl font-bold text-white">{filtered.length}</p></Card>
+        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Blocked</p><p className="text-2xl font-bold text-white">{filtered.length}</p></Card>
+        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Unique Reasons</p><p className="text-2xl font-bold text-white">{Array.from(new Set(filtered.map(d=>getReasonGroup(d.block_reason)).filter(Boolean))).length}</p></Card>
+        <Card className="p-3 text-center"><p className="text-xs text-slate-400">Avg Score</p><p className="text-2xl font-bold text-yellow-400">{filtered.length ? (filtered.reduce((s,d) => s + Number(d.total_score||0), 0) / filtered.length).toFixed(2) : '0'}</p></Card>
+        <Card className="p-3 text-center"><p className="text-xs text-slate-400">All Time</p><p className="text-2xl font-bold text-slate-400">{data.length}</p></Card>
       </div>
       <Card>
         <div className="flex items-center gap-3 mb-4 flex-wrap">
           <Select label="Block Reason" value={selectedReason} onChange={setSelectedReason} options={[{ value: "all", label: "All Reasons" }, ...reasonList.map(r => ({ value: r, label: r }))]} className="w-64" />
           <div><label className="block text-sm font-medium text-slate-400 mb-1.5">From</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
           <div><label className="block text-sm font-medium text-slate-400 mb-1.5">To</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
+          <div className="flex items-end"><Button variant="ghost" onClick={() => { setStartDate(''); setEndDate(''); setSelectedReason('all'); }}>Clear</Button></div>
         </div>
         <DataTable columns={cols} data={filtered} pageSize={20} emptyMessage="No blocked signals" />
       </Card>
