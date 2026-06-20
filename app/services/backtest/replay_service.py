@@ -73,6 +73,26 @@ BUFFER_PCT_MAP = {
     "4h": 0.003,
 }
 
+DEFAULT_POLICY = {
+    "tp_r": 2.0,
+    "levels": [
+        {"trigger_r": 1.0, "action": "move_to_entry", "buffer_pct": 0.002},
+        {"trigger_r": 1.5, "action": "move_to_r", "target_r": 0.5},
+    ],
+}
+
+
+def _resolve_policy(params: dict) -> dict:
+    """
+    Resolve policy config:
+    - nếu FE gửi custom policy -> dùng nó
+    - nếu không -> dùng default
+    """
+    custom = params.get("policy")
+    if custom and isinstance(custom, dict):
+        return custom
+    return dict(DEFAULT_POLICY)
+
 
 def run_replay_job(job_id: str, params: dict):
     """
