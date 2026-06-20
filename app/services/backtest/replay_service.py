@@ -9,6 +9,13 @@ from datetime import datetime
 from typing import List, Dict, Any
 from datetime import datetime, timezone, timedelta
 
+from app.services.backtest.replay_market_data import (
+    fetch_mark_klines_1m,
+    batch_fetch_mark_klines,
+    get_horizon,
+    get_cache_key,
+)
+
 
 def _parse_date(raw, fallback_days_ago=None, fallback_future=False):
     """
@@ -55,7 +62,6 @@ from app.services.backtest.replay_registry import (
     set_job_failed,
 )
 from app.services.backtest.replay_loader import load_closed_signals
-from app.services.backtest.replay_market_data import fetch_mark_klines_1m, get_horizon
 from app.services.backtest.replay_simulator import simulate_trade
 
 from app.core.time_utils import ensure_utc
@@ -71,51 +77,102 @@ BUFFER_PCT_MAP = {
 def run_replay_job(job_id: str, params: dict):
     """
     Main orchestration. Gọi từ background thread.
+
+    OPTIMIZATIONS:
+    - Batch fetch klines với dedup + semaphore
+    - Throttle dựa trên live activity
+    - Log throttle mode
     """
     try:
         set_job_running(job_id, "Loading signals...")
 
+        date_from = _parse_date(params.get("date_from"), fallback_days_ago=90)
+        date_to = _parse_date(params.get("date_to"), fallback_future=True)
+
         signals = load_closed_signals(
-            date_from=_parse_date(params.get("date_from"), fallback_days_ago=90),
-            date_to=_parse_date(params.get("date_to"), fallback_future=True),
+            date_from=date_from,
+            date_to=date_to,
             timeframes=params.get("timeframes", []),
             symbols=params.get("symbols", []),
             strategies=params.get("strategies", []),
-            limit=params.get("limit", 500),
-            include_manual=params.get("include_manual", False),
             directions=params.get("directions", []),
             patterns=params.get("patterns", []),
             regimes=params.get("regimes", []),
+            limit=params.get("limit", 500),
+            include_manual=params.get("include_manual", False),
         )
 
         if not signals:
-            set_job_done(job_id, _empty_summary(job_id), [])
+            set_job_done(job_id, _empty_summary(job_id, params), [])
             return
 
-        set_job_progress(job_id, 10, f"Loaded {len(signals)} signals. Fetching market data...")
+        policy_config = _resolve_policy(params)
+        live_active = _is_live_active()
+        throttle_mode = "SLOW (live active)" if live_active else "FAST (idle)"
 
+        print(
+            f"[BACKTEST] Job {job_id} started "
+            f"| {len(signals)} signals "
+            f"| policy: tp={policy_config.get('tp_r')}R levels={len(policy_config.get('levels', []))} "
+            f"| throttle: {throttle_mode}"
+        )
+
+        set_job_progress(job_id, 5, f"Loaded {len(signals)} signals. Preparing batch fetch...")
+
+        # ── Phase 1: Build fetch requests ────────────────
+        fetch_requests = []
+        signal_keys = {}
+
+        for trade in signals:
+            entry_time = ensure_utc(datetime.fromisoformat(trade["entry_time"]))
+            horizon = get_horizon(trade["timeframe"])
+            end_time = entry_time + horizon
+
+            key = get_cache_key(trade["symbol"], entry_time, end_time)
+            signal_keys[trade["signal_id"]] = {
+                "key": key,
+                "entry_time": entry_time,
+                "end_time": end_time,
+            }
+
+            fetch_requests.append({
+                "symbol": trade["symbol"],
+                "start_time": entry_time,
+                "end_time": end_time,
+            })
+
+        set_job_progress(job_id, 10, f"Fetching market data for {len(fetch_requests)} ranges...")
+
+        # ── Phase 2: Batch fetch ─────────────────────────
+        klines_cache = batch_fetch_mark_klines(
+            fetch_requests=fetch_requests,
+            live_active=live_active,
+        )
+
+        set_job_progress(
+            job_id, 60,
+            f"Fetched {len(klines_cache)} kline sets. Simulating..."
+        )
+
+        # ── Phase 3: Simulate ────────────────────────────
         rows: List[TradeRow] = []
         total = len(signals)
+        skipped = 0
 
         for idx, trade in enumerate(signals):
             try:
-                entry_time = ensure_utc(datetime.fromisoformat(trade["entry_time"]))
-                horizon = get_horizon(trade["timeframe"])
-                end_time = entry_time + horizon
-
-                bars = fetch_mark_klines_1m(
-                    symbol=trade["symbol"],
-                    start_time=entry_time,
-                    end_time=end_time,
-                )
-
-                if bars is None or bars.empty:
+                sig_info = signal_keys.get(trade["signal_id"])
+                if not sig_info:
+                    skipped += 1
                     continue
 
-                sim_result = simulate_trade(trade, bars)
+                bars = klines_cache.get(sig_info["key"])
+                if bars is None or bars.empty:
+                    skipped += 1
+                    continue
 
+                sim_result = simulate_trade(trade, bars, policy_config=policy_config)
                 actual_rr = _calc_actual_rr(trade)
-
                 row = _build_trade_row(trade, sim_result, actual_rr)
                 rows.append(row)
 
@@ -123,11 +180,17 @@ def run_replay_job(job_id: str, params: dict):
                 print(f"[BACKTEST] Error replaying signal {trade.get('signal_id')}: {e}")
                 traceback.print_exc()
 
-            pct = 10 + int((idx + 1) / total * 85)
-            if (idx + 1) % 10 == 0 or idx == total - 1:
-                set_job_progress(job_id, pct, f"Replayed {idx + 1}/{total}")
+            if (idx + 1) % 50 == 0 or idx == total - 1:
+                pct = 60 + int((idx + 1) / total * 35)
+                set_job_progress(job_id, pct, f"Simulated {idx + 1}/{total}")
 
-        summary = _build_summary(job_id, rows)
+        summary = _build_summary(job_id, rows, params)
+
+        print(
+            f"[BACKTEST] Job {job_id} complete "
+            f"| {len(rows)} simulated / {skipped} skipped "
+            f"| throttle: {throttle_mode}"
+        )
 
         set_job_done(job_id, summary, [r.dict() for r in rows])
 
@@ -135,6 +198,55 @@ def run_replay_job(job_id: str, params: dict):
         traceback.print_exc()
         set_job_failed(job_id, f"{type(e).__name__}: {e}")
 
+def _is_live_active() -> bool:
+    """
+    Check xem live đang có position/order không.
+    Dùng để quyết định throttle speed cho replay.
+    """
+    try:
+        from app.db.session import SessionLocal
+        from app.services.live.capacity_service import get_capacity_snapshot
+        from app.services.config_service import get_runtime_config
+
+        cfg = get_runtime_config()
+        c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+
+        with SessionLocal() as db:
+            snap = get_capacity_snapshot(db, c_config)
+
+        return snap.c_open > 0 or snap.c_new > 0
+
+    except Exception:
+        return True  # nếu lỗi check → coi như active để an toàn
+
+def _get_replay_throttle_delay() -> float:
+    """
+    Quyết định tốc độ replay dựa trên live activity hiện tại.
+
+    - Nếu có position OPEN hoặc pending NEW trên sàn: chạy chậm (3s)
+    - Nếu idle: chạy nhanh hơn (0.5s)
+    """
+    try:
+        from app.db.session import SessionLocal
+        from app.services.live.capacity_service import get_capacity_snapshot
+        from app.services.config_service import get_runtime_config
+
+        cfg = get_runtime_config()
+        c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+
+        with SessionLocal() as db:
+            snap = get_capacity_snapshot(db, c_config)
+
+        if snap.c_open > 0 or snap.c_new > 0:
+            # Live đang có lệnh → chạy chậm
+            return 3.0
+
+        # Idle → chạy nhanh hơn
+        return 0.5
+
+    except Exception:
+        # Nếu lỗi khi check → chạy an toàn
+        return 2.0
 
 def _calc_actual_rr(trade: dict) -> float:
     entry = trade["entry_price"]
@@ -190,9 +302,10 @@ def _build_trade_row(trade: dict, sim_result: dict, actual_rr: float) -> TradeRo
         policy_levels=sim_result["policy_levels"],
         timeline=sim_result["timeline"],
     )
+def _empty_summary(job_id: str, params: dict = None) -> ReplaySummary:
+    return ReplaySummary(job_id=job_id, sample_size=0)
 
-
-def _build_summary(job_id: str, rows: List[TradeRow]) -> ReplaySummary:
+def _build_summary(job_id: str, rows: List[TradeRow], params: dict = None) -> ReplaySummary:
     if not rows:
         return _empty_summary(job_id)
 
