@@ -257,12 +257,12 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
             db.commit()
 
-            print(
+            """print(
                 f"⛔ LIVE HARD CAP BLOCK: {p.symbol} {p.direction} "
                 f"| pending={p.id} open={cap.c_open} new={cap.c_new} "
                 f"| total={cap.total_risk}/{cap.max_risk} "
                 f"| retry_at={p.next_retry_at.isoformat()}"
-            )
+            )"""
             return
 
         current = price_map.get(p.symbol)
@@ -325,12 +325,12 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
             db.commit()
 
-            print(
+            """print(
                 f"⛔ LIVE HARD CAP BLOCK BEFORE PLACE: {p.symbol} {p.direction} "
                 f"| pending={p.id} open={cap.c_open} new={cap.c_new} "
                 f"| total={cap.total_risk}/{cap.max_risk} "
                 f"| retry_at={p.next_retry_at.isoformat()}"
-            )
+            )"""
             return
 
         _record_place_attempt(p, now)
