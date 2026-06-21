@@ -180,13 +180,33 @@ export function SimulationPage() {
 
   const loadResults = async (id) => {
     try {
-      const [sumRes, rowsRes] = await Promise.all([
-        fetch(`${API}/backtest/replay/jobs/${id}/summary`).then(r => r.json()),
-        fetch(`${API}/backtest/replay/jobs/${id}/rows?page=1&page_size=500`).then(r => r.json()),
+      const [sumResp, rowsResp] = await Promise.all([
+        fetch(`${API}/backtest/replay/jobs/${id}/summary`),
+        fetch(`${API}/backtest/replay/jobs/${id}/rows?page=1&page_size=500`),
       ]);
-      setSummary(sumRes); setRows(rowsRes.items || []); setTotalRows(rowsRes.total_rows || 0);
+
+      const sumRes = await sumResp.json();
+      const rowsRes = await rowsResp.json();
+
+      if (!sumResp.ok) {
+        throw new Error(sumRes.detail || sumRes.error || 'Failed to load summary');
+      }
+
+      if (!rowsResp.ok) {
+        throw new Error(rowsRes.detail || rowsRes.error || 'Failed to load rows');
+      }
+
+      setSummary(sumRes);
+      setRows(rowsRes.items || []);
+      setTotalRows(rowsRes.total_rows || 0);
+
+      console.log('[BACKTEST] rowsRes =', rowsRes);
       toast.success(`Backtest complete: ${sumRes.sample_size} trades`);
-    } catch { toast.error('Failed to load results'); }
+    } catch (e) {
+      console.error('[BACKTEST] loadResults error:', e);
+      setJobError(e.message || 'Failed to load results');
+      toast.error(e.message || 'Failed to load results');
+    }
   };
 
   const runBacktest = async () => {
