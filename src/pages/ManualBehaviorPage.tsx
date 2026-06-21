@@ -185,7 +185,7 @@ export function ManualBehaviorPage() {
       </div>
 
       {/* KPI */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Signals</p><p className="text-2xl font-bold text-white">{kpi.total}</p></Card>
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">Manual Count</p><p className="text-2xl font-bold text-orange-400">{kpi.manualCount}</p></Card>
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">Overall WR (Derived)</p><p className={`text-2xl font-bold ${kpi.wr >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{kpi.wr.toFixed(1)}%</p></Card>
@@ -197,7 +197,7 @@ export function ManualBehaviorPage() {
       {/* Filters */}
       <Card>
         <div className="flex items-center gap-2 mb-4"><span className="text-sm font-semibold text-white">Filters</span></div>
-        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-9 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 lg:grid-cols-9 gap-3">
           <Input type="date" label="From" value={filters.startDate} onChange={e => set('startDate', e.target.value)} />
           <Input type="date" label="To" value={filters.endDate} onChange={e => set('endDate', e.target.value)} />
           <Select label="Status View" value={filters.statusView} onChange={v => set('statusView', v)} options={[
@@ -230,7 +230,7 @@ export function ManualBehaviorPage() {
               return [
                 ['Total', std.length], ['Wins', w], ['Win Rate', `${wr.toFixed(1)}%`],
                 ['Avg PnL', `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`],
-                ['Profit Factor', pf === Infinity ? '∞' : pf.toFixed(2)],
+                ['Profit Factor', pf === Infinity ? 'âˆž' : pf.toFixed(2)],
               ].map(([l, v]) => (
                 <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
                   <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
@@ -254,7 +254,7 @@ export function ManualBehaviorPage() {
               return [
                 ['Total', man.length], ['Derived Wins', w], ['Derived WR', `${wr.toFixed(1)}%`],
                 ['Avg Actual PnL', `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`],
-                ['Profit Factor', pf === Infinity ? '∞' : pf.toFixed(2)],
+                ['Profit Factor', pf === Infinity ? 'âˆž' : pf.toFixed(2)],
               ].map(([l, v]) => (
                 <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
                   <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
@@ -267,7 +267,7 @@ export function ManualBehaviorPage() {
 
       {/* Table */}
       <Card>
-        <CardHeader title="Signal Details" subtitle={`${filtered.length} signals — Derived = WIN/LOSS based on entry/exit/direction`} />
+        <CardHeader title="Signal Details" subtitle={`${filtered.length} signals â€” Derived = WIN/LOSS based on entry/exit/direction`} />
         <DataTable columns={columns} data={[...filtered].sort((a, b) => parseUtcMs(b.exit_time) - parseUtcMs(a.exit_time))} pageSize={20} emptyMessage="No signals found" />
       </Card>
     </div>

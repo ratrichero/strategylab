@@ -38,7 +38,7 @@ export function DataTable<T extends Record<string, any>>({ columns, data, pageSi
   return (
     <div className={cn('space-y-4', className)}>
       <div className="overflow-x-auto rounded-lg border border-slate-700">
-        <table className="w-full">
+        <table className="w-full min-w-max">
           <thead><tr className="bg-slate-800/80">
             {columns.map((col) => (
               <th key={col.key as string} className={cn('px-4 py-3 text-sm font-medium text-slate-300', col.align === 'center' && 'text-center', col.align === 'right' && 'text-right', col.sortable && 'cursor-pointer hover:bg-slate-700/50 select-none')} style={{ width: col.width }} onClick={() => col.sortable && handleSort(col.key as string)}>
@@ -62,9 +62,9 @@ export function DataTable<T extends Record<string, any>>({ columns, data, pageSi
         </table>
       </div>
       {totalPages > 1 && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-slate-400">Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, data.length)} of {data.length}</p>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <button onClick={() => setPage(1)} disabled={page === 1} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">First</button>
             <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">‹ Prev</button>
             <div className="flex gap-1">

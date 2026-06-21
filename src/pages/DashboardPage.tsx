@@ -1,6 +1,6 @@
 // @ts-nocheck
 /* eslint-disable */
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { Card, CardHeader } from '../components/ui/Card';
 import { Select } from '../components/ui/Select';
 import { Button } from '../components/ui/Button';
@@ -12,6 +12,8 @@ import { Zap, Clock, Filter, RefreshCw, Loader2, Target, BarChart3, CalendarChec
 import { AreaChart, Area, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { parseUtcMs, utcToVN, getTodayVN, normalizeSignalDates } from '../utils/time';
 import toast from 'react-hot-toast';
+import { TradeDetailModal } from '../components/TradeDetailModal';
+import { buildFetchPlan, fetchKlines1m } from '../utils/klineSimulator';
 
 const API = '/api';
 async function fetchAPI(ep) { const r = await fetch(`${API}${ep}`); if (!r.ok) throw new Error(`${r.status}`); return r.json(); }
@@ -58,6 +60,12 @@ export function Dashboard() {
   const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', capPsize: '10000|1000' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
   const [statusMode, setStatusMode] = useState('WL'); // WL = WIN/LOSS only, ALL = all statuses
+  const [recentSearch, setRecentSearch] = useState('');
+  const [selectedTrade, setSelectedTrade] = useState(null);
+  const [selectedTradeKlines, setSelectedTradeKlines] = useState([]);
+  const [tradeKlineCache, setTradeKlineCache] = useState(new Map());
+  const [tradeKlineLoading, setTradeKlineLoading] = useState(false);
+  const selectedTradeKeyRef = useRef('');
 
   // Parse CAP|PSize from filter
   const parseCapPsize = (v) => {
@@ -109,6 +117,60 @@ export function Dashboard() {
 
   const handleApply = () => setAppliedFilters({ ...filters });
 
+  const getTradeKlineKey = (trade) => {
+    const plan = buildFetchPlan([trade])[0];
+    return plan ? `${plan.symbol}_${plan.startMs}_${plan.endMs}` : '';
+  };
+
+  const handleRecentTradeClick = async (row) => {
+    const modalTrade = {
+      ...row,
+      entry_time: row.entry_time || row.created_at || row.candle_time,
+      sim_result: row.sim_result ?? row._derivedPct ?? row.result_percent,
+      sim_status: row.sim_status || row._derivedStatus || row.status,
+      sim_counted: row.sim_counted ?? true,
+      sim_sl: row.sim_sl ?? row.stop_loss,
+      sim_tp: row.sim_tp ?? row.take_profit,
+    };
+    const plan = buildFetchPlan([modalTrade])[0];
+    const key = getTradeKlineKey(modalTrade);
+
+    setSelectedTrade(modalTrade);
+    setSelectedTradeKlines([]);
+    selectedTradeKeyRef.current = key;
+
+    if (!plan || !key) {
+      toast.error('Cannot load kline window for this trade');
+      return;
+    }
+
+    const cached = tradeKlineCache.get(key);
+    if (cached) {
+      setSelectedTradeKlines(cached);
+      return;
+    }
+
+    setTradeKlineLoading(true);
+    try {
+      const klines = await fetchKlines1m(plan.symbol, plan.startMs, plan.endMs);
+      setTradeKlineCache(prev => {
+        const next = new Map(prev);
+        next.set(key, klines);
+        return next;
+      });
+      if (selectedTradeKeyRef.current === key) {
+        setSelectedTradeKlines(klines);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error('Failed to load Binance klines');
+    } finally {
+      if (selectedTradeKeyRef.current === key) {
+        setTradeKlineLoading(false);
+      }
+    }
+  };
+
   // ========== LOAD ==========
   useEffect(() => {
     (async () => {
@@ -141,7 +203,7 @@ export function Dashboard() {
 
   // Debug log when applied VN date range changes (all filtering is local)
   useEffect(() => {
-    console.log('[Dashboard] Filter applied:', appliedFilters.startDate || '(all)', '→', appliedFilters.endDate || '(all)', '| allSignals:', allSignals.length);
+    console.log('[Dashboard] Filter applied:', appliedFilters.startDate || '(all)', '->', appliedFilters.endDate || '(all)', '| allSignals:', allSignals.length);
   }, [appliedFilters.startDate, appliedFilters.endDate, allSignals]);
 
   // Auto-refresh prices
@@ -213,6 +275,17 @@ export function Dashboard() {
       return true;
     });
   }, [metricClosed, appliedFilters]);
+
+  const filteredRecentTrades = useMemo(() => {
+    const query = String(recentSearch || '').trim().toUpperCase();
+    if (!query) return metricClosed;
+    const tokens = query.split(/\s+/).filter(Boolean);
+    if (!tokens.length) return metricClosed;
+    return metricClosed.filter(s => {
+      const symbol = String(s.symbol || '').toUpperCase();
+      return tokens.some(token => symbol.includes(token));
+    });
+  }, [metricClosed, recentSearch]);
 
   // ========== TRADE-LEVEL METRICS ==========
   const { cap: appliedCap, psize: appliedPsize } = parseCapPsize(appliedFilters.capPsize);
@@ -524,7 +597,7 @@ export function Dashboard() {
     { key: 'wins', header: 'Wins', sortable: true, align: 'right' },
     { key: 'winrate', header: 'Win Rate', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> },
     { key: 'expectancy', header: 'Expectancy', sortable: true, align: 'right', render: v => <span className={v >= 0 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(2)}</span> },
-    { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? '∞' : v.toFixed(2) },
+    { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Infinity' : v.toFixed(2) },
     { key: 'totalReturn', header: 'Total Return', sortable: true, render: v => <PercentChangeBadge value={v} /> },
   ];
 
@@ -548,15 +621,15 @@ export function Dashboard() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">Performance Overview</h2>
-          <p className="text-slate-400 mt-1">{loading ? 'Loading data...' : `Strategy analytics — ${appliedFilters.startDate} → ${appliedFilters.endDate}`}</p>
+          <p className="text-slate-400 mt-1">{loading ? 'Loading data...' : `Strategy analytics - ${appliedFilters.startDate} -> ${appliedFilters.endDate}`}</p>
         </div>
         <Button variant="ghost" icon={loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} onClick={() => window.location.reload()}>Refresh</Button>
       </div>
 
-      {apiError && <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">⚠️ {apiError}</div>}
+      {apiError && <div className="px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">Warning: {apiError}</div>}
 
       {/* OVERVIEW KPI */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Card className="flex items-center gap-4"><div className="p-3 bg-indigo-500/20 rounded-xl"><BarChart3 className="w-6 h-6 text-indigo-400" /></div><div><p className="text-sm text-slate-400">Total Trades{hasActiveFilters && ' (Filtered)'}</p><p className="text-2xl font-bold text-white">{totalTradesDisplay}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-cyan-500/20 rounded-xl"><CalendarCheck className="w-6 h-6 text-cyan-400" /></div><div><p className="text-sm text-slate-400">Trades Today</p><p className="text-2xl font-bold text-white">{tradesTodayCount}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-emerald-500/20 rounded-xl"><Target className="w-6 h-6 text-emerald-400" /></div><div><p className="text-sm text-slate-400">Win Rate</p><p className={`text-2xl font-bold ${winRate >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{winRate.toFixed(1)}%</p></div></Card>
@@ -567,8 +640,8 @@ export function Dashboard() {
 
       {/* FILTERS */}
       <Card>
-        <div className="flex items-center gap-2 mb-4"><Filter className="w-5 h-5 text-slate-400" /><h3 className="font-semibold text-white">Filters</h3><span className="text-xs text-slate-500 ml-2">→ Metrics, Portfolio, Charts, Regime</span></div>
-        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3">
+        <div className="flex items-center gap-2 mb-4"><Filter className="w-5 h-5 text-slate-400" /><h3 className="font-semibold text-white">Filters</h3><span className="text-xs text-slate-500 ml-2">- Metrics, Portfolio, Charts, Regime</span></div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3">
           <Input type="date" label="From" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} />
           <Input type="date" label="To" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} />
           <Select label="Strategy" value={filters.strategy} onChange={v => setFilterInstant('strategy', v)} options={[{ value: 'all', label: 'All' }, ...strategies.map(s => ({ value: s, label: s }))]} />
@@ -594,7 +667,7 @@ export function Dashboard() {
           </div>
           <div className="space-y-3">
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Win / Loss</span><span className="font-bold"><span className="text-emerald-400">{wins}</span> / <span className="text-red-400">{filteredTradesCount - wins}</span></span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Profit Factor</span><span className={`font-bold ${profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{profitFactor === Infinity ? '∞' : profitFactor.toFixed(2)}</span></div>
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Profit Factor</span><span className={`font-bold ${profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{profitFactor === Infinity ? 'Infinity' : profitFactor.toFixed(2)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Expectancy</span><span className={`font-bold ${clr(expectancy)}`}>{expectancy.toFixed(2)}%</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Sharpe</span><span className="font-bold text-white">{tradeSharpe.toFixed(2)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Max Loss Streak</span><span className="font-bold text-red-400">{streaks.candle.maxLoss} / {streaks.exit.maxLoss}</span></div>
@@ -607,7 +680,7 @@ export function Dashboard() {
 
         {/* Portfolio Compounding */}
         <Card>
-          <CardHeader title="Portfolio (Compounding)" subtitle={`Size = $${appliedPsize} × (NAV/$${appliedCap.toLocaleString()})`} />
+          <CardHeader title="Portfolio (Compounding)" subtitle={`Size = $${appliedPsize} x (NAV/$${appliedCap.toLocaleString()})`} />
           <div className="space-y-3">
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${appliedCap.toLocaleString()}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Final NAV</span><span className={`font-bold ${clr(pComp.pnl)}`}>${$(pComp.nav)}</span></div>
@@ -623,7 +696,7 @@ export function Dashboard() {
 
         {/* Portfolio Fixed */}
         <Card>
-          <CardHeader title={`Portfolio (Fixed $${appliedFilters.fixedSize})`} subtitle={`Size always = $${appliedFilters.fixedSize}`} />
+          <CardHeader title={`Portfolio (Fixed $${appliedPsize})`} subtitle={`Size always = $${appliedPsize}`} />
           <div className="space-y-3">
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${appliedCap.toLocaleString()}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Final NAV</span><span className={`font-bold ${clr(pFixed.pnl)}`}>${$(pFixed.nav)}</span></div>
@@ -640,7 +713,7 @@ export function Dashboard() {
 
       {/* EQUITY CURVE */}
       <Card>
-        <CardHeader title="Equity Curve" subtitle="Hover for details — Compounding vs Fixed" />
+        <CardHeader title="Equity Curve" subtitle="Hover for details - Compounding vs Fixed" />
         {eqCurve.length > 0 ? (
           <ResponsiveContainer width="100%" height={380}>
             <LineChart data={eqCurve} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
@@ -684,10 +757,10 @@ export function Dashboard() {
       <Card>
         <CardHeader 
           title="Active Signals" 
-          subtitle={`${allOpen.length} open • P&L: ${totalUnrealizedPnL >= 0 ? '+' : ''}${totalUnrealizedPnL.toFixed(2)}% • Live 10s`} 
+          subtitle={`${allOpen.length} open - P&L: ${totalUnrealizedPnL >= 0 ? '+' : ''}${totalUnrealizedPnL.toFixed(2)}% - Live 10s`}
           action={
             <div className="flex items-center gap-3">
-              <span className="text-xs text-emerald-400 animate-pulse">● Live</span>
+              <span className="text-xs text-emerald-400 animate-pulse">Live</span>
               <Button variant="danger" size="sm" onClick={handleCancelAllActive} icon={<X className="w-4 h-4" />}>Close All</Button>
             </div>
           } 
@@ -699,10 +772,10 @@ export function Dashboard() {
       <Card>
         <CardHeader 
           title="Pending Signals" 
-          subtitle={`${pendingSignals.length} waiting • Trigger price orders`} 
+          subtitle={`${pendingSignals.length} waiting - Trigger price orders`}
           action={
             <div className="flex items-center gap-3">
-              <span className="text-xs text-yellow-400">⏳ Pending</span>
+              <span className="text-xs text-yellow-400">Pending</span>
               <Button variant="danger" size="sm" onClick={handleCancelAllPending} icon={<X className="w-4 h-4" />}>Cancel All</Button>
             </div>
           } 
@@ -712,15 +785,46 @@ export function Dashboard() {
 
       {/* RECENT (UNFILTERED) */}
       <Card>
-        <CardHeader title="Recent Trades" subtitle={`${metricClosed.length} closed trades • By exit time`} />
-        <DataTable columns={recentColumns} data={metricClosed} pageSize={10} emptyMessage="No closed trades today" />
+        <CardHeader
+          title="Recent Trades"
+          subtitle={`${filteredRecentTrades.length} / ${metricClosed.length} closed trades - By exit time`}
+          action={
+            <Input
+              type="text"
+              placeholder="Search symbols e.g. BTC ETH"
+              value={recentSearch}
+              onChange={e => setRecentSearch(e.target.value)}
+              className="w-full sm:w-52"
+            />
+          }
+        />
+        <DataTable
+          columns={recentColumns}
+          data={filteredRecentTrades}
+          pageSize={10}
+          emptyMessage="No closed trades today"
+          onRowClick={handleRecentTradeClick}
+        />
       </Card>
 
       {/* HEATMAP (UNFILTERED) */}
       <Card>
-        <CardHeader title="Pattern × Timeframe Heatmap" subtitle="All data" />
+        <CardHeader title="Pattern x Timeframe Heatmap" subtitle="All data" />
         {heatmapData.length > 0 ? <Heatmap data={heatmapData} xLabel="Timeframe" yLabel="Pattern" valueLabel="Win Rate %" colorScale="green-red" showValues /> : <div className="h-64 flex items-center justify-center text-slate-500">No data</div>}
       </Card>
+      {selectedTrade && (
+        <TradeDetailModal
+          trade={selectedTrade}
+          klines={selectedTradeKlines}
+          loadingKlines={tradeKlineLoading}
+          onClose={() => {
+            selectedTradeKeyRef.current = '';
+            setSelectedTrade(null);
+            setSelectedTradeKlines([]);
+            setTradeKlineLoading(false);
+          }}
+        />
+      )}
     </div>
   );
 }

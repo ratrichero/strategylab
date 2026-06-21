@@ -362,6 +362,16 @@ def request_kill_switch_all() -> Dict[str, Any]:
             ).distinct().all()
         )
 
+        local_cancelled = db.query(PendingSignal).filter(
+            PendingSignal.status == "WAIT",
+            PendingSignal.exchange_order_id == None,  # noqa: E711
+        ).update({
+            "status": "CANCELLED",
+            "rejection_reason": "KILL_SWITCH_LOCAL_CANCEL",
+            "next_retry_at": None,
+        }, synchronize_session=False)
+        db.commit()
+
     exchange_positions = list_open_positions()
     active_symbols |= set(p.get("symbol") for p in exchange_positions if p.get("symbol"))
 
@@ -370,6 +380,7 @@ def request_kill_switch_all() -> Dict[str, Any]:
         "symbols": sorted(active_symbols),
         "commands": [],
         "errors": [],
+        "local_pending_cancelled": int(local_cancelled or 0),
     }
 
     executor = get_executor()
@@ -379,6 +390,7 @@ def request_kill_switch_all() -> Dict[str, Any]:
             "error": "Executor not ready",
             "symbols": [],
             "commands": [],
+            "local_pending_cancelled": int(local_cancelled or 0),
         }
 
     for symbol in sorted(active_symbols):

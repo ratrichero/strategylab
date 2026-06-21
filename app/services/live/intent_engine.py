@@ -25,11 +25,12 @@ from sqlalchemy import and_, or_
 
 from app.core.time_utils import utc_now, ensure_utc
 from app.db.session import SessionLocal
-from app.db.models import PendingSignal
+from app.db.models import ExecutionCommand, PendingSignal
 from app.services.config_service import get_runtime_config
 from app.services.prefill_validator import validate_before_fill
 from app.services.open_trade_filter import get_open_trade_filter
 from app.services.execution_service import (
+    get_entry_order_by_client_id,
     place_limit_entry_order,
     get_executor,
 )
@@ -44,6 +45,8 @@ from app.services.price_feed import get_all_current_prices
 MAX_PLACE_RETRIES = 1
 RETRY_BACKOFF_SECONDS = 10
 HARD_CAP_BLOCK_BACKOFF_SECONDS = 60
+ENTRY_BLOCKING_COMMANDS = ("KILL_SWITCH", "PROFIT_LOCK")
+OPEN_COMMAND_STATUSES = ("REQUESTED", "SENT")
 
 
 DETERMINISTIC_ERRORS = [
@@ -110,6 +113,46 @@ def _lock_pending_row(db, pending_id: int) -> PendingSignal:
         .with_for_update()
         .one()
     )
+
+
+def _has_entry_blocking_command(db, symbol: str) -> bool:
+    return db.query(ExecutionCommand.id).filter(
+        ExecutionCommand.symbol == symbol,
+        ExecutionCommand.command_type.in_(ENTRY_BLOCKING_COMMANDS),
+        ExecutionCommand.status.in_(OPEN_COMMAND_STATUSES),
+    ).first() is not None
+
+
+def _entry_client_order_id(pending_id: int) -> str:
+    return f"QRL_ENTRY_{pending_id}"[:36]
+
+
+def _relink_existing_entry_order(db, p: PendingSignal, now) -> bool:
+    order = get_entry_order_by_client_id(p.symbol, _entry_client_order_id(p.id))
+    if not order:
+        return False
+
+    order_id = order.get("orderId")
+    if not order_id:
+        return False
+
+    p.exchange_order_id = str(order_id)
+    p.exchange_status = str(order.get("status") or "UNKNOWN")
+    p.placed_at = p.placed_at or now
+    p.order_quantity = float(order.get("origQty", 0) or p.order_quantity or 0)
+    p.executed_qty = float(order.get("executedQty", 0) or p.executed_qty or 0)
+    avg_price = float(order.get("avgPrice", 0) or 0)
+    if avg_price > 0:
+        p.avg_fill_price = avg_price
+    p.last_exchange_sync_at = now
+    p.next_retry_at = None
+    p.last_place_error = None
+    db.commit()
+    print(
+        f"🔗 LIVE ENTRY RELINKED: {p.symbol} {p.direction} "
+        f"| pending={p.id} order_id={p.exchange_order_id}"
+    )
+    return True
 
 
 def _record_place_attempt(p: PendingSignal, now):
@@ -208,6 +251,13 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             return
 
         # QUAN TRỌNG: expire phải check trước retry gate
+        if _has_entry_blocking_command(db, p.symbol):
+            p.status = "CANCELLED"
+            p.rejection_reason = "ENTRY_BLOCKED_BY_LIVE_COMMAND"
+            p.next_retry_at = None
+            db.commit()
+            return
+
         if ensure_utc(p.expire_at) < now:
             p.status = "CANCELLED"
             p.rejection_reason = "EXPIRED_BEFORE_PLACE"
@@ -217,6 +267,9 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
 
         if p.next_retry_at and ensure_utc(p.next_retry_at) > now:
             db.commit()
+            return
+
+        if _relink_existing_entry_order(db, p, now):
             return
 
         otf = get_open_trade_filter(cfg.get("OPEN_TRADE_FILTER"))

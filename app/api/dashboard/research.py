@@ -135,10 +135,21 @@ async def run_research(config: ResearchConfig):
                     sf.trend_score AS sf_trend, sf.momentum_score AS sf_mom,
                     sf.volume_score AS sf_vol_s, sf.mtf_score AS sf_mtf,
                     toa.max_drawdown AS toa_mae, toa.max_favorable AS toa_mfe,
-                    toa.rr_planned, toa.rr_realized
+                    toa.rr_planned, toa.rr_realized,
+                    p.filled_at AS pending_filled_at,
+                    p.trigger_price AS pending_trigger_price,
+                    p.stop_loss AS pending_stop_loss,
+                    p.take_profit AS pending_take_profit
                 FROM signals s
                 LEFT JOIN signal_features sf ON sf.signal_id = s.id
                 LEFT JOIN trade_outcome_analytics toa ON toa.signal_id = s.id
+                LEFT JOIN LATERAL (
+                    SELECT filled_at, trigger_price, stop_loss, take_profit
+                    FROM pending_signals
+                    WHERE signal_id = s.id
+                    ORDER BY filled_at DESC NULLS LAST, created_at DESC
+                    LIMIT 1
+                ) p ON TRUE
                 WHERE {where}
                 ORDER BY s.exit_time ASC
             """, *params)
@@ -237,6 +248,11 @@ async def run_research(config: ResearchConfig):
                 else: clean[k] = v
 
             clean.update({
+                "entry_time": (
+                    clean.get("pending_filled_at")
+                    or clean.get("created_at")
+                    or clean.get("candle_time")
+                ),
                 "sim_result": sim_result,
                 "sim_status": sim_status,
                 "sim_counted": sim_counted,

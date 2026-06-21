@@ -13,7 +13,7 @@ import { parseUtcMs, utcToVN, getTodayVN, normalizeSignalDates } from '../utils/
 const API = '/api';
 const VN_MS = 7 * 3600 * 1000;
 
-/** Convert created_at UTC → VN date string "YYYY-MM-DD" */
+/** Convert created_at UTC Ã¢â€ â€™ VN date string "YYYY-MM-DD" */
 function createdToVNDate(createdAt) {
   if (!createdAt) return '';
   const ms = parseUtcMs(createdAt);
@@ -174,7 +174,7 @@ export function PendingSignalsPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
         <Card className="p-3 text-center">
           <p className="text-xs text-slate-400">Total Pending</p>
           <p className="text-2xl font-bold text-white">{kpi.total}</p>
@@ -202,7 +202,7 @@ export function PendingSignalsPage() {
         <div className="flex items-center gap-2 mb-4">
           <span className="text-sm font-semibold text-white">Filters</span>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3 mb-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3 mb-4">
           <Input type="date" label="Start" value={f.startDate} onChange={e => set('startDate', e.target.value)} />
           <Input type="date" label="End" value={f.endDate} onChange={e => set('endDate', e.target.value)} />
           <Select label="Status" value={f.status} onChange={v => set('status', v)} options={[
@@ -220,15 +220,15 @@ export function PendingSignalsPage() {
             { value: 'all', label: 'All' },
             ...allExchangeStatuses.map(s => ({ value: s, label: s }))
           ]} />
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <label className="block text-sm font-medium text-slate-400 mb-1.5">Symbol</label>
             <div className="flex gap-1">
               <input type="text" value={f.symbols} onChange={e => set('symbols', e.target.value)} placeholder="BTC ETH SOL..." className="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" />
               <button onClick={() => set('symbolMode', f.symbolMode === 'include' ? 'exclude' : 'include')} className={`px-3 py-2 rounded-lg text-xs font-bold ${f.symbolMode === 'include' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'}`}>{f.symbolMode === 'include' ? 'Include' : 'Exclude'}</button>
             </div>
           </div>
-          <div className="col-span-2">
-            <label className="block text-sm font-medium text-slate-400 mb-1.5">Score {f.scoreMin.toFixed(1)} – {f.scoreMax.toFixed(1)}</label>
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">Score {f.scoreMin.toFixed(1)} Ã¢â‚¬â€œ {f.scoreMax.toFixed(1)}</label>
             <input type="range" min={0} max={10} step={0.5} value={f.scoreMin} onChange={e => set('scoreMin', Number(e.target.value))} className="w-full accent-indigo-500 h-1.5" />
             <input type="range" min={0} max={10} step={0.5} value={f.scoreMax} onChange={e => set('scoreMax', Number(e.target.value))} className="w-full accent-indigo-500 h-1.5" />
           </div>
@@ -236,32 +236,32 @@ export function PendingSignalsPage() {
             <Button variant="primary" className="w-full" onClick={handleApply}>Apply</Button>
           </div>
         </div>
-        <div className="grid grid-cols-12 gap-4 pt-3 border-t border-slate-700">
-          <div className="col-span-1">
+        <div className="grid grid-cols-1 sm:grid-cols-12 gap-4 pt-3 border-t border-slate-700">
+          <div className="sm:col-span-1">
             <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">TF</p>
             <div className="flex gap-1">{['15m', '1h', '4h'].map(tf =>
               <button key={tf} onClick={() => toggleArr('timeframes', tf)} className={`px-2.5 py-1.5 rounded text-xs ${f.timeframes.includes(tf) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
             )}</div>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Strategy</p>
             <div className="flex gap-1 flex-wrap">{allStrategies.map(s =>
               <button key={s} onClick={() => toggleArr('strategies', s)} className={`px-2 py-1 rounded text-xs ${f.strategies.includes(s) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{s}</button>
             )}</div>
           </div>
-          <div className="col-span-5">
+          <div className="sm:col-span-5">
             <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Pattern</p>
             <div className="flex gap-1 flex-wrap">{allPatterns.map(p =>
               <button key={p} onClick={() => toggleArr('patterns', p)} className={`px-2 py-1 rounded text-xs ${f.patterns.includes(p) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{p}</button>
             )}</div>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Regime</p>
             <div className="flex gap-1 flex-wrap">{allRegimes.map(r =>
               <button key={r} onClick={() => toggleArr('regimes', r)} className={`px-2 py-1 rounded text-xs ${f.regimes.includes(r) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{r}</button>
             )}</div>
           </div>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Direction</p>
             <div className="flex gap-1 flex-wrap">{['LONG', 'SHORT'].map(d =>
               <button key={d} onClick={() => toggleArr('directions', d)} className={`px-2 py-1 rounded text-xs ${f.directions.includes(d) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{d}</button>

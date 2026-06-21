@@ -15,10 +15,10 @@ from typing import Optional, Dict, List
 
 from app.core.time_utils import utc_now
 from app.services.execution_service import (
-    get_entry_order_status,
-    get_open_algo_orders,
-    get_open_orders,
-    get_position_info_by_symbol,
+    get_entry_order_status_checked,
+    get_open_algo_orders_checked,
+    get_open_orders_checked,
+    get_position_info_by_symbol_checked,
 )
 
 
@@ -117,7 +117,7 @@ def build_symbol_snapshot(
         order_id = getattr(pending, "exchange_order_id", None) if pending else None
 
         if order_id:
-            entry_info = get_entry_order_status(symbol, order_id)
+            entry_info = get_entry_order_status_checked(symbol, order_id)
         else:
             entry_info = {
                 "status": None,
@@ -126,11 +126,11 @@ def build_symbol_snapshot(
                 "orig_qty": 0.0,
             }
 
-        position = get_position_info_by_symbol(symbol)
-        open_normal_orders = get_open_orders(symbol)
+        position = get_position_info_by_symbol_checked(symbol)
+        open_normal_orders = get_open_orders_checked(symbol)
 
         # Chỉ cần open algo orders là đủ cho active protection truth
-        open_algo_orders = get_open_algo_orders(symbol)
+        open_algo_orders = get_open_algo_orders_checked(symbol)
 
         sl_open = _find_open_algo_by_type(open_algo_orders, "STOP_MARKET")
         tp_open = _find_open_algo_by_type(open_algo_orders, "TAKE_PROFIT_MARKET")

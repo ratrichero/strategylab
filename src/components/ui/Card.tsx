@@ -25,12 +25,12 @@ interface CardHeaderProps {
 
 export function CardHeader({ title, subtitle, action, className }: CardHeaderProps) {
   return (
-    <div className={cn('flex items-center justify-between mb-4', className)}>
-      <div>
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
+    <div className={cn('flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4', className)}>
+      <div className="min-w-0">
+        <h3 className="text-base sm:text-lg font-semibold text-white break-words">{title}</h3>
         {subtitle && <p className="text-sm text-slate-400">{subtitle}</p>}
       </div>
-      {action && <div>{action}</div>}
+      {action && <div className="w-full sm:w-auto flex-shrink-0">{action}</div>}
     </div>
   );
 }

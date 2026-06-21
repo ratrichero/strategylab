@@ -122,6 +122,7 @@ def _kill_switch_live() -> Dict:
         "mode":              "LIVE",
         "timestamp":         now.isoformat(),
         "exchange_cleanup":  cmd_result.get("success", False),
+        "local_pending_cancelled": cmd_result.get("local_pending_cancelled", 0),
         "symbols":           cmd_result.get("symbols", []),
         "commands":          cmd_result.get("commands", []),
         "errors":            cmd_result.get("errors", []),

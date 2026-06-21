@@ -43,6 +43,10 @@ SIGNED_RECV_WINDOW = 60000
 _http = requests.Session()
 
 
+class ExchangeQueryError(RuntimeError):
+    """Raised when exchange state cannot be trusted for reconciliation."""
+
+
 # ============================================================
 # SERVER TIME SYNC (for signed requests)
 # ============================================================
@@ -507,20 +511,25 @@ class BinanceExecutor:
             print(f"[EXEC] Market order error {symbol} {side}: {e}")
             return None
 
-    def limit_order(self, symbol, side, quantity, price, tif="GTC"):
+    def limit_order(self, symbol, side, quantity, price, tif="GTC", client_order_id: Optional[str] = None):
         if not self.ready:
             return None
 
         def _do():
             self._last_error = None
-            return self._client.new_order(
-                symbol=symbol,
-                side=side,
-                type="LIMIT",
-                quantity=quantity,
-                price=price,
-                timeInForce=tif,
+            params = {
+                "symbol": symbol,
+                "side": side,
+                "type": "LIMIT",
+                "quantity": quantity,
+                "price": price,
+                "timeInForce": tif,
                 **self._signed_params()
+            }
+            if client_order_id:
+                params["newClientOrderId"] = client_order_id
+            return self._client.new_order(
+                **params
             )
 
         try:
@@ -530,7 +539,7 @@ class BinanceExecutor:
             print(f"[EXEC] Limit order error {symbol} {side}: {e}")
             return None
 
-    def cancel_order(self, symbol: str, order_id: str) -> bool:
+    def cancel_order(self, symbol: str, order_id: str, treat_not_found_success: bool = True) -> bool:
         if not self.ready:
             return False
 
@@ -546,8 +555,9 @@ class BinanceExecutor:
             return True
         except Exception as e:
             err_str = str(e)
-            if "-2011" in err_str or "Unknown order" in err_str:
-                return True
+            not_found = "-2011" in err_str or "Unknown order" in err_str
+            if not_found:
+                return bool(treat_not_found_success)
             print(f"[EXEC] Cancel order error {symbol}/{order_id}: {e}")
             return False
 
@@ -585,6 +595,42 @@ class BinanceExecutor:
             print(f"[EXEC] Query order error {symbol}/{order_id}: {e}")
             return None
 
+    def query_order_checked(self, symbol: str, order_id: str) -> Optional[Dict]:
+        if not self.ready:
+            raise ExchangeQueryError("Executor not ready")
+
+        def _do():
+            return self._client.query_order(
+                symbol=symbol,
+                orderId=order_id,
+                **self._signed_params()
+            )
+
+        try:
+            return self._call_signed_with_retry(_do)
+        except Exception as e:
+            raise ExchangeQueryError(f"Query order error {symbol}/{order_id}: {e}") from e
+
+    def query_order_by_client_id(self, symbol: str, client_order_id: str) -> Optional[Dict]:
+        if not self.ready:
+            return None
+
+        def _do():
+            return self._client.query_order(
+                symbol=symbol,
+                origClientOrderId=client_order_id,
+                **self._signed_params()
+            )
+
+        try:
+            return self._call_signed_with_retry(_do)
+        except Exception as e:
+            err = str(e)
+            if "-2013" in err or "does not exist" in err.lower():
+                return None
+            print(f"[EXEC] Query order by client id error {symbol}/{client_order_id}: {e}")
+            return None
+
     def get_open_orders(self, symbol: str) -> List[Dict]:
         if not self.ready:
             return []
@@ -600,6 +646,21 @@ class BinanceExecutor:
         except Exception as e:
             print(f"[EXEC] Get open orders error {symbol}: {e}")
             return []
+
+    def get_open_orders_checked(self, symbol: str) -> List[Dict]:
+        if not self.ready:
+            raise ExchangeQueryError("Executor not ready")
+
+        def _do():
+            return self._client.get_orders(
+                symbol=symbol,
+                **self._signed_params()
+            )
+
+        try:
+            return self._call_signed_with_retry(_do) or []
+        except Exception as e:
+            raise ExchangeQueryError(f"Get open orders error {symbol}: {e}") from e
 
     # ── Position ─────────────────────────────────────────
 
@@ -650,6 +711,34 @@ class BinanceExecutor:
         except Exception as e:
             print(f"[EXEC] Position info error {symbol}: {e}")
             return None
+
+    def get_position_info_checked(self, symbol: str) -> Optional[Dict]:
+        if not self.ready:
+            raise ExchangeQueryError("Executor not ready")
+
+        def _do():
+            positions = self._client.get_position_risk(
+                symbol=symbol,
+                **self._signed_params()
+            )
+            if positions:
+                p = positions[0]
+                amt = float(p.get("positionAmt", 0))
+                if amt != 0:
+                    return {
+                        "symbol":           symbol,
+                        "positionAmt":      amt,
+                        "entryPrice":       float(p.get("entryPrice", 0)),
+                        "unrealizedProfit": float(p.get("unRealizedProfit", 0)),
+                        "leverage":         int(p.get("leverage", 1)),
+                        "direction":        "LONG" if amt > 0 else "SHORT",
+                    }
+            return None
+
+        try:
+            return self._call_signed_with_retry(_do)
+        except Exception as e:
+            raise ExchangeQueryError(f"Position info error {symbol}: {e}") from e
 
     def list_open_positions(self) -> List[Dict]:
         if not self.ready:
@@ -890,8 +979,10 @@ def place_limit_entry_order(pending) -> OrderResult:
                 mode=mode.get_mode().value
             )
 
+        client_order_id = f"QRL_ENTRY_{pending.id}"[:36]
         order = executor.limit_order(
-            pending.symbol, side, quantity, price
+            pending.symbol, side, quantity, price,
+            client_order_id=client_order_id,
         )
 
         if not order:
@@ -1089,6 +1180,21 @@ def get_open_algo_orders(symbol: Optional[str] = None) -> list:
         return []
 
 
+def get_open_algo_orders_checked(symbol: Optional[str] = None) -> list:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return []
+
+    try:
+        params = {}
+        if symbol:
+            params["symbol"] = symbol
+        data = _signed_request("GET", "/fapi/v1/openAlgoOrders", params)
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        raise ExchangeQueryError(f"get_open_algo_orders error {symbol}: {e}") from e
+
+
 def cancel_algo_order(algo_id: str) -> bool:
     """
     Cancel single algo order by algoId.
@@ -1117,9 +1223,10 @@ def cancel_algo_order(algo_id: str) -> bool:
             "No such",
         ]
 
-        if not any(p.lower() in err.lower() for p in silent_patterns):
-            print(f"[EXEC] cancel_algo_order warning algoId={algo_id}: {e}")
+        if any(p.lower() in err.lower() for p in silent_patterns):
+            return True
 
+        print(f"[EXEC] cancel_algo_order warning algoId={algo_id}: {e}")
         return False
 
 
@@ -1187,6 +1294,44 @@ def get_entry_order_status(symbol: str, order_id: str) -> Dict:
         }
 
 
+def get_entry_order_status_checked(symbol: str, order_id: str) -> Dict:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return {
+            "status": "UNKNOWN",
+            "avg_price": None,
+            "executed_qty": 0.0,
+            "orig_qty": 0.0,
+        }
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        raise ExchangeQueryError("Executor not ready")
+
+    order = executor.query_order_checked(symbol, order_id)
+    if not order:
+        raise ExchangeQueryError(f"Entry order status unavailable {symbol}/{order_id}")
+
+    return {
+        "status": order.get("status", "UNKNOWN"),
+        "avg_price": float(order.get("avgPrice", 0) or 0),
+        "executed_qty": float(order.get("executedQty", 0) or 0),
+        "orig_qty": float(order.get("origQty", 0) or 0),
+    }
+
+
+def get_entry_order_by_client_id(symbol: str, client_order_id: str) -> Optional[Dict]:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return None
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return None
+
+    return executor.query_order_by_client_id(symbol, client_order_id)
+
+
 # ============================================================
 # CANCEL HELPERS
 # ============================================================
@@ -1218,7 +1363,11 @@ def cancel_order_by_id(symbol: str, order_id: Optional[str]) -> bool:
     algo_ok = False
 
     try:
-        normal_ok = executor.cancel_order(symbol, order_id)
+        normal_ok = executor.cancel_order(
+            symbol,
+            order_id,
+            treat_not_found_success=False,
+        )
     except Exception:
         normal_ok = False
 
@@ -1347,6 +1496,18 @@ def get_position_info_by_symbol(symbol: str) -> Optional[Dict]:
     return executor.get_position_info(symbol)
 
 
+def get_position_info_by_symbol_checked(symbol: str) -> Optional[Dict]:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return None
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        raise ExchangeQueryError("Executor not ready")
+
+    return executor.get_position_info_checked(symbol)
+
+
 def list_open_positions() -> List[Dict]:
     mode = get_trading_mode()
     if mode.is_paper:
@@ -1382,3 +1543,15 @@ def get_open_orders(symbol: str) -> list:
         return []
 
     return executor.get_open_orders(symbol)
+
+
+def get_open_orders_checked(symbol: str) -> list:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return []
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        raise ExchangeQueryError("Executor not ready")
+
+    return executor.get_open_orders_checked(symbol)

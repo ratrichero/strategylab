@@ -15,6 +15,11 @@ import {
 } from 'recharts';
 import { utcToVN, getTodayVN, normalizeSignalDates as normalizeTradeDates } from '../utils/time';
 
+import { TradeDetailModal } from '../components/TradeDetailModal';
+import {
+  buildFetchPlan, batchFetchKlines, simulateTradeWithKlines, getKlineCacheSize
+} from '../utils/klineSimulator';
+
 const API = '/api';
 
 function ScoreCell({ value }) {
@@ -39,10 +44,9 @@ function ChartTip({ active, payload, label }) {
   );
 }
 function bucketize(val, ranges) {
-  for (const [lo, hi] of ranges) { if (val >= lo && val < hi) return hi === Infinity ? `≥${lo}` : `${lo}-${hi}`; }
+  for (const [lo, hi] of ranges) { if (val >= lo && val < hi) return hi === Infinity ? `Ã¢â€°Â¥${lo}` : `${lo}-${hi}`; }
   return 'other';
 }
-
 const DEFAULTS = {
   initialCapital: 10000, positionSize: 1000, startDate: '', endDate: '',
   dateField: 'exit_time',
@@ -97,15 +101,15 @@ function DebugPanel({ trades }) {
     <Card>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="font-semibold text-white flex items-center gap-2">🔍 RR Debug Panel</h3>
-          <p className="text-xs text-slate-500 mt-0.5">MAE/MFE = raw % from DB (1 = 1%). SL/TP simulation audit.</p>
+          <h3 className="font-semibold text-white flex items-center gap-2">Ã°Å¸â€Â RR Debug Panel</h3>
+          <p className="text-xs text-slate-500 mt-0.5">MAE/MFE = recalculated from Binance 1m klines for this simulation.</p>
         </div>
         <div className="flex gap-2 items-center">
           <button onClick={() => { setShowOnlyNotCount(!showOnlyNotCount); setPage(1); }} className={`px-2 py-1 rounded text-xs ${showOnlyNotCount ? 'bg-orange-600 text-white' : 'bg-slate-700 text-slate-300'}`}>
             {showOnlyNotCount ? 'Showing NOT_COUNT' : 'Filter NOT_COUNT'}
           </button>
-          <button onClick={copyStreak} className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-xs">📋 Streak Simulation</button>
-          <button onClick={exportCSV} className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs">📥 Export CSV</button>
+          <button onClick={copyStreak} className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-xs">Ã°Å¸â€œâ€¹ Streak Simulation</button>
+          <button onClick={exportCSV} className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs">Ã°Å¸â€œÂ¥ Export CSV</button>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -136,8 +140,8 @@ function DebugPanel({ trades }) {
                   <td className="py-1.5 px-1.5 text-right text-slate-500">{Number(t.take_profit || 0).toFixed(4)}</td>
                   <td className="py-1.5 px-1.5 text-right text-orange-400">{t._debug_sl_pct != null ? Number(t._debug_sl_pct).toFixed(4) : '-'}</td>
                   <td className="py-1.5 px-1.5 text-right text-cyan-400">{t._debug_tp_pct != null ? Number(t._debug_tp_pct).toFixed(4) : '-'}</td>
-                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_sl ? 'text-red-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_sl ? '✓' : '–'}</td>
-                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_tp ? 'text-emerald-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_tp ? '✓' : '–'}</td>
+                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_sl ? 'text-red-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_sl ? 'Ã¢Å“â€œ' : 'Ã¢â‚¬â€œ'}</td>
+                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_tp ? 'text-emerald-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_tp ? 'Ã¢Å“â€œ' : 'Ã¢â‚¬â€œ'}</td>
                   <td className="py-1.5 px-1.5 text-right">{Number(t._debug_original_result || 0).toFixed(2)}</td>
                   <td className={`py-1.5 px-1.5 text-right font-bold ${t.sim_counted === false ? 'text-slate-500 italic' : (t.sim_result || 0) > 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.sim_counted === false ? 'Not Count' : Number(t.sim_result || 0).toFixed(2)}</td>
                   <td className={`py-1.5 px-1.5 text-center ${t.status === 'WIN' ? 'text-emerald-500' : 'text-red-500'}`}>{t.status === 'WIN' ? 'W' : 'L'}</td>
@@ -151,11 +155,11 @@ function DebugPanel({ trades }) {
       </div>
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-3 px-2">
-          <span className="text-xs text-slate-500">{filteredTrades.length} trades • Page {page}/{totalPages}</span>
+          <span className="text-xs text-slate-500">{filteredTrades.length} trades Ã¢â‚¬Â¢ Page {page}/{totalPages}</span>
           <div className="flex gap-1">
             <button onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">First</button>
-            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">‹</button>
-            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">›</button>
+            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Ã¢â‚¬Â¹</button>
+            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Ã¢â‚¬Âº</button>
             <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Last</button>
           </div>
         </div>
@@ -165,6 +169,9 @@ function DebugPanel({ trades }) {
 }
 
 export function Research() {
+  const [selectedTrade, setSelectedTrade] = useState(null);
+  const [klineCache, setKlineCache] = useState(new Map()); // symbol -> klines[]
+  const [fetchProgress, setFetchProgress] = useState(null); // { done, total } | null
   const [running, setRunning] = useState(false);
   const [trades, setTrades] = useState([]);
   const [engineVersions, setEngineVersions] = useState([]);
@@ -191,54 +198,110 @@ export function Research() {
   }, []);
 
   const runWithConfig = async (c) => {
-    setRunning(true);
-    try {
-      const body = { initial_capital: c.initialCapital, position_size: c.positionSize };
-      // Plain dates — backend _parse_vn_date handles VN→UTC conversion
-      if (c.startDate) body.start_date = c.startDate;
-      if (c.endDate) body.end_date = c.endDate;
-      body.date_field = c.dateField;
-      if (c.symbols.trim()) { body.symbols = c.symbols; body.symbol_mode = c.symbolMode; }
-      if (c.timeframes.length) body.timeframes = c.timeframes;
-      if (c.engineVersion !== 'all') body.engine_version = c.engineMode === 'newest' ? c.engineVersion + '+' : c.engineVersion;
-      if (c.direction !== 'all') body.direction = c.direction;
-      if (c.strategy !== 'all') body.strategy = c.strategy;
-      if (c.patterns.length) body.patterns = c.patterns;
-      if (c.regimes.length) body.regimes = c.regimes;
-      const rMin = parseFloat(c.rsiMin); if (rMin > 0) body.rsi_min = rMin;
-      const rMax = parseFloat(c.rsiMax); if (rMax < 100) body.rsi_max = rMax;
-      const vrm = parseFloat(c.volumeRatioMin); if (vrm > 0) body.volume_ratio_min = vrm;
-      const arm = parseFloat(c.atrRatioMin); if (arm > 0) body.atr_ratio_min = arm;
-      const edMin = parseFloat(c.emaDistMin); if (edMin > -10) body.ema_distance_min = edMin;
-      const edMax = parseFloat(c.emaDistMax); if (edMax < 10) body.ema_distance_max = edMax;
-      const sMin = parseFloat(c.scoreMin); if (sMin > 0) body.score_min = sMin;
-      const sMax = parseFloat(c.scoreMax); if (sMax < 10) body.score_max = sMax;
-      const tsm = parseFloat(c.trendScoreMin); if (tsm > 0) body.trend_score_min = tsm;
-      const msm = parseFloat(c.momentumScoreMin); if (msm > 0) body.momentum_score_min = msm;
-      const vsm = parseFloat(c.volumeScoreMin); if (vsm > 0) body.volume_score_min = vsm;
-      const mtfm = parseFloat(c.mtfScoreMin); if (mtfm > 0) body.mtf_score_min = mtfm;
-      const mtfx = parseFloat(c.mtfScoreMax); if (mtfx < 1) body.mtf_score_max = mtfx;
-      const rr = parseFloat(c.rrOverride); if (!isNaN(rr) && rr > 0) body.rr_override = rr;
-      const sl = parseFloat(c.slPct); const tp = parseFloat(c.tpPct);
-      if (!isNaN(sl) && sl > 0 && !isNaN(tp) && tp > 0) { body.sl_pct = sl; body.tp_pct = tp; }
-      if (c.reverseDirection) body.reverse_direction = true;
+  setRunning(true);
+  setFetchProgress(null);
+  try {
+    const body = { initial_capital: c.initialCapital, position_size: c.positionSize };
+    if (c.startDate) body.start_date = c.startDate;
+    if (c.endDate) body.end_date = c.endDate;
+    body.date_field = c.dateField;
+    if (c.symbols.trim()) { body.symbols = c.symbols; body.symbol_mode = c.symbolMode; }
+    if (c.timeframes.length) body.timeframes = c.timeframes;
+    if (c.engineVersion !== 'all') body.engine_version = c.engineMode === 'newest' ? c.engineVersion + '+' : c.engineVersion;
+    if (c.direction !== 'all') body.direction = c.direction;
+    if (c.strategy !== 'all') body.strategy = c.strategy;
+    if (c.patterns.length) body.patterns = c.patterns;
+    if (c.regimes.length) body.regimes = c.regimes;
+    const rMin = parseFloat(c.rsiMin); if (rMin > 0) body.rsi_min = rMin;
+    const rMax = parseFloat(c.rsiMax); if (rMax < 100) body.rsi_max = rMax;
+    const vrm = parseFloat(c.volumeRatioMin); if (vrm > 0) body.volume_ratio_min = vrm;
+    const arm = parseFloat(c.atrRatioMin); if (arm > 0) body.atr_ratio_min = arm;
+    const edMin = parseFloat(c.emaDistMin); if (edMin > -10) body.ema_distance_min = edMin;
+    const edMax = parseFloat(c.emaDistMax); if (edMax < 10) body.ema_distance_max = edMax;
+    const sMin = parseFloat(c.scoreMin); if (sMin > 0) body.score_min = sMin;
+    const sMax = parseFloat(c.scoreMax); if (sMax < 10) body.score_max = sMax;
+    const tsm = parseFloat(c.trendScoreMin); if (tsm > 0) body.trend_score_min = tsm;
+    const msm = parseFloat(c.momentumScoreMin); if (msm > 0) body.momentum_score_min = msm;
+    const vsm = parseFloat(c.volumeScoreMin); if (vsm > 0) body.volume_score_min = vsm;
+    const mtfm = parseFloat(c.mtfScoreMin); if (mtfm > 0) body.mtf_score_min = mtfm;
+    const mtfx = parseFloat(c.mtfScoreMax); if (mtfx < 1) body.mtf_score_max = mtfx;
+    // FE owns RR/SL/TP/reverse simulation with real Binance klines.
+    // Do not send these params to the backend MAE/MFE simulator.
 
-      const res = await fetch(`${API}/research/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (!res.ok) throw new Error(await res.text());
-      const data = await res.json();
-      // Filter out invalid SL placement: LONG with SL >= entry, SHORT with SL <= entry
-      const validTrades = (data.trades || []).filter(t => {
-        const entry = Number(t.entry_price) || 0;
-        const sl = Number(t.stop_loss) || 0;
-        if (!entry || !sl) return true; // keep if missing data
-        if (t.direction === 'LONG' && sl >= entry) return false;
-        if (t.direction === 'SHORT' && sl <= entry) return false;
-        return true;
+    const res = await fetch(`${API}/research/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+
+    // Filter invalid SL placement
+    let validTrades = (data.trades || []).filter(t => {
+      const entry = Number(t.entry_price) || 0;
+      const sl = Number(t.stop_loss) || 0;
+      if (!entry || !sl) return true;
+      if (t.direction === 'LONG' && sl >= entry) return false;
+      if (t.direction === 'SHORT' && sl <= entry) return false;
+      return true;
+    });
+
+    // Ã¢â€â‚¬Ã¢â€â‚¬ Check if simulation needed Ã¢â€â‚¬Ã¢â€â‚¬
+    const rrVal = parseFloat(c.rrOverride);
+    const slVal = parseFloat(c.slPct);
+    const tpVal = parseFloat(c.tpPct);
+    const hasSlTp = !isNaN(slVal) && slVal > 0 && !isNaN(tpVal) && tpVal > 0;
+    const hasRR = !isNaN(rrVal) && rrVal > 0;
+    const needSim = hasSlTp || hasRR;
+
+    let klineMap = new Map();
+
+    if (needSim) {
+      // Build unique symbol/timerange plan
+      const plan = buildFetchPlan(validTrades);
+      if (plan.length > 0) {
+        setFetchProgress({ done: 0, total: plan.length });
+        klineMap = await batchFetchKlines(
+          plan,
+          (done, total) => setFetchProgress({ done, total }),
+          3, 250
+        );
+        setKlineCache(klineMap);
+      }
+
+      // Simulate each trade
+      const simOpts = {
+        slPct: hasSlTp ? slVal : null,
+        tpPct: hasSlTp ? tpVal : null,
+        rrOverride: hasRR && !hasSlTp ? rrVal : null,
+        reverseDirection: !!c.reverseDirection,
+      };
+      validTrades = validTrades.map(t => {
+        const klines = klineMap.get(t.symbol) || [];
+        const sim = simulateTradeWithKlines(t, klines, simOpts);
+        return { ...t, ...sim };
       });
-      setTrades(validTrades.map(normalizeTradeDates));
-    } catch (e) { console.error(e); }
-    finally { setRunning(false); }
-  };
+    } else {
+      // No simulation: clear any previous sim_* fields, use original status/result
+      validTrades = validTrades.map(t => ({
+        ...t,
+        sim_result: Number(t.result_percent ?? 0),
+        sim_status: t.status,
+        sim_counted: true,
+        sim_sl: t.stop_loss,
+        sim_tp: t.take_profit,
+      }));
+      setKlineCache(new Map());
+    }
+
+    setTrades(validTrades.map(normalizeTradeDates));
+  } catch (e) {
+    console.error(e);
+  } finally {
+    setRunning(false);
+    setFetchProgress(null);
+  }
+};
 
   const handleRun = () => runWithConfig(cfg);
   const handleReset = () => setCfg({ ...DEFAULTS });
@@ -327,7 +390,7 @@ export function Research() {
   const tradeColumns = [
     { key: '__idx', header: '#', width: '40px', render: (_, row) => <span className="text-xs text-slate-500 whitespace-nowrap">{row.__idx}</span> },
     { key: 'symbol', header: 'Symbol', width: '90px', sortable: true, render: v => <span className="whitespace-nowrap text-xs">{v}</span> },
-    { key: 'direction', header: 'Dir', width: '76px', sortable: true, render: v => (<span className={`inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-2 py-1 rounded-md ${v === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}><span>{v === 'LONG' ? '▲' : '▼'}</span><span>{v}</span></span>) },
+    { key: 'direction', header: 'Dir', width: '76px', sortable: true, render: v => (<span className={`inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-2 py-1 rounded-md ${v === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}><span>{v === 'LONG' ? 'Ã¢â€“Â²' : 'Ã¢â€“Â¼'}</span><span>{v}</span></span>) },
     { key: 'timeframe', header: 'TF', width: '54px', sortable: true, render: v => <span className="whitespace-nowrap text-xs">{v}</span> },
     { key: 'pattern', header: 'Pattern', width: '110px', sortable: true, render: v => <span className="text-[11px] whitespace-nowrap">{v}</span> },
     { key: 'entry_price', header: 'Entry', width: '90px', render: v => <span className="whitespace-nowrap text-xs">{v?.toFixed(v > 100 ? 2 : 4) || '-'}</span> },
@@ -338,7 +401,7 @@ export function Research() {
     { key: 'sim_status', header: 'Status Sim', width: '96px', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
     { key: 'score', header: 'Score', width: '80px', sortable: true, render: v => <ScoreCell value={v} /> },
     { key: 'regime', header: 'Regime', width: '70px', sortable: true, render: v => <span className="inline-flex items-center px-2 py-1 rounded-md bg-slate-700 text-slate-200 text-[11px] whitespace-nowrap">{v === 'SIDEWAYS' ? 'SW' : v || 'N/A'}</span> },
-    { key: 'candle_time', header: 'Opened', width: '90px', sortable: true, render: v => <span className="text-[11px] whitespace-nowrap text-slate-400">{utcToVN(v)}</span> },
+    { key: 'entry_time', header: 'Opened', width: '90px', sortable: true, render: (v, row) => <span className="text-[11px] whitespace-nowrap text-slate-400">{utcToVN(v || row.created_at || row.candle_time)}</span> },
     { key: 'exit_time', header: 'Closed', width: '90px', sortable: true, render: v => <span className="text-[11px] whitespace-nowrap text-slate-400">{utcToVN(v)}</span> },
   ];
 
@@ -349,11 +412,11 @@ export function Research() {
     <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Microscope className="w-7 h-7 text-indigo-400" />
-        <div><h2 className="text-2xl font-bold text-white">Strategy Research</h2><p className="text-slate-400 mt-0.5">Real Trade Mode — {trades.length} trades loaded</p></div>
+        <div><h2 className="text-2xl font-bold text-white">Strategy Research</h2><p className="text-slate-400 mt-0.5">Real Trade Mode Ã¢â‚¬â€ {trades.length} trades loaded</p></div>
       </div>
 
-      <div className="flex gap-6">
-        <div className="w-80 flex-shrink-0 space-y-3">
+      <div className="flex flex-col xl:flex-row gap-6">
+        <div className="w-full xl:w-80 xl:flex-shrink-0 space-y-3">
           <div className="flex gap-2"><Button variant="primary" className="flex-1" icon={running ? undefined : <Play className="w-4 h-4" />} loading={running} onClick={handleRun}>Run</Button><Button variant="ghost" icon={<RotateCcw className="w-4 h-4" />} onClick={handleReset}>Reset</Button></div>
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">Capital</p><div className="grid grid-cols-2 gap-2"><Input type="number" label="Initial ($)" value={cfg.initialCapital} onChange={e => set('initialCapital', Number(e.target.value) || 10000)} /><Input type="number" label="Position ($)" value={cfg.positionSize} onChange={e => set('positionSize', Number(e.target.value) || 1000)} /></div></Card>
@@ -373,15 +436,15 @@ export function Research() {
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">Indicator Index</p><div className="space-y-2">
             <div className="grid grid-cols-2 gap-2"><Input type="number" label="RSI Min" value={cfg.rsiMin} onChange={e => set('rsiMin', e.target.value)} /><Input type="number" label="RSI Max" value={cfg.rsiMax} onChange={e => set('rsiMax', e.target.value)} /></div>
-            <Input type="number" label="Volume Ratio ≥" value={cfg.volumeRatioMin} onChange={e => set('volumeRatioMin', e.target.value)} />
-            <Input type="number" label="ATR Ratio ≥" value={cfg.atrRatioMin} onChange={e => set('atrRatioMin', e.target.value)} />
+            <Input type="number" label="Volume Ratio Ã¢â€°Â¥" value={cfg.volumeRatioMin} onChange={e => set('volumeRatioMin', e.target.value)} />
+            <Input type="number" label="ATR Ratio Ã¢â€°Â¥" value={cfg.atrRatioMin} onChange={e => set('atrRatioMin', e.target.value)} />
             <div className="grid grid-cols-2 gap-2"><Input type="number" label="EMA Dist Min" value={cfg.emaDistMin} onChange={e => set('emaDistMin', e.target.value)} /><Input type="number" label="EMA Dist Max" value={cfg.emaDistMax} onChange={e => set('emaDistMax', e.target.value)} /></div>
           </div></Card>
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">Score Index</p><div className="space-y-2">
             <div className="grid grid-cols-2 gap-2"><Input type="number" label="Score Min" value={cfg.scoreMin} onChange={e => set('scoreMin', e.target.value)} /><Input type="number" label="Score Max" value={cfg.scoreMax} onChange={e => set('scoreMax', e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Trend ≥" value={cfg.trendScoreMin} onChange={e => set('trendScoreMin', e.target.value)} /><Input type="number" label="Momentum ≥" value={cfg.momentumScoreMin} onChange={e => set('momentumScoreMin', e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Volume ≥" value={cfg.volumeScoreMin} onChange={e => set('volumeScoreMin', e.target.value)} /><div className="grid grid-cols-2 gap-1"><Input type="number" label="MTF≥" value={cfg.mtfScoreMin} onChange={e => set('mtfScoreMin', e.target.value)} /><Input type="number" label="MTF≤" value={cfg.mtfScoreMax} onChange={e => set('mtfScoreMax', e.target.value)} /></div></div>
+            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Trend Ã¢â€°Â¥" value={cfg.trendScoreMin} onChange={e => set('trendScoreMin', e.target.value)} /><Input type="number" label="Momentum Ã¢â€°Â¥" value={cfg.momentumScoreMin} onChange={e => set('momentumScoreMin', e.target.value)} /></div>
+            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Volume Ã¢â€°Â¥" value={cfg.volumeScoreMin} onChange={e => set('volumeScoreMin', e.target.value)} /><div className="grid grid-cols-2 gap-1"><Input type="number" label="MTFÃ¢â€°Â¥" value={cfg.mtfScoreMin} onChange={e => set('mtfScoreMin', e.target.value)} /><Input type="number" label="MTFÃ¢â€°Â¤" value={cfg.mtfScoreMax} onChange={e => set('mtfScoreMax', e.target.value)} /></div></div>
           </div></Card>
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">RR Simulation</p><div className="space-y-2">
@@ -390,16 +453,40 @@ export function Research() {
             <p className="text-xs text-slate-600">SL/TP overrides RR if both set. Empty = original.</p>
             <div className="pt-1 border-t border-slate-700">
               <div className="flex items-center justify-between">
-                <div><span className="text-xs text-slate-400">Reverse Direction</span><p className="text-[10px] text-slate-600">LONG↔SHORT with same MAE/MFE.</p></div>
+                <div><span className="text-xs text-slate-400">Reverse Direction</span><p className="text-[10px] text-slate-600">LONG/SHORT, replayed on the same 1m candles.</p></div>
                 <button onClick={() => set('reverseDirection', !cfg.reverseDirection)} className={`relative w-12 h-6 rounded-full transition-colors ${cfg.reverseDirection ? 'bg-orange-600' : 'bg-slate-700'}`}><div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ${cfg.reverseDirection ? 'translate-x-6' : 'translate-x-0.5'}`} /></button>
               </div>
-              {cfg.reverseDirection && <p className="text-[10px] text-orange-400 mt-1">⚠ MAE/MFE are from original direction. Use with caution.</p>}
+              {cfg.reverseDirection && <p className="text-[10px] text-orange-400 mt-1">Ã¢Å¡Â  Entry is unchanged; SL/TP are recalculated for the reversed side.</p>}
             </div>
           </div></Card>
         </div>
 
         <div className="flex-1 min-w-0 space-y-6">
-          {running && <Card className="h-48 flex items-center justify-center"><div className="text-center"><div className="w-12 h-12 relative mx-auto mb-3"><div className="absolute inset-0 rounded-full border-4 border-indigo-500/20" /><div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" /></div><p className="text-slate-400">Processing...</p></div></Card>}
+          {running && (
+          <Card className="h-48 flex items-center justify-center">
+            <div className="text-center w-full max-w-md">
+              <div className="w-12 h-12 relative mx-auto mb-3">
+                <div className="absolute inset-0 rounded-full border-4 border-indigo-500/20" />
+                <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
+              </div>
+              {fetchProgress ? (
+                <>
+                  <p className="text-slate-300 mb-2">
+                    Fetching klines from Binance... {fetchProgress.done}/{fetchProgress.total} symbols
+                  </p>
+                  <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-indigo-500 h-full transition-all duration-300"
+                      style={{ width: `${(fetchProgress.done / fetchProgress.total) * 100}%` }}
+                    />
+                  </div>
+                </>
+              ) : (
+                <p className="text-slate-400">Processing...</p>
+              )}
+            </div>
+          </Card>
+        )}
           {!running && results && (
             <>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -412,7 +499,7 @@ export function Research() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card><CardHeader title="Performance" /><div className="space-y-3">
-                  {[['Total Trades', String(results.counted)], ['Profit Factor', results.pf === Infinity ? '∞' : results.pf.toFixed(2)], ['Expectancy', `${results.exp.toFixed(2)}%`], ['Sharpe', results.sharpe.toFixed(2)], ['Wins / Losses', `${results.wins} / ${results.losses}`], ['Avg P / Avg L', `${results.avgP.toFixed(2)}% / ${results.avgL.toFixed(2)}%`], ['Long / Short WR', `${results.longWR.toFixed(1)}% (${results.longTotal}) / ${results.shortWR.toFixed(1)}% (${results.shortTotal})`]].map(([l, v]) => <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0"><span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span></div>)}
+                  {[['Total Trades', String(results.counted)], ['Profit Factor', results.pf === Infinity ? 'Ã¢Ë†Å¾' : results.pf.toFixed(2)], ['Expectancy', `${results.exp.toFixed(2)}%`], ['Sharpe', results.sharpe.toFixed(2)], ['Wins / Losses', `${results.wins} / ${results.losses}`], ['Avg P / Avg L', `${results.avgP.toFixed(2)}% / ${results.avgL.toFixed(2)}%`], ['Long / Short WR', `${results.longWR.toFixed(1)}% (${results.longTotal}) / ${results.shortWR.toFixed(1)}% (${results.shortTotal})`]].map(([l, v]) => <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0"><span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span></div>)}
                 </div></Card>
                 <Card><CardHeader title="Risk" /><div className="space-y-3">
                   {[['Final Equity', `$${$(results.nav)}`, clr(results.pnl)], ['Total P&L', `${results.pnl >= 0 ? '+' : ''}$${$(results.pnl)}`, clr(results.pnl)], ['Peak NAV', `$${$(results.peakNav)}`, 'text-emerald-400'], ['Trough NAV', `$${$(results.troughNav)}`, 'text-red-400'], ['Max Gain', `${results.maxGain.toFixed(2)}%`, 'text-emerald-400'], ['Max DD', `${results.maxDD.toFixed(2)}%`, 'text-red-400'], ['Max Win / Loss Streak', `${results.maxWinStreak} / ${results.maxLossStreak}`, 'text-white'], ['Avg Duration', results.avgDurStr, 'text-white']].map(([l, v, c]) => <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0"><span className="text-slate-400">{l}</span><span className={`font-bold ${c}`}>{v}</span></div>)}
@@ -423,29 +510,34 @@ export function Research() {
               <Card><CardHeader title="Drawdown" /><ResponsiveContainer width="100%" height={160}><AreaChart data={results.curve}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="time" stroke="#64748b" fontSize={10} interval="preserveStartEnd" /><YAxis stroke="#64748b" fontSize={10} tickFormatter={v => `-${v}%`} reversed /><Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }} formatter={v => [`-${Number(v).toFixed(2)}%`]} /><Area type="monotone" dataKey="dd" name="Drawdown" stroke="#ef4444" fill="#ef4444" fillOpacity={0.2} /></AreaChart></ResponsiveContainer></Card>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card><CardHeader title="Regime Breakdown" /><DataTable columns={[{ key: 'regime', header: 'Regime', render: v => <StatusBadge status={v} /> }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? '∞' : v.toFixed(2) }]} data={regimeData} pageSize={5} /></Card>
-                <Card><CardHeader title="Feature: RSI" /><DataTable columns={[{ key: 'range', header: 'RSI Range' }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'pf', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? '∞' : v.toFixed(2) }, { key: 'expectancy', header: 'Exp', sortable: true, align: 'right', render: v => <span className={v >= 0 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(2)}%</span> }]} data={rsiBuckets} pageSize={10} /></Card>
+                <Card><CardHeader title="Regime Breakdown" /><DataTable columns={[{ key: 'regime', header: 'Regime', render: v => <StatusBadge status={v} /> }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Ã¢Ë†Å¾' : v.toFixed(2) }]} data={regimeData} pageSize={5} /></Card>
+                <Card><CardHeader title="Feature: RSI" /><DataTable columns={[{ key: 'range', header: 'RSI Range' }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'pf', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Ã¢Ë†Å¾' : v.toFixed(2) }, { key: 'expectancy', header: 'Exp', sortable: true, align: 'right', render: v => <span className={v >= 0 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(2)}%</span> }]} data={rsiBuckets} pageSize={10} /></Card>
               </div>
 
-              <Card><CardHeader title="Pattern × Timeframe Heatmap" />{patternHM.length > 0 ? <Heatmap data={patternHM} xLabel="TF" yLabel="Pattern" valueLabel="WR%" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
-              <Card><CardHeader title="Volume Ratio × RSI Heatmap" subtitle="Profit Factor" />{volRsiHM.length > 0 ? <Heatmap data={volRsiHM} xLabel="Volume Ratio" yLabel="RSI" valueLabel="PF" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
+              <Card><CardHeader title="Pattern Ãƒâ€” Timeframe Heatmap" />{patternHM.length > 0 ? <Heatmap data={patternHM} xLabel="TF" yLabel="Pattern" valueLabel="WR%" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
+              <Card><CardHeader title="Volume Ratio Ãƒâ€” RSI Heatmap" subtitle="Profit Factor" />{volRsiHM.length > 0 ? <Heatmap data={volRsiHM} xLabel="Volume Ratio" yLabel="RSI" valueLabel="PF" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
               <Card><CardHeader title="Score Distribution" subtitle="Wins vs Losses by score" />{scoreDist.length > 0 ? <ResponsiveContainer width="100%" height={220}><ReBarChart data={scoreDist}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="range" stroke="#64748b" fontSize={12} /><YAxis stroke="#64748b" fontSize={12} /><Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }} /><Legend /><Bar dataKey="wins" name="Wins" fill="#10b981" radius={[4, 4, 0, 0]} /><Bar dataKey="losses" name="Losses" fill="#ef4444" radius={[4, 4, 0, 0]} /></ReBarChart></ResponsiveContainer> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
 
               <Card>
-                <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                   <div><h3 className="text-lg font-semibold text-white">Simulated Trades</h3><p className="text-sm text-slate-400">{trades.length} trades{results.notCount > 0 ? ` (${results.notCount} not counted)` : ''}</p></div>
-                  <div className="flex gap-2">
-                    <button onClick={() => { const streak = tradesDesc.map(t => t.status === 'WIN' ? 'W' : t.status === 'LOSS' ? 'L' : '?').join(' '); navigator.clipboard.writeText(streak); alert(`Copied ${tradesDesc.length} original results`); }} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">📋 Streak</button>
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => { const streak = tradesDesc.map(t => t.sim_status === 'WIN' ? 'W' : t.sim_status === 'LOSS' ? 'L' : t.sim_status === 'NOT_COUNT' ? 'N' : '?').join(' '); navigator.clipboard.writeText(streak); alert(`Copied ${tradesDesc.length} simulated results`); }} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">Ã°Å¸â€œâ€¹ Streak</button>
                     <button onClick={() => {
                       const headers = ['#','Symbol','Dir','TF','Pattern','Entry','SL_Sim','TP_Sim','PnL_Sim','Status_Orig','Status_Sim','Score','Regime','Opened','Closed'];
-                      const rows = tradesDesc.map((t, i) => [i+1, t.symbol, t.direction, t.timeframe, t.pattern, t.entry_price, t.sim_sl, t.sim_tp, t.sim_result, t.status, t.sim_status, t.score, t.regime, t.candle_time, t.exit_time].join(','));
+                      const rows = tradesDesc.map((t, i) => [i+1, t.symbol, t.direction, t.timeframe, t.pattern, t.entry_price, t.sim_sl, t.sim_tp, t.sim_result, t.status, t.sim_status, t.score, t.regime, t.entry_time || t.created_at || t.candle_time, t.exit_time].join(','));
                       const csv = [headers.join(','), ...rows].join('\n');
                       const blob = new Blob([csv], { type: 'text/csv' });
                       const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `simulated_trades_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url);
-                    }} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs">📥 CSV</button>
+                    }} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs">Ã°Å¸â€œÂ¥ CSV</button>
                   </div>
                 </div>
-                <DataTable columns={tradeColumns} data={tradesDesc.map((t, i) => ({ ...t, __idx: i + 1 }))} pageSize={20} />
+                <DataTable
+                    columns={tradeColumns}
+                    data={tradesDesc.map((t, i) => ({ ...t, __idx: i + 1 }))}
+                    pageSize={20}
+                    onRowClick={(row) => setSelectedTrade(row)}
+                  />
               </Card>
 
               {(cfg.slPct || cfg.tpPct || cfg.rrOverride) && trades.some(t => t._debug_sl_pct != null) && <DebugPanel trades={tradesDesc} />}
@@ -453,6 +545,13 @@ export function Research() {
           )}
         </div>
       </div>
+      {selectedTrade && (
+        <TradeDetailModal
+          trade={selectedTrade}
+          klines={klineCache.get(selectedTrade.symbol) || []}
+          onClose={() => setSelectedTrade(null)}
+        />
+      )}
     </div>
   );
 }

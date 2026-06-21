@@ -309,7 +309,7 @@ export function AccountPage() {
         <Button variant="secondary" icon={refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} onClick={() => refreshAccountData(true)} disabled={refreshing}>Refresh</Button>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
         <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><DollarSign className="w-4 h-4 text-indigo-400" /><p className="text-xs text-slate-400">Wallet Balance</p></div><p className="text-xl font-bold text-white">${$n(kpi?.totalWalletBalance)}</p></Card>
         <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><TrendingUp className="w-4 h-4 text-emerald-400" /><p className="text-xs text-slate-400">Unrealized PnL</p></div><p className={`text-xl font-bold ${pnlClr(kpi?.totalUnrealizedProfit)}`}>{Number(kpi?.totalUnrealizedProfit || 0) >= 0 ? "+" : ""}${$n(kpi?.totalUnrealizedProfit)}</p></Card>
         <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><BarChart3 className="w-4 h-4 text-cyan-400" /><p className="text-xs text-slate-400">Margin Balance</p></div><p className="text-xl font-bold text-white">${$n(kpi?.totalMarginBalance)}</p></Card>
@@ -327,7 +327,7 @@ export function AccountPage() {
             <Card><CardHeader title="Position Distribution" subtitle={`${activePositions.length} active positions`} />{posDistribution.length > 0 ? (<ResponsiveContainer width="100%" height={250}><PieChart><Pie data={posDistribution} cx="50%" cy="50%" outerRadius={90} innerRadius={50} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>{posDistribution.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}</Pie><Tooltip formatter={(v) => [`$${$n(v, 2)}`, "Notional"]} contentStyle={{ backgroundColor: "#1e293b", border: "1px solid #334155", borderRadius: "8px" }} /></PieChart></ResponsiveContainer>) : <div className="h-48 flex items-center justify-center text-slate-500">No active positions</div>}</Card>
           </div>
           {activePositions.length > 0 && (<Card><CardHeader title="Position PnL" /><ResponsiveContainer width="100%" height={250}><BarChart data={activePositions.map(p => ({ symbol: p.symbol, pnl: Number(p.unrealizedProfit || 0) }))}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="symbol" stroke="#64748b" fontSize={11} /><YAxis stroke="#64748b" fontSize={11} tickFormatter={v => `$${v}`} /><Tooltip content={<ChartTT />} /><Bar dataKey="pnl" name="PnL ($)" radius={[4, 4, 0, 0]}>{activePositions.map((p, i) => <Cell key={i} fill={Number(p.unrealizedProfit) >= 0 ? "#10b981" : "#ef4444"} />)}</Bar></BarChart></ResponsiveContainer></Card>)}
-          {incomeStats.length > 0 && (<Card><CardHeader title="Income Summary" subtitle="By type" /><div className="grid grid-cols-2 md:grid-cols-4 gap-4">{incomeStats.map(({ type, total }) => (<div key={type} className="bg-slate-800/50 rounded-lg p-4 text-center"><p className="text-xs text-slate-400 mb-1">{type}</p><p className={`text-lg font-bold font-mono ${pnlClr(total)}`}>{total >= 0 ? "+" : ""}${$n(total, 4)}</p></div>))}</div></Card>)}
+          {incomeStats.length > 0 && (<Card><CardHeader title="Income Summary" subtitle="By type" /><div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">{incomeStats.map(({ type, total }) => (<div key={type} className="bg-slate-800/50 rounded-lg p-4 text-center"><p className="text-xs text-slate-400 mb-1">{type}</p><p className={`text-lg font-bold font-mono ${pnlClr(total)}`}>{total >= 0 ? "+" : ""}${$n(total, 4)}</p></div>))}</div></Card>)}
         </div>)}
 
         {tab === "positions" && (<Card><CardHeader title="Open Positions" subtitle={`${activePositions.length} active`} /><DataTable columns={posColumns} data={activePositions} pageSize={20} emptyMessage="No open positions" /></Card>)}
@@ -335,14 +335,14 @@ export function AccountPage() {
         {tab === "orders" && (<Card><CardHeader title="Open Orders" subtitle={`${openOrders.length} orders`} /><DataTable columns={orderColumns} data={openOrders} pageSize={20} emptyMessage="No open orders" /></Card>)}
 
         {tab === "history" && (<div className="space-y-6">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
             <Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Trades</p><p className="text-lg font-bold text-white">{tradeStats.total}</p></Card>
             <Card className="p-3 text-center"><p className="text-xs text-slate-400">Volume</p><p className="text-lg font-bold text-white">${$n(tradeStats.volume)}</p></Card>
             <Card className="p-3 text-center"><p className="text-xs text-slate-400">Commission</p><p className="text-lg font-bold text-red-400">${$n(tradeStats.commission, 4)}</p></Card>
             <Card className="p-3 text-center"><p className="text-xs text-slate-400">Realized PnL</p><p className={`text-lg font-bold ${pnlClr(tradeStats.pnl)}`}>{tradeStats.pnl >= 0 ? "+" : ""}${$n(tradeStats.pnl, 4)}</p></Card>
           </div>
           <Card><div className="flex items-center gap-2 mb-3"><span className="text-sm font-semibold text-white">Filters</span></div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3"><Input type="text" label="Symbol" value={hSymbol} onChange={e => setHSymbol(e.target.value)} placeholder="BTC or BTCUSDT" /><Select label="Side" value={hSide} onChange={setHSide} options={[{ value: "all", label: "All" }, { value: "BUY", label: "BUY" }, { value: "SELL", label: "SELL" }]} /><Input type="date" label="Start" value={hStartDate} onChange={e => setHStartDate(e.target.value)} /><Input type="date" label="End" value={hEndDate} onChange={e => setHEndDate(e.target.value)} /><div className="flex items-end gap-2"><Button variant="primary" loading={tradesLoading} onClick={fetchTradeHistory}>Search</Button><Button variant="ghost" onClick={() => { setHSymbol(""); setHSide("all"); setHStartDate(""); setHEndDate(""); setTradeHistory([]); }}>Clear</Button></div></div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3"><Input type="text" label="Symbol" value={hSymbol} onChange={e => setHSymbol(e.target.value)} placeholder="BTC or BTCUSDT" /><Select label="Side" value={hSide} onChange={setHSide} options={[{ value: "all", label: "All" }, { value: "BUY", label: "BUY" }, { value: "SELL", label: "SELL" }]} /><Input type="date" label="Start" value={hStartDate} onChange={e => setHStartDate(e.target.value)} /><Input type="date" label="End" value={hEndDate} onChange={e => setHEndDate(e.target.value)} /><div className="flex items-end gap-2"><Button variant="primary" loading={tradesLoading} onClick={fetchTradeHistory}>Search</Button><Button variant="ghost" onClick={() => { setHSymbol(""); setHSide("all"); setHStartDate(""); setHEndDate(""); setTradeHistory([]); }}>Clear</Button></div></div>
             {!tradeHistory.length && <div className="mt-3 text-xs text-slate-500">Binance Futures Trade History requires symbol. Enter symbol and click Search.</div>}
           </Card>
           <Card><CardHeader title="Trade History" subtitle={`${filteredTrades.length} trades`} /><DataTable columns={tradeColumns} data={[...filteredTrades].sort((a, b) => Number(b.time) - Number(a.time))} pageSize={20} emptyMessage="No trades found" /></Card>
@@ -350,19 +350,19 @@ export function AccountPage() {
 
         {tab === "income" && (<div className="space-y-6">
           <Card><div className="flex items-center gap-3 mb-3"><span className="text-sm font-semibold text-white">Filter</span></div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
               <Select label="Type" value={incomeType} onChange={setIncomeType} options={[{ value: "all", label: "All Types" }, ...incomeTypes.map(t => ({ value: t, label: t }))]} />
               <Input type="date" label="Start" value={incStartDate} onChange={e => setIncStartDate(e.target.value)} />
               <Input type="date" label="End" value={incEndDate} onChange={e => setIncEndDate(e.target.value)} />
               <div className="flex items-end"><Button variant="ghost" onClick={() => { setIncomeType("all"); setIncStartDate(""); setIncEndDate(""); }}>Clear</Button></div>
             </div>
           </Card>
-          {incomeStats.length > 0 && (<div className="grid grid-cols-2 md:grid-cols-4 gap-3">{incomeStats.slice(0, 8).map(({ type, total }) => (<Card key={type} className="p-3 text-center"><p className="text-xs text-slate-400">{type}</p><p className={`text-lg font-bold font-mono ${pnlClr(total)}`}>{total >= 0 ? "+" : ""}${$n(total, 4)}</p></Card>))}</div>)}
+          {incomeStats.length > 0 && (<div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">{incomeStats.slice(0, 8).map(({ type, total }) => (<Card key={type} className="p-3 text-center"><p className="text-xs text-slate-400">{type}</p><p className={`text-lg font-bold font-mono ${pnlClr(total)}`}>{total >= 0 ? "+" : ""}${$n(total, 4)}</p></Card>))}</div>)}
           <Card><CardHeader title="Income History" subtitle={`${filteredIncome.length} records`} /><DataTable columns={incomeColumns} data={[...filteredIncome].sort((a, b) => Number(b.time) - Number(a.time))} pageSize={20} emptyMessage="No income records" /></Card>
         </div>)}
       </TabContent>
 
-      {!accountInfo && (<Card className="border-yellow-500/30"><div className="flex items-center gap-3 p-2"><ShieldAlert className="w-5 h-5 text-yellow-400 flex-shrink-0" /><div><p className="text-sm text-yellow-300 font-medium">Account API not configured</p><p className="text-xs text-slate-400 mt-0.5">Backend cần expose các endpoint: /api/account/info, /api/account/positions, /api/account/open-orders, /api/account/trades, /api/account/income.</p></div></div></Card>)}
+      {!accountInfo && (<Card className="border-yellow-500/30"><div className="flex items-center gap-3 p-2"><ShieldAlert className="w-5 h-5 text-yellow-400 flex-shrink-0" /><div><p className="text-sm text-yellow-300 font-medium">Account API not configured</p><p className="text-xs text-slate-400 mt-0.5">Backend cáº§n expose cÃ¡c endpoint: /api/account/info, /api/account/positions, /api/account/open-orders, /api/account/trades, /api/account/income.</p></div></div></Card>)}
     </div>
   );
 }
