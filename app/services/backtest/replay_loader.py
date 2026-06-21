@@ -9,12 +9,12 @@ IMPORTANT:
 - Nếu không có pending link, fallback signals.stop_loss nhưng đánh dấu.
 """
 
-from datetime import datetime
-from typing import List, Dict, Any
+from datetime import datetime, date
+from typing import List, Dict, Any, Optional
 
 from app.db.session import SessionLocal
 from app.db.models import Signal, PendingSignal
-from app.core.time_utils import ensure_utc
+from app.core.time_utils import ensure_utc, vn_range_to_utc
 
 
 def load_closed_signals(
@@ -36,8 +36,14 @@ def load_closed_signals(
     - initial_stop_loss từ pending.stop_loss gốc (trước protection mutate)
     - initial_take_profit từ pending.take_profit gốc
     """
-    date_from = ensure_utc(date_from)
-    date_to = ensure_utc(date_to)
+    date_from = _normalize_date_input(date_from)
+    date_to = _normalize_date_input(date_to)
+
+    if isinstance(date_from, date) and not isinstance(date_from, datetime):
+        date_from, _ = vn_range_to_utc(date_from.isoformat(), date_from.isoformat())
+    if isinstance(date_to, date) and not isinstance(date_to, datetime):
+        _, date_to = vn_range_to_utc(date_to.isoformat(), date_to.isoformat())
+
     symbols = _normalize_symbols(symbols)
 
     results = []
@@ -49,9 +55,12 @@ def load_closed_signals(
 
         query = db.query(Signal).filter(
             Signal.status.in_(allowed_statuses),
-            Signal.created_at >= date_from,
-            Signal.created_at <= date_to,
+            Signal.exit_time != None,
         )
+        if date_from:
+            query = query.filter(Signal.exit_time >= date_from)
+        if date_to:
+            query = query.filter(Signal.exit_time <= date_to)
 
         if timeframes:
             query = query.filter(Signal.timeframe.in_(timeframes))
@@ -69,7 +78,7 @@ def load_closed_signals(
         if regimes:
             query = query.filter(Signal.regime.in_(regimes))
 
-        query = query.order_by(Signal.created_at.asc()).limit(limit)
+        query = query.order_by(Signal.exit_time.asc()).limit(limit)
 
         signals = query.all()
 
@@ -121,6 +130,29 @@ def load_closed_signals(
             })
 
     return results
+
+
+def _normalize_date_input(value: Optional[Any]) -> Optional[datetime]:
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return ensure_utc(value)
+
+    if isinstance(value, date):
+        return value
+
+    if isinstance(value, str):
+        try:
+            if len(value) == 10:
+                return date.fromisoformat(value)
+            parsed = datetime.fromisoformat(value)
+            return ensure_utc(parsed)
+        except Exception:
+            return None
+
+    return None
+
 
 def _normalize_symbols(symbols: List[str]) -> List[str]:
     out = []

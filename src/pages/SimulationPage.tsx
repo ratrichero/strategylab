@@ -257,7 +257,17 @@ export function SimulationPage() {
     { key: 'entry_price', header: 'Entry', align: 'right', render: v => fmtPrice(v) },
     { key: 'actual', header: 'Actual RR', sortable: true, align: 'right', render: v => <span className={pnlClr(v?.rr_realized)}>{$n(v?.rr_realized, 3)}</span> },
     { key: 'actual', header: 'A.Exit', render: v => <span className={`text-xs ${EXIT_COLORS[v?.exit_reason] || ''}`}>{v?.exit_reason || '-'}</span> },
+    { key: 'actual', header: 'A.Status', align: 'center', render: v => {
+      if (v?.result_pct == null) return '-';
+      const win = Number(v.result_pct) > 0;
+      return <span className={`px-2 py-0.5 rounded-full text-[10px] ${win ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>{win ? 'WIN' : 'LOSS'}</span>;
+    } },
     { key: 'simulated', header: 'Sim RR', sortable: true, align: 'right', render: v => <span className={pnlClr(v?.rr_realized)}>{$n(v?.rr_realized, 3)}</span> },
+    { key: 'simulated', header: 'S.Status', align: 'center', render: v => {
+      if (v?.result_pct == null) return '-';
+      const win = Number(v.result_pct) > 0;
+      return <span className={`px-2 py-0.5 rounded-full text-[10px] ${win ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>{win ? 'WIN' : 'LOSS'}</span>;
+    } },
     { key: 'simulated', header: 'S.Exit', render: v => <span className={`text-xs ${EXIT_COLORS[v?.exit_reason] || ''}`}>{v?.exit_reason || '-'}</span> },
     { key: 'delta', header: 'Δ RR', sortable: true, align: 'right', render: v => <span className={diffClr(v?.rr_realized_diff)}>{v?.rr_realized_diff >= 0 ? '+' : ''}{$n(v?.rr_realized_diff, 3)}</span> },
     { key: 'simulated', header: 'L1', align: 'center', render: v => v?.level_1_hit ? <span className="text-emerald-400">✓</span> : <span className="text-slate-600">–</span> },
@@ -279,13 +289,15 @@ export function SimulationPage() {
               <th className="py-2 px-1 text-right">Entry</th>
               <th className="py-2 px-1 text-right">SL orig</th>
               <th className="py-2 px-1 text-right">TP orig</th>
+              <th className="py-2 px-1 text-right">SL sim</th>
+              <th className="py-2 px-1 text-right">TP sim</th>
               <th className="py-2 px-1 text-right">Exit sim</th>
-              <th className="py-2 px-1 text-right">SL%</th>
-              <th className="py-2 px-1 text-right">TP%</th>
-              <th className="py-2 px-1 text-right">PnL orig</th>
-              <th className="py-2 px-1 text-right">PnL sim</th>
-              <th className="py-2 px-1 text-center">Orig</th>
-              <th className="py-2 px-1 text-center">Sim</th>
+              <th className="py-2 px-1 text-right">SL% sim</th>
+              <th className="py-2 px-1 text-right">TP% sim</th>
+              <th className="py-2 px-1 text-right">PnL% orig</th>
+              <th className="py-2 px-1 text-right">PnL% sim</th>
+              <th className="py-2 px-1 text-center">Orig(exitReason)</th>
+              <th className="py-2 px-1 text-center">Sim(exitReason)</th>
             </tr>
           </thead>
           <tbody>
@@ -293,13 +305,16 @@ export function SimulationPage() {
               const entry = row.entry_price || 0;
               const slOrig = row.initial_stop_loss || 0;
               const tpOrig = row.tp_2r_price || 0;
-              const exitSim = row.simulated?.exit_price || 0;
-              const slPctSim = entry > 0 ? ((Math.abs(entry - slOrig) / entry) * 100).toFixed(2) : '-';
-              const tpPctSim = entry > 0 ? ((Math.abs(tpOrig - entry) / entry) * 100).toFixed(2) : '-';
+              const slSim = row.sim_initial_stop_loss || 0;
+              const tpSim = row.sim_tp_price || 0;
+              const exitSim = row.simulated?.exit_price;
+              const slPctSim = entry > 0 ? ((Math.abs(entry - slSim) / entry) * 100).toFixed(2) : '-';
+              const tpPctSim = entry > 0 ? ((Math.abs(tpSim - entry) / entry) * 100).toFixed(2) : '-';
               const pnlOrig = row.actual?.result_pct;
               const pnlSim = row.simulated?.result_pct;
-              const statusOrig = row.actual?.exit_reason || row.actual?.status || '-';
-              const statusSim = row.simulated?.exit_reason || '-';
+              const origExitReason = row.actual?.exit_reason || '-';
+              const simExitReason = row.simulated?.exit_reason || '-';
+              const resultSwapped = pnlOrig != null && pnlSim != null && ((pnlOrig > 0) !== (pnlSim > 0));
               return (
                 <tr key={idx} className="border-b border-slate-800 hover:bg-slate-800/50">
                   <td className="py-1.5 px-1 text-slate-300 font-mono">{row.signal_id}</td>
@@ -309,13 +324,20 @@ export function SimulationPage() {
                   <td className="py-1.5 px-1 text-right text-white font-mono">{fmtPrice(entry)}</td>
                   <td className="py-1.5 px-1 text-right text-red-400 font-mono">{fmtPrice(slOrig)}</td>
                   <td className="py-1.5 px-1 text-right text-emerald-400 font-mono">{fmtPrice(tpOrig)}</td>
+                  <td className="py-1.5 px-1 text-right text-yellow-300 font-mono">{fmtPrice(slSim)}</td>
+                  <td className="py-1.5 px-1 text-right text-cyan-300 font-mono">{fmtPrice(tpSim)}</td>
                   <td className="py-1.5 px-1 text-right text-white font-mono">{fmtPrice(exitSim)}</td>
                   <td className="py-1.5 px-1 text-right text-slate-300 font-mono">{slPctSim}%</td>
                   <td className="py-1.5 px-1 text-right text-slate-300 font-mono">{tpPctSim}%</td>
                   <td className={`py-1.5 px-1 text-right font-mono font-bold ${pnlClr(pnlOrig)}`}>{fmtPct(pnlOrig)}</td>
                   <td className={`py-1.5 px-1 text-right font-mono font-bold ${pnlClr(pnlSim)}`}>{fmtPct(pnlSim)}</td>
-                  <td className="py-1.5 px-1 text-center"><span className={`text-[10px] ${EXIT_COLORS[statusOrig] || 'text-slate-400'}`}>{statusOrig}</span></td>
-                  <td className="py-1.5 px-1 text-center"><span className={`text-[10px] ${EXIT_COLORS[statusSim] || 'text-slate-400'}`}>{statusSim}</span></td>
+                  <td className="py-1.5 px-1 text-center"><span className={`text-[10px] ${EXIT_COLORS[origExitReason] || 'text-slate-400'}`}>{origExitReason}</span></td>
+                  <td className="py-1.5 px-1 text-center">
+                    <span className="inline-flex items-center gap-1">
+                      {resultSwapped && <CheckCircle className="w-3 h-3 text-yellow-400" />}
+                      <span className={`text-[10px] ${EXIT_COLORS[simExitReason] || 'text-slate-400'}`}>{simExitReason}</span>
+                    </span>
+                  </td>
                 </tr>
               );
             })}
@@ -425,7 +447,7 @@ export function SimulationPage() {
       {selectedTrade && tradeDetail && (<div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setSelectedTrade(null); setTradeDetail(null); }}><div className="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-3xl w-full max-h-[85vh] overflow-auto shadow-2xl" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-6"><div className="flex items-center gap-3"><h3 className="text-lg font-bold text-white">{tradeDetail.symbol}</h3><DirectionBadge direction={tradeDetail.direction} /><span className="text-xs text-slate-400">{tradeDetail.timeframe} · {tradeDetail.strategy_name}</span>{tradeDetail.pattern && <span className="text-xs text-yellow-400">{tradeDetail.pattern}</span>}</div><button onClick={() => { setSelectedTrade(null); setTradeDetail(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Trade Info</h4><div className="space-y-2 text-sm">{[['Entry', tradeDetail.entry_price], ['Initial SL', tradeDetail.initial_stop_loss], ['TP', tradeDetail.tp_2r_price], ['R Value', tradeDetail.r_value_abs]].map(([l, v]) => <div key={l} className="flex justify-between"><span className="text-slate-400">{l}</span><span className="text-white font-mono">{fmtPrice(v)}</span></div>)}<div className="flex justify-between"><span className="text-slate-400">Entry Time</span><span className="text-slate-300">{utcToVN(tradeDetail.entry_time)}</span></div></div></div>
+          <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Trade Info</h4><div className="space-y-2 text-sm">{[['Entry', tradeDetail.entry_price], ['Initial SL', tradeDetail.initial_stop_loss], ['TP', tradeDetail.tp_2r_price], ['R Value', tradeDetail.r_value_abs], ['Sim SL', tradeDetail.sim_initial_stop_loss], ['Sim TP', tradeDetail.sim_tp_price]].map(([l, v]) => <div key={l} className="flex justify-between"><span className="text-slate-400">{l}</span><span className="text-white font-mono">{fmtPrice(v)}</span></div>)}<div className="flex justify-between"><span className="text-slate-400">Entry Time</span><span className="text-slate-300">{utcToVN(tradeDetail.entry_time)}</span></div></div></div>
           <div className="space-y-4">
             <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Actual</h4><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-400">Exit</span><span className={EXIT_COLORS[tradeDetail.actual?.exit_reason] || ''}>{tradeDetail.actual?.exit_reason}</span></div><div className="flex justify-between"><span className="text-slate-400">RR</span><span className={`font-bold ${pnlClr(tradeDetail.actual?.rr_realized)}`}>{$n(tradeDetail.actual?.rr_realized, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">Return</span><span className={pnlClr(tradeDetail.actual?.result_pct)}>{$n(tradeDetail.actual?.result_pct)}%</span></div></div></div>
             <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Simulated</h4><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-400">Exit</span><span className={EXIT_COLORS[tradeDetail.simulated?.exit_reason] || ''}>{tradeDetail.simulated?.exit_reason}</span></div><div className="flex justify-between"><span className="text-slate-400">RR</span><span className={`font-bold ${pnlClr(tradeDetail.simulated?.rr_realized)}`}>{$n(tradeDetail.simulated?.rr_realized, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">Max RR</span><span className="text-white">{$n(tradeDetail.simulated?.max_rr_seen, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">L1/L2</span><span>{tradeDetail.simulated?.level_1_hit ? '✅' : '—'} / {tradeDetail.simulated?.level_2_hit ? '✅' : '—'}</span></div>{tradeDetail.simulated?.ambiguous_bar && <div className="text-xs text-orange-400 mt-2">⚠️ Ambiguous bar — conservative</div>}</div></div>

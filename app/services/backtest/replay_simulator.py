@@ -116,17 +116,60 @@ def simulate_trade(
     if policy_config is None:
         policy_config = dict(DEFAULT_POLICY)
 
-    # Convert percent-based to R-based nếu cần
-    if policy_config and policy_config.get("mode") == "percent":
-        policy_config = _convert_percent_policy_to_r(trade, policy_config)
-
-    direction = trade["direction"]
     entry_price = float(trade["entry_price"])
-    initial_sl = float(trade["initial_stop_loss"])
-    r_value = float(trade["r_value_abs"])
+    direction = trade["direction"]
     timeframe = trade["timeframe"]
 
+    orig_initial_sl = float(trade.get("initial_stop_loss", 0))
+    orig_tp_price = float(trade.get("tp_2r_price", 0))
+    orig_r_value = float(trade.get("r_value_abs", 0))
+
+    sim_initial_sl = orig_initial_sl
+    sim_tp_price = orig_tp_price
+
+    percent_mode = bool(policy_config and policy_config.get("mode") == "percent")
+    if percent_mode:
+        tf_cfg = policy_config.get("timeframes", {}).get(timeframe, {})
+        sl_pct = float(tf_cfg.get("sl_pct", 0) or 0)
+        tp_pct = float(tf_cfg.get("tp_pct", 0) or 0)
+
+        if sl_pct > 0:
+            if direction == "LONG":
+                sim_initial_sl = entry_price * (1 - sl_pct)
+            else:
+                sim_initial_sl = entry_price * (1 + sl_pct)
+
+        if tp_pct > 0:
+            if direction == "LONG":
+                sim_tp_price = entry_price * (1 + tp_pct)
+            else:
+                sim_tp_price = entry_price * (1 - tp_pct)
+        elif sl_pct > 0:
+            if direction == "LONG":
+                sim_tp_price = entry_price * (1 + sl_pct * 2)
+            else:
+                sim_tp_price = entry_price * (1 - sl_pct * 2)
+
+    initial_sl = sim_initial_sl
+    r_value = abs(entry_price - sim_initial_sl)
     tp_r = float(policy_config.get("tp_r", 2.0))
+
+    if r_value <= 0 or entry_price <= 0:
+        initial_sl = orig_initial_sl
+        sim_initial_sl = orig_initial_sl
+        sim_tp_price = orig_tp_price
+        r_value = orig_r_value
+
+    if percent_mode:
+        policy_config = _convert_percent_policy_to_r(
+            {
+                **trade,
+                "initial_stop_loss": initial_sl,
+                "r_value_abs": r_value,
+            },
+            policy_config,
+        )
+
     levels_cfg = policy_config.get("levels", []) or []
 
     # Sort ascending theo trigger_r
@@ -138,7 +181,9 @@ def simulate_trade(
     default_buffer = BUFFER_PCT_MAP.get(timeframe, 0.002)
 
     # TP price
-    if direction == "LONG":
+    if percent_mode and sim_tp_price > 0:
+        tp_price = sim_tp_price
+    elif direction == "LONG":
         tp_price = entry_price + tp_r * r_value
     else:
         tp_price = entry_price - tp_r * r_value
@@ -314,6 +359,8 @@ def simulate_trade(
         "simulated": sim,
         "policy_levels": policy_levels,
         "timeline": [TimelineEvent(**evt) for evt in timeline],
+        "sim_initial_stop_loss": round(sim_initial_sl, 8) if sim_initial_sl is not None else None,
+        "sim_tp_price": round(sim_tp_price, 8) if sim_tp_price is not None else None,
     }
 
 

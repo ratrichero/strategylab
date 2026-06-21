@@ -4,7 +4,7 @@ Backtest Replay — Pydantic Models
 Request/Response schemas cho Signal Replay Backtest Phase 1.
 """
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
@@ -14,8 +14,8 @@ from pydantic import BaseModel, Field
 # ============================================================
 
 class ReplayRunRequest(BaseModel):
-    date_from: Optional[datetime] = None
-    date_to: Optional[datetime] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
     timeframes: List[str] = Field(default_factory=lambda: ["15m", "1h", "4h"])
     symbols: List[str] = Field(default_factory=list)
     strategies: List[str] = Field(default_factory=list)
@@ -161,6 +161,10 @@ class TradeRow(BaseModel):
     initial_stop_loss: float
     tp_2r_price: float
     r_value_abs: float
+
+    # NEW: simulated base values
+    sim_initial_stop_loss: Optional[float] = None
+    sim_tp_price: Optional[float] = None
 
     actual: ActualOutcome = Field(default_factory=ActualOutcome)
     simulated: SimulatedOutcome = Field(default_factory=SimulatedOutcome)

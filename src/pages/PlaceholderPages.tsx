@@ -189,8 +189,10 @@ export function BlockedPage() {
   const [reasons, setReasons] = useState([]);
   const [selectedReason, setSelectedReason] = useState("all");
   const today = new Date(Date.now() + 7*3600*1000).toISOString().slice(0,10);
-  const [startDate, setStartDate] = useState(today);
-  const [endDate, setEndDate] = useState(today);
+  const [pendingStartDate, setPendingStartDate] = useState(today);
+  const [pendingEndDate, setPendingEndDate] = useState(today);
+  const [appliedStartDate, setAppliedStartDate] = useState(today);
+  const [appliedEndDate, setAppliedEndDate] = useState(today);
 
   const loadData = async () => {
     setLoading(true);
@@ -217,17 +219,17 @@ export function BlockedPage() {
     const VN_MS = 7 * 3600 * 1000;
     return data.filter(d => {
       if (selectedReason !== "all" && getReasonGroup(d.block_reason) !== selectedReason) return false;
-      if (startDate || endDate) {
+      if (appliedStartDate || appliedEndDate) {
         const ts = d.created_at ? new Date(d.created_at).getTime() : 0;
         if (!ts) return false;
         const vn = new Date(ts + VN_MS);
         const vnStr = `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,'0')}-${String(vn.getUTCDate()).padStart(2,'0')}`;
-        if (startDate && vnStr < startDate) return false;
-        if (endDate && vnStr > endDate) return false;
+        if (appliedStartDate && vnStr < appliedStartDate) return false;
+        if (appliedEndDate && vnStr > appliedEndDate) return false;
       }
       return true;
     });
-  }, [data, selectedReason, startDate, endDate]);
+  }, [data, selectedReason, appliedStartDate, appliedEndDate]);
 
   const reasonList = useMemo(() => {
     return Array.from(new Set(data.map(d => getReasonGroup(d.block_reason)).filter(Boolean))).sort();
@@ -264,9 +266,9 @@ export function BlockedPage() {
       <Card>
         <div className="flex items-center gap-3 mb-4 flex-wrap">
           <Select label="Block Reason" value={selectedReason} onChange={setSelectedReason} options={[{ value: "all", label: "All Reasons" }, ...reasonList.map(r => ({ value: r, label: r }))]} className="w-64" />
-          <div><label className="block text-sm font-medium text-slate-400 mb-1.5">From</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
-          <div><label className="block text-sm font-medium text-slate-400 mb-1.5">To</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
-          <div className="flex items-end"><Button variant="ghost" onClick={() => { setStartDate(''); setEndDate(''); setSelectedReason('all'); }}>Clear</Button></div>
+          <div><label className="block text-sm font-medium text-slate-400 mb-1.5">From</label><input type="date" value={pendingStartDate} onChange={e => setPendingStartDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
+          <div><label className="block text-sm font-medium text-slate-400 mb-1.5">To</label><input type="date" value={pendingEndDate} onChange={e => setPendingEndDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
+          <div className="flex items-center"><Button onClick={() => { setAppliedStartDate(pendingStartDate); setAppliedEndDate(pendingEndDate); }}>Apply</Button></div>
         </div>
         <DataTable columns={cols} data={filtered} pageSize={20} emptyMessage="No blocked signals" />
       </Card>

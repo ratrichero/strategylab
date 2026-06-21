@@ -66,8 +66,14 @@ export function AccountPage() {
   const today = getTodayVN();
   const { tradingMode } = useAppStore();
   const [tab, setTab] = useState("overview");
-  const [loading, setLoading] = useState(true);
+  const [accountLoading, setAccountLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [positionsLoading, setPositionsLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [incomeLoading, setIncomeLoading] = useState(false);
+  const [positionsLoaded, setPositionsLoaded] = useState(false);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [incomeLoaded, setIncomeLoaded] = useState(false);
   const [tradesLoading, setTradesLoading] = useState(false);
   const [accountInfo, setAccountInfo] = useState(null);
   const [positions, setPositions] = useState([]);
@@ -84,31 +90,99 @@ export function AccountPage() {
 
   const currentTarget = tradingMode?.mode === "TESTNET" ? "testnet" : "live";
 
-  const fetchAccountData = async (showToast = false) => {
+  const fetchAccountInfo = async (showToast = false) => {
     try {
-      setRefreshing(true);
-      const [accRes, posRes, ordRes, incRes] = await Promise.all([
-        fetch(`${API}/account/info?target=${currentTarget}`).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${API}/account/positions?target=${currentTarget}`).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${API}/account/open-orders?target=${currentTarget}`).then(r => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${API}/account/income?target=${currentTarget}&limit=500`).then(r => r.ok ? r.json() : null).catch(() => null),
-      ]);
-      if (accRes) setAccountInfo(accRes);
-      if (Array.isArray(posRes)) setPositions(posRes);
-      if (Array.isArray(ordRes)) setOpenOrders(ordRes);
-      if (Array.isArray(incRes)) setIncomeHistory(incRes);
-      setTradeHistory([]);
-      if (showToast) toast.success("Account data refreshed");
+      setAccountLoading(true);
+      const res = await fetch(`${API}/account/info?target=${currentTarget}`);
+      const data = res.ok ? await res.json() : null;
+      if (data) setAccountInfo(data);
+      if (showToast) toast.success("Account info refreshed");
     } catch (e) {
       console.error("Account fetch error:", e);
-      if (showToast) toast.error("Failed to fetch account data");
+      if (showToast) toast.error("Failed to fetch account info");
     } finally {
-      setLoading(false);
+      setAccountLoading(false);
+    }
+  };
+
+  const fetchPositions = async () => {
+    try {
+      setPositionsLoading(true);
+      const res = await fetch(`${API}/account/positions?target=${currentTarget}`);
+      const data = res.ok ? await res.json() : null;
+      if (Array.isArray(data)) {
+        setPositions(data);
+        setPositionsLoaded(true);
+      }
+    } catch (e) {
+      console.error("Positions fetch error:", e);
+    } finally {
+      setPositionsLoading(false);
+    }
+  };
+
+  const fetchOpenOrders = async () => {
+    try {
+      setOrdersLoading(true);
+      const res = await fetch(`${API}/account/open-orders?target=${currentTarget}`);
+      const data = res.ok ? await res.json() : null;
+      if (Array.isArray(data)) {
+        setOpenOrders(data);
+        setOrdersLoaded(true);
+      }
+    } catch (e) {
+      console.error("Open orders fetch error:", e);
+    } finally {
+      setOrdersLoading(false);
+    }
+  };
+
+  const fetchIncome = async () => {
+    try {
+      setIncomeLoading(true);
+      const res = await fetch(`${API}/account/income?target=${currentTarget}&limit=500`);
+      const data = res.ok ? await res.json() : null;
+      if (Array.isArray(data)) {
+        setIncomeHistory(data);
+        setIncomeLoaded(true);
+      }
+    } catch (e) {
+      console.error("Income fetch error:", e);
+    } finally {
+      setIncomeLoading(false);
+    }
+  };
+
+  const refreshAccountData = async (showToast = false) => {
+    try {
+      setRefreshing(true);
+      await fetchAccountInfo(showToast);
+      if (positionsLoaded || tab === "positions") await fetchPositions();
+      if (ordersLoaded || tab === "orders") await fetchOpenOrders();
+      if (incomeLoaded || tab === "income") await fetchIncome();
+    } finally {
       setRefreshing(false);
     }
   };
 
-  useEffect(() => { fetchAccountData(); }, [currentTarget]);
+  useEffect(() => { fetchAccountInfo(); }, [currentTarget]);
+  useEffect(() => {
+    if (!accountLoading) {
+      if (!positionsLoaded && !positionsLoading) fetchPositions();
+      if (!ordersLoaded && !ordersLoading) fetchOpenOrders();
+    }
+  }, [accountLoading, currentTarget]);
+  useEffect(() => {
+    if (tab === "income" && !incomeLoaded && !incomeLoading) {
+      fetchIncome();
+    }
+    if (tab === "positions" && !positionsLoaded && !positionsLoading) {
+      fetchPositions();
+    }
+    if (tab === "orders" && !ordersLoaded && !ordersLoading) {
+      fetchOpenOrders();
+    }
+  }, [tab, currentTarget]);
 
   const fetchTradeHistory = async () => {
     const raw = hSymbol.trim().toUpperCase();
@@ -226,13 +300,13 @@ export function AccountPage() {
     { key: "time", header: "Time", sortable: true, render: v => tsToVN(v) },
   ];
 
-  if (loading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-indigo-500" /></div>;
+  if (accountLoading) return <div className="flex items-center justify-center h-96"><Loader2 className="w-8 h-8 animate-spin text-indigo-500" /></div>;
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3"><Wallet className="w-7 h-7 text-indigo-400" /><div><h2 className="text-2xl font-bold text-white">Account Manager</h2><p className="text-slate-400 mt-0.5">Binance Futures Account ({currentTarget.toUpperCase()})</p></div></div>
-        <Button variant="secondary" icon={refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} onClick={() => fetchAccountData(true)} disabled={refreshing}>Refresh</Button>
+        <Button variant="secondary" icon={refreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} onClick={() => refreshAccountData(true)} disabled={refreshing}>Refresh</Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
@@ -241,8 +315,8 @@ export function AccountPage() {
         <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><BarChart3 className="w-4 h-4 text-cyan-400" /><p className="text-xs text-slate-400">Margin Balance</p></div><p className="text-xl font-bold text-white">${$n(kpi?.totalMarginBalance)}</p></Card>
         <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><DollarSign className="w-4 h-4 text-emerald-400" /><p className="text-xs text-slate-400">Available</p></div><p className="text-xl font-bold text-emerald-400">${$n(kpi?.availableBalance)}</p></Card>
         <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><ShieldAlert className="w-4 h-4 text-yellow-400" /><p className="text-xs text-slate-400">Position Margin</p></div><p className="text-xl font-bold text-white">${$n(kpi?.totalPositionInitialMargin)}</p></Card>
-        <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><ArrowUpDown className="w-4 h-4 text-purple-400" /><p className="text-xs text-slate-400">Open Positions</p></div><p className="text-xl font-bold text-white">{activePositions.length}</p></Card>
-        <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><ArrowUpDown className="w-4 h-4 text-orange-400" /><p className="text-xs text-slate-400">Open Orders</p></div><p className="text-xl font-bold text-white">{openOrders.length}</p></Card>
+        <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><ArrowUpDown className="w-4 h-4 text-purple-400" /><p className="text-xs text-slate-400">Open Positions</p></div><p className="text-xl font-bold text-white">{positionsLoading ? "..." : activePositions.length}</p></Card>
+        <Card className="p-3 text-center"><div className="flex items-center justify-center gap-2 mb-1"><ArrowUpDown className="w-4 h-4 text-orange-400" /><p className="text-xs text-slate-400">Open Orders</p></div><p className="text-xl font-bold text-white">{ordersLoading ? "..." : openOrders.length}</p></Card>
       </div>
 
       <Tabs tabs={TABS} activeTab={tab} onChange={setTab} variant="underline" />

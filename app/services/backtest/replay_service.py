@@ -17,11 +17,11 @@ from app.services.backtest.replay_market_data import (
 )
 
 
-def _parse_date(raw, fallback_days_ago=None, fallback_future=False):
+def _parse_date(raw, fallback_days_ago=None, fallback_future=False, end_of_day=False):
     """
     Parse date string linh hoạt:
-    - "2026-06-01" -> datetime
-    - "2026-06-01T00:00:00Z" -> datetime
+    - "2026-06-01" -> UTC range for VN date
+    - "2026-06-01T00:00:00Z" -> datetime UTC
     - None -> fallback
     """
     if not raw:
@@ -33,9 +33,9 @@ def _parse_date(raw, fallback_days_ago=None, fallback_future=False):
 
     raw = str(raw).strip()
 
-    # "2026-06-01" -> thêm time
     if len(raw) == 10:
-        raw = raw + "T00:00:00Z"
+        start_utc, end_utc = vn_range_to_utc(raw, raw)
+        return end_utc if end_of_day else start_utc
 
     # "2026-06-01T00:00:00" -> thêm Z
     if not raw.endswith("Z") and "+" not in raw:
@@ -64,7 +64,7 @@ from app.services.backtest.replay_registry import (
 from app.services.backtest.replay_loader import load_closed_signals
 from app.services.backtest.replay_simulator import simulate_trade
 
-from app.core.time_utils import ensure_utc
+from app.core.time_utils import ensure_utc, vn_range_to_utc
 
 
 BUFFER_PCT_MAP = {
@@ -109,8 +109,8 @@ def run_replay_job(job_id: str, params: dict):
     try:
         set_job_running(job_id, "Loading signals...")
 
-        date_from = _parse_date(params.get("date_from"), fallback_days_ago=90)
-        date_to = _parse_date(params.get("date_to"), fallback_future=True)
+        date_from = _parse_date(params.get("date_from"), fallback_days_ago=90, end_of_day=False)
+        date_to = _parse_date(params.get("date_to"), fallback_future=True, end_of_day=True)
 
         signals = load_closed_signals(
             date_from=date_from,
@@ -328,6 +328,9 @@ def _build_trade_row(trade: dict, sim_result: dict, actual_rr: float) -> TradeRo
         initial_stop_loss=trade["initial_stop_loss"],
         tp_2r_price=trade["tp_2r_price"],
         r_value_abs=trade["r_value_abs"],
+        # NEW simulated base
+        sim_initial_stop_loss=sim_result.get("sim_initial_stop_loss"),
+        sim_tp_price=sim_result.get("sim_tp_price"),
         actual=actual,
         simulated=sim,
         delta=delta,
