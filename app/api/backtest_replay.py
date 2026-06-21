@@ -97,7 +97,7 @@ def get_job_summary_api(job_id: str):
 def get_job_rows_api(
     job_id: str,
     page: int = Query(1, ge=1),
-    page_size: int = Query(50, ge=1, le=200),
+    page_size: int = Query(50, ge=1, le=2000),
 ):
     job = get_job(job_id)
     if not job:
