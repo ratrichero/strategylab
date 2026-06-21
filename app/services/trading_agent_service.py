@@ -160,13 +160,14 @@ def _generate_agent_prompt(summary: str, anomalies: List[str]) -> str:
         "\n\nBÁO CÁO:\n" + summary + "\n"
     )
     if anomalies:
-        prompt += "\nCác điểm cảnh báo:
-" + "\n".join(anomalies) + "\n"
-    prompt += "\nYêu cầu:
-1. Tóm tắt kết quả chính.
-2. Giải thích xu hướng chính.
-3. Cảnh báo yếu tố rủi ro.
-4. Chỉ ra nguyên nhân bất thường và đề xuất điểm cần chú ý." 
+        prompt += "\nCác điểm cảnh báo:\n" + "\n".join(anomalies) + "\n"
+    prompt += (
+        "\nYêu cầu:\n"
+        "1. Tóm tắt kết quả chính.\n"
+        "2. Giải thích xu hướng chính.\n"
+        "3. Cảnh báo yếu tố rủi ro.\n"
+        "4. Chỉ ra nguyên nhân bất thường và đề xuất điểm cần chú ý."
+    )
     return prompt
 
 
