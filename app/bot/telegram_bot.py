@@ -8,7 +8,8 @@ def run_bot(token: str):
         start_handler, status_handler, trades_handler, performance_handler,
         filter_handler, config_handler, set_handler, mode_handler,
         strategies_handler, cancel_pending_handler, retrain_handler,
-        report_handler, ml_status_handler, text_handler, button_handler)
+        report_handler, agent_report_handler, ml_status_handler,
+        text_handler, button_handler)
 
     updater = Updater(token, use_context=True)
     dp = updater.dispatcher
@@ -25,6 +26,7 @@ def run_bot(token: str):
     dp.add_handler(CommandHandler("cancel_pending",  cancel_pending_handler))
     dp.add_handler(CommandHandler("retrain",         retrain_handler))
     dp.add_handler(CommandHandler("report",          report_handler))
+    dp.add_handler(CommandHandler("agent",           agent_report_handler))
     dp.add_handler(CommandHandler("ml",              ml_status_handler))
     dp.add_handler(CallbackQueryHandler(button_handler))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, text_handler))
@@ -42,6 +44,7 @@ def run_bot(token: str):
         BotCommand("cancel_pending","🚫 Cancel all pending"),
         BotCommand("retrain",       "🤖 Retrain ML"),
         BotCommand("report",        "📊 /report daily|weekly|monthly"),
+        BotCommand("agent",         "🤖 /agent daily|weekly|monthly"),
         BotCommand("ml",            "🤖 ML status"),
     ])
 

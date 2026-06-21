@@ -163,6 +163,15 @@ def report_handler(update: Update, context: CallbackContext):
     {"daily":send_daily,"weekly":send_weekly,"monthly":send_monthly}[rtype]()
 
 
+def agent_report_handler(update: Update, context: CallbackContext):
+    args = context.args; rtype = args[0].lower() if args else "daily"
+    if rtype not in ["daily","weekly","monthly"]:
+        update.message.reply_text("Usage: /agent daily|weekly|monthly"); return
+    update.message.reply_text(f"🤖 Generating agent {rtype} report...")
+    from app.services.trading_agent_service import send_agent_daily, send_agent_weekly, send_agent_monthly
+    {"daily":send_agent_daily,"weekly":send_agent_weekly,"monthly":send_agent_monthly}[rtype]()
+
+
 def ml_status_handler(update: Update, context: CallbackContext):
     from app.ml.predict import _engine
     from app.ml.feature_registry import get_feature_count, FEATURE_VERSION

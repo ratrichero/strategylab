@@ -23,6 +23,7 @@ from app.services.price_feed import (
     start_price_feed, stop_price_feed,
     get_price_feed, add_price_callback
 )
+from app.services.volatility_alert_service import register_volatility_alerts
 from app.services.binance_user_stream_service import (
     start_user_stream, stop_user_stream
 )
@@ -260,20 +261,20 @@ async def report_scheduler_loop():
 
             if now_vn.hour == 8 and now_vn.minute == 0 and _ld != now_vn.date():
                 _ld = now_vn.date()
-                from app.services.report_service import send_daily
-                start_daemon_job("report_daily", send_daily)
+                from app.services.trading_agent_service import send_agent_daily
+                start_daemon_job("report_daily", send_agent_daily)
 
             if (now_vn.weekday() == 0 and now_vn.hour == 8
                     and now_vn.minute == 0 and _lw != now_vn.date()):
                 _lw = now_vn.date()
-                from app.services.report_service import send_weekly
-                start_daemon_job("report_weekly", send_weekly)
+                from app.services.trading_agent_service import send_agent_weekly
+                start_daemon_job("report_weekly", send_agent_weekly)
 
             if (now_vn.day == 1 and now_vn.hour == 8
                     and now_vn.minute == 0 and _lm != now_vn.month):
                 _lm = now_vn.month
-                from app.services.report_service import send_monthly
-                start_daemon_job("report_monthly", send_monthly)
+                from app.services.trading_agent_service import send_agent_monthly
+                start_daemon_job("report_monthly", send_agent_monthly)
 
         except Exception as e:
             print(f"[REPORT] {e}")
@@ -332,6 +333,7 @@ async def lifespan(app: FastAPI):
     # Price Feed
     print("\n📡 Price Feed...")
     add_price_callback(on_price_update)
+    register_volatility_alerts()
     start_price_feed()
 
     feed = get_price_feed()
