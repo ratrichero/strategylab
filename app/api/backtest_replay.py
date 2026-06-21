@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api/backtest/replay", tags=["backtest"])
 
 @router.post("/run")
 def start_replay_job(req: ReplayRunRequest):
-    print("[BT API] req.policy =", req.policy)
+    #print("[BT API] req.policy =", req.policy)
     params = {
         "date_from": req.date_from.isoformat() if req.date_from else None,
         "date_to": req.date_to.isoformat() if req.date_to else None,

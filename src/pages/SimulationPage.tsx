@@ -6,21 +6,16 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { DataTable } from '../components/ui/Table';
 import { DirectionBadge } from '../components/ui/Badge';
-import { Loader2, Play, FlaskConical, AlertCircle, CheckCircle, X, Plus, RotateCcw } from 'lucide-react';
+import { Loader2, Play, FlaskConical, AlertCircle, CheckCircle, X, Plus, RotateCcw, Bug } from 'lucide-react';
 import { utcToVN } from '../utils/time';
 import toast from 'react-hot-toast';
 
 const API = '/api';
 
 const EXIT_COLORS = {
-  TP: 'text-emerald-400',
-  SL_INITIAL: 'text-red-400',
-  SL_BE: 'text-yellow-400',
-  SL_LOCK_0_5R: 'text-orange-400',
-  SL_LOCK_1R: 'text-orange-400',
-  SL_LOCK_1_5R: 'text-orange-400',
-  HORIZON: 'text-slate-400',
-  AMBIGUOUS_SL: 'text-red-300',
+  TP: 'text-emerald-400', SL_INITIAL: 'text-red-400', SL_BE: 'text-yellow-400',
+  SL_LOCK_0_5R: 'text-orange-400', SL_LOCK_1R: 'text-orange-400', SL_LOCK_1_5R: 'text-orange-400',
+  HORIZON: 'text-slate-400', AMBIGUOUS_SL: 'text-red-300',
 };
 
 const ACTIONS = [
@@ -30,61 +25,33 @@ const ACTIONS = [
 
 const TIMEFRAMES = ['15m', '1h', '4h'];
 
-// Default values in DISPLAY format (user-friendly %)
-// VD: sl_pct=2.0 nghĩa là 2%, buffer_pct=0.2 nghĩa là 0.2%
 const DEFAULT_POLICY = {
   mode: 'percent',
   timeframes: {
-    '15m': {
-      sl_pct: 2.0,
-      tp_pct: 4.0,
-      levels: [
-        { trigger_pct: 2.0, action: 'move_to_entry', buffer_pct: 0.2 },
-        { trigger_pct: 3.0, action: 'move_stop_to_profit_pct', target_profit_pct: 1.5 },
-      ],
-    },
-    '1h': {
-      sl_pct: 2.5,
-      tp_pct: 5.0,
-      levels: [
-        { trigger_pct: 2.5, action: 'move_to_entry', buffer_pct: 0.25 },
-      ],
-    },
-    '4h': {
-      sl_pct: 3.0,
-      tp_pct: 6.0,
-      levels: [
-        { trigger_pct: 3.0, action: 'move_to_entry', buffer_pct: 0.3 },
-      ],
-    },
+    '15m': { sl_pct: 2.0, tp_pct: 4.0, levels: [
+      { trigger_pct: 2.0, action: 'move_to_entry', buffer_pct: 0.2 },
+      { trigger_pct: 3.0, action: 'move_stop_to_profit_pct', target_profit_pct: 1.5 },
+    ]},
+    '1h': { sl_pct: 2.5, tp_pct: 5.0, levels: [
+      { trigger_pct: 2.5, action: 'move_to_entry', buffer_pct: 0.25 },
+    ]},
+    '4h': { sl_pct: 3.0, tp_pct: 6.0, levels: [
+      { trigger_pct: 3.0, action: 'move_to_entry', buffer_pct: 0.3 },
+    ]},
   },
 };
 
-// ── Helpers ──────────────────────────────────────────────────
-
-// Convert display % (e.g. 2.0) to decimal (0.02) for API
-function pctToDecimal(v) {
-  return (parseFloat(v) || 0) / 100;
-}
-
-function deepClone(obj) {
-  return JSON.parse(JSON.stringify(obj));
-}
+function pctToDecimal(v) { return (parseFloat(v) || 0) / 100; }
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
 
 function convertTfConfigToApi(src) {
   return {
     sl_pct: pctToDecimal(src.sl_pct),
     tp_pct: pctToDecimal(src.tp_pct),
     levels: (src.levels || []).map(lv => {
-      const out = {
-        trigger_pct: pctToDecimal(lv.trigger_pct),
-        action: lv.action,
-      };
-      if (lv.action === 'move_to_entry') {
-        out.buffer_pct = pctToDecimal(lv.buffer_pct);
-      } else if (lv.action === 'move_stop_to_profit_pct') {
-        out.target_profit_pct = pctToDecimal(lv.target_profit_pct);
-      }
+      const out = { trigger_pct: pctToDecimal(lv.trigger_pct), action: lv.action };
+      if (lv.action === 'move_to_entry') out.buffer_pct = pctToDecimal(lv.buffer_pct);
+      else if (lv.action === 'move_stop_to_profit_pct') out.target_profit_pct = pctToDecimal(lv.target_profit_pct);
       return out;
     }),
   };
@@ -92,30 +59,34 @@ function convertTfConfigToApi(src) {
 
 function buildApiPolicy(displayPolicy, uniformMode, activeTf) {
   const result = { mode: 'percent', timeframes: {} };
-
   if (uniformMode) {
-    // Uniform: copy activeTf config cho tất cả TF
     const src = displayPolicy.timeframes[activeTf] || displayPolicy.timeframes['15m'] || {};
     const converted = convertTfConfigToApi(src);
-    for (const tf of TIMEFRAMES) {
-      result.timeframes[tf] = converted;
-    }
+    for (const tf of TIMEFRAMES) result.timeframes[tf] = converted;
   } else {
-    // Per timeframe: mỗi TF config riêng
     for (const tf of TIMEFRAMES) {
       const src = displayPolicy.timeframes[tf];
-      if (!src) continue;
-      result.timeframes[tf] = convertTfConfigToApi(src);
+      if (src) result.timeframes[tf] = convertTfConfigToApi(src);
     }
   }
-
   return result;
 }
 
-// ── Component ───────────────────────────────────────────────
+function fmtPrice(v) {
+  if (v == null) return '-';
+  const n = Number(v);
+  if (n === 0) return '0';
+  if (n > 1000) return n.toFixed(2);
+  if (n > 1) return n.toFixed(4);
+  return n.toFixed(6);
+}
+
+function fmtPct(v) {
+  if (v == null) return '-';
+  return `${Number(v).toFixed(2)}%`;
+}
 
 export function SimulationPage() {
-  // Filters
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [timeframes, setTimeframes] = useState([]);
@@ -127,51 +98,41 @@ export function SimulationPage() {
   const [limit, setLimit] = useState(500);
   const [includeManual, setIncludeManual] = useState(false);
 
-  // Policy Config (display values in %)
   const [policy, setPolicy] = useState(deepClone(DEFAULT_POLICY));
   const [activeTf, setActiveTf] = useState('15m');
   const [uniformMode, setUniformMode] = useState(true);
 
-  // Job state
   const [jobId, setJobId] = useState(null);
   const [jobStatus, setJobStatus] = useState(null);
   const [jobProgress, setJobProgress] = useState(0);
   const [jobMessage, setJobMessage] = useState('');
   const [jobError, setJobError] = useState('');
 
-  // Results
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState([]);
   const [totalRows, setTotalRows] = useState(0);
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [tradeDetail, setTradeDetail] = useState(null);
+  const [showDebug, setShowDebug] = useState(false);
 
-  // Options
   const [allStrategies, setAllStrategies] = useState([]);
   const [allPatterns, setAllPatterns] = useState([]);
   const pollRef = useRef(null);
 
   useEffect(() => {
-    fetch(`${API}/signals?limit=10000`)
-      .then(r => r.json())
-      .then(d => {
-        const s = d.data || [];
-        setAllStrategies(Array.from(new Set(s.map(x => x.strategy_name).filter(Boolean))).sort());
-        setAllPatterns(Array.from(new Set(s.map(x => x.pattern).filter(Boolean))).sort());
-      })
-      .catch(() => {});
+    fetch(`${API}/signals?limit=10000`).then(r => r.json()).then(d => {
+      const s = d.data || [];
+      setAllStrategies(Array.from(new Set(s.map(x => x.strategy_name).filter(Boolean))).sort());
+      setAllPatterns(Array.from(new Set(s.map(x => x.pattern).filter(Boolean))).sort());
+    }).catch(() => {});
   }, []);
 
-  // Policy helpers
   const getTfPolicy = (tf) => policy.timeframes[tf] || { sl_pct: 2.0, tp_pct: 4.0, levels: [] };
 
   const updateTfField = (tf, key, val) => {
     setPolicy(prev => ({
       ...prev,
-      timeframes: {
-        ...prev.timeframes,
-        [tf]: { ...getTfPolicy(tf), [key]: parseFloat(val) || 0 },
-      },
+      timeframes: { ...prev.timeframes, [tf]: { ...getTfPolicy(tf), [key]: parseFloat(val) || 0 } },
     }));
   };
 
@@ -200,31 +161,20 @@ export function SimulationPage() {
     });
   };
 
-  const resetPolicy = () => {
-    setPolicy(deepClone(DEFAULT_POLICY));
-    setUniformMode(true);
-    setActiveTf('15m');
-  };
+  const resetPolicy = () => { setPolicy(deepClone(DEFAULT_POLICY)); setUniformMode(true); setActiveTf('15m'); };
 
-  // Poll
   useEffect(() => {
-    if (!jobId || jobStatus === 'DONE' || jobStatus === 'FAILED') {
-      if (pollRef.current) clearInterval(pollRef.current);
-      return;
-    }
+    if (!jobId || jobStatus === 'DONE' || jobStatus === 'FAILED') { if (pollRef.current) clearInterval(pollRef.current); return; }
     const poll = async () => {
       try {
         const res = await fetch(`${API}/backtest/replay/jobs/${jobId}`);
         const data = await res.json();
-        setJobStatus(data.status);
-        setJobProgress(data.progress_pct || 0);
-        setJobMessage(data.message || '');
+        setJobStatus(data.status); setJobProgress(data.progress_pct || 0); setJobMessage(data.message || '');
         if (data.status === 'DONE') loadResults(jobId);
         else if (data.status === 'FAILED') setJobError(data.error || data.message || 'Job failed');
       } catch (e) { console.error(e); }
     };
-    pollRef.current = setInterval(poll, 3000);
-    poll();
+    pollRef.current = setInterval(poll, 3000); poll();
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [jobId, jobStatus]);
 
@@ -234,15 +184,13 @@ export function SimulationPage() {
         fetch(`${API}/backtest/replay/jobs/${id}/summary`).then(r => r.json()),
         fetch(`${API}/backtest/replay/jobs/${id}/rows?page=1&page_size=500`).then(r => r.json()),
       ]);
-      setSummary(sumRes);
-      setRows(rowsRes.items || []);
-      setTotalRows(rowsRes.total_rows || 0);
+      setSummary(sumRes); setRows(rowsRes.items || []); setTotalRows(rowsRes.total_rows || 0);
       toast.success(`Backtest complete: ${sumRes.sample_size} trades`);
     } catch { toast.error('Failed to load results'); }
   };
 
   const runBacktest = async () => {
-    setJobError(''); setSummary(null); setRows([]); setSelectedTrade(null); setTradeDetail(null);
+    setJobError(''); setSummary(null); setRows([]); setSelectedTrade(null); setTradeDetail(null); setShowDebug(false);
     try {
       const body = { limit };
       if (dateFrom) body.date_from = dateFrom;
@@ -254,15 +202,9 @@ export function SimulationPage() {
       if (fPatterns.length) body.patterns = fPatterns;
       if (fRegimes.length) body.regimes = fRegimes;
       if (includeManual) body.include_manual = true;
-
-      // Luôn gửi policy, convert display % sang decimal
       body.policy = buildApiPolicy(policy, uniformMode, activeTf);
-
       console.log('[BACKTEST] Request body:', JSON.stringify(body, null, 2));
-
-      const res = await fetch(`${API}/backtest/replay/run`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-      });
+      const res = await fetch(`${API}/backtest/replay/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'Failed'); }
       const data = await res.json();
       setJobId(data.job_id); setJobStatus('QUEUED'); setJobProgress(0); setJobMessage('Job queued...');
@@ -281,7 +223,6 @@ export function SimulationPage() {
   const pnlClr = v => Number(v) >= 0 ? 'text-emerald-400' : 'text-red-400';
   const diffClr = v => Number(v) > 0 ? 'text-emerald-400' : Number(v) < 0 ? 'text-red-400' : 'text-slate-400';
   const isRunning = jobStatus === 'QUEUED' || jobStatus === 'RUNNING';
-
   const currentTfPolicy = getTfPolicy(activeTf);
 
   const columns = [
@@ -290,7 +231,7 @@ export function SimulationPage() {
     { key: 'timeframe', header: 'TF', sortable: true, width: '50px' },
     { key: 'strategy_name', header: 'Strategy', sortable: true, render: v => <span className="text-xs">{v}</span> },
     { key: 'direction', header: 'Dir', render: v => <DirectionBadge direction={v} /> },
-    { key: 'entry_price', header: 'Entry', align: 'right', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'entry_price', header: 'Entry', align: 'right', render: v => fmtPrice(v) },
     { key: 'actual', header: 'Actual RR', sortable: true, align: 'right', render: v => <span className={pnlClr(v?.rr_realized)}>{$n(v?.rr_realized, 3)}</span> },
     { key: 'actual', header: 'A.Exit', render: v => <span className={`text-xs ${EXIT_COLORS[v?.exit_reason] || ''}`}>{v?.exit_reason || '-'}</span> },
     { key: 'simulated', header: 'Sim RR', sortable: true, align: 'right', render: v => <span className={pnlClr(v?.rr_realized)}>{$n(v?.rr_realized, 3)}</span> },
@@ -302,7 +243,6 @@ export function SimulationPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center gap-3">
         <FlaskConical className="w-7 h-7 text-purple-400" />
         <div>
@@ -319,49 +259,39 @@ export function SimulationPage() {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
               <Input type="date" label="From" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
               <Input type="date" label="To" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-              <Input type="text" label="Symbols" value={symbols} onChange={e => setSymbols(e.target.value)} placeholder="BTC ETH..." />
+              <Input type="text" label="Symbols" value={symbols} onChange={e => setSymbols(e.target.value)} placeholder="BTC ETH SAND..." />
               <Input type="number" label="Limit" value={limit} onChange={e => setLimit(Number(e.target.value) || 500)} />
             </div>
             <div className="grid grid-cols-12 gap-4 pt-3 border-t border-slate-700">
               <div className="col-span-2">
                 <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">TF</p>
-                <div className="flex gap-1">
-                  {TIMEFRAMES.map(tf => (
-                    <button key={tf} onClick={() => toggleArr(setTimeframes, tf)} className={`px-2.5 py-1.5 rounded text-xs ${timeframes.includes(tf) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
-                  ))}
-                </div>
+                <div className="flex gap-1">{TIMEFRAMES.map(tf => (
+                  <button key={tf} onClick={() => toggleArr(setTimeframes, tf)} className={`px-2.5 py-1.5 rounded text-xs ${timeframes.includes(tf) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
+                ))}</div>
               </div>
               <div className="col-span-2">
                 <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Direction</p>
-                <div className="flex gap-1">
-                  {['LONG', 'SHORT'].map(d => (
-                    <button key={d} onClick={() => toggleArr(setFDirections, d)} className={`px-2 py-1 rounded text-xs ${fDirections.includes(d) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{d}</button>
-                  ))}
-                </div>
+                <div className="flex gap-1">{['LONG', 'SHORT'].map(d => (
+                  <button key={d} onClick={() => toggleArr(setFDirections, d)} className={`px-2 py-1 rounded text-xs ${fDirections.includes(d) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{d}</button>
+                ))}</div>
               </div>
               <div className="col-span-2">
                 <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Regime</p>
-                <div className="flex gap-1">
-                  {['BULL', 'BEAR', 'SIDEWAYS'].map(r => (
-                    <button key={r} onClick={() => toggleArr(setFRegimes, r)} className={`px-2 py-1 rounded text-xs ${fRegimes.includes(r) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{r}</button>
-                  ))}
-                </div>
+                <div className="flex gap-1">{['BULL', 'BEAR', 'SIDEWAYS'].map(r => (
+                  <button key={r} onClick={() => toggleArr(setFRegimes, r)} className={`px-2 py-1 rounded text-xs ${fRegimes.includes(r) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{r}</button>
+                ))}</div>
               </div>
               <div className="col-span-3">
                 <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Strategy</p>
-                <div className="flex gap-1 flex-wrap">
-                  {allStrategies.map(s => (
-                    <button key={s} onClick={() => toggleArr(setFStrategies, s)} className={`px-2 py-1 rounded text-xs ${fStrategies.includes(s) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{s}</button>
-                  ))}
-                </div>
+                <div className="flex gap-1 flex-wrap">{allStrategies.map(s => (
+                  <button key={s} onClick={() => toggleArr(setFStrategies, s)} className={`px-2 py-1 rounded text-xs ${fStrategies.includes(s) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{s}</button>
+                ))}</div>
               </div>
               <div className="col-span-3">
                 <p className="text-[10px] text-slate-500 uppercase font-semibold mb-1.5">Pattern</p>
-                <div className="flex gap-1 flex-wrap">
-                  {allPatterns.map(p => (
-                    <button key={p} onClick={() => toggleArr(setFPatterns, p)} className={`px-2 py-1 rounded text-xs ${fPatterns.includes(p) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{p}</button>
-                  ))}
-                </div>
+                <div className="flex gap-1 flex-wrap">{allPatterns.map(p => (
+                  <button key={p} onClick={() => toggleArr(setFPatterns, p)} className={`px-2 py-1 rounded text-xs ${fPatterns.includes(p) ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{p}</button>
+                ))}</div>
               </div>
             </div>
             <div className="flex items-center gap-3 mt-4 pt-3 border-t border-slate-700">
@@ -372,6 +302,7 @@ export function SimulationPage() {
                 {isRunning ? 'Running...' : 'Run Backtest'}
               </Button>
             </div>
+            <p className="text-[10px] text-slate-600 mt-2">💡 Symbols: nhập tên viết tắt, cách nhau bằng dấu cách hoặc dấu phẩy. VD: BTC ETH SAND</p>
           </Card>
         </div>
 
@@ -380,74 +311,44 @@ export function SimulationPage() {
           <CardHeader
             title="Policy Config (%)"
             subtitle={uniformMode ? `Uniform · ${currentTfPolicy.levels?.length || 0} levels` : `${activeTf} · ${currentTfPolicy.levels?.length || 0} levels`}
-            action={
-              <button onClick={resetPolicy} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
-                <RotateCcw className="w-3 h-3" />Reset
-              </button>
-            }
+            action={<button onClick={resetPolicy} className="text-xs text-slate-400 hover:text-white flex items-center gap-1"><RotateCcw className="w-3 h-3" />Reset</button>}
           />
           <div className="space-y-4">
-            {/* Mode toggle: Uniform vs Per Timeframe */}
             <div className="flex gap-2">
-              <button
-                onClick={() => setUniformMode(true)}
-                className={`px-3 py-1.5 rounded text-xs font-medium ${uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}
-              >
-                Uniform
-              </button>
-              <button
-                onClick={() => setUniformMode(false)}
-                className={`px-3 py-1.5 rounded text-xs font-medium ${!uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}
-              >
-                Per Timeframe
-              </button>
+              <button onClick={() => setUniformMode(true)} className={`px-3 py-1.5 rounded text-xs font-medium ${uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Uniform</button>
+              <button onClick={() => setUniformMode(false)} className={`px-3 py-1.5 rounded text-xs font-medium ${!uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Per Timeframe</button>
             </div>
 
-            {/* Uniform mode hint */}
-            {uniformMode && (
-              <div className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded">
-                Uniform: cùng 1 bộ SL/TP/Levels áp cho tất cả TF
+            {uniformMode ? (
+              <div className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-1.5 rounded">
+                ℹ️ Uniform: cùng 1 bộ SL/TP/Levels áp cho tất cả timeframe khi chạy giả lập.
               </div>
+            ) : (
+              <>
+                <div className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-1.5 rounded">
+                  ⚠️ Per Timeframe: bạn đang chỉnh config riêng cho <b>{activeTf}</b>. Các TF khác giữ config riêng của chúng.
+                </div>
+                <div className="flex gap-1">
+                  {TIMEFRAMES.map(tf => (
+                    <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1.5 rounded text-xs font-medium ${activeTf === tf ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
+                  ))}
+                </div>
+              </>
             )}
 
-            {/* TF selector — chỉ hiện khi Per Timeframe */}
-            {!uniformMode && (
-              <div className="flex gap-1">
-                {TIMEFRAMES.map(tf => (
-                  <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1.5 rounded text-xs font-medium ${activeTf === tf ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>
-                ))}
-              </div>
-            )}
-
-            {/* SL / TP */}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-slate-400 mb-1">SL (%)</label>
-                <input
-                  type="number" step="0.1"
-                  value={currentTfPolicy.sl_pct || ''}
-                  onChange={e => updateTfField(activeTf, 'sl_pct', e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="2.0"
-                />
+                <input type="number" step="0.1" value={currentTfPolicy.sl_pct || ''} onChange={e => updateTfField(activeTf, 'sl_pct', e.target.value)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="2.0" />
               </div>
               <div>
                 <label className="block text-xs text-slate-400 mb-1">TP (%)</label>
-                <input
-                  type="number" step="0.1"
-                  value={currentTfPolicy.tp_pct || ''}
-                  onChange={e => updateTfField(activeTf, 'tp_pct', e.target.value)}
-                  className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="4.0"
-                />
+                <input type="number" step="0.1" value={currentTfPolicy.tp_pct || ''} onChange={e => updateTfField(activeTf, 'tp_pct', e.target.value)} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="4.0" />
               </div>
             </div>
 
-            {/* Protection Levels */}
             <div>
-              <p className="text-xs text-slate-400 mb-2">
-                Protection Levels {!uniformMode && `(${activeTf})`}
-              </p>
+              <p className="text-xs text-slate-400 mb-2">Protection Levels {!uniformMode && `(${activeTf})`}</p>
               {(currentTfPolicy.levels || []).map((lv, i) => (
                 <div key={i} className="p-3 bg-slate-900/50 rounded-lg border border-slate-700/50 mb-2">
                   <div className="flex items-center justify-between mb-2">
@@ -467,46 +368,25 @@ export function SimulationPage() {
                     </div>
                   </div>
                   {lv.action === 'move_to_entry' && (
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Buffer (%)</label>
-                      <input type="number" step="0.01" value={lv.buffer_pct || ''} onChange={e => updateLevel(activeTf, i, 'buffer_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="0.2" />
-                    </div>
+                    <div><label className="block text-[10px] text-slate-500 mb-0.5">Buffer (%)</label><input type="number" step="0.01" value={lv.buffer_pct || ''} onChange={e => updateLevel(activeTf, i, 'buffer_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="0.2" /></div>
                   )}
                   {lv.action === 'move_stop_to_profit_pct' && (
-                    <div>
-                      <label className="block text-[10px] text-slate-500 mb-0.5">Target Profit (%)</label>
-                      <input type="number" step="0.1" value={lv.target_profit_pct || ''} onChange={e => updateLevel(activeTf, i, 'target_profit_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="1.5" />
-                    </div>
+                    <div><label className="block text-[10px] text-slate-500 mb-0.5">Target Profit (%)</label><input type="number" step="0.1" value={lv.target_profit_pct || ''} onChange={e => updateLevel(activeTf, i, 'target_profit_pct', e.target.value)} className="w-full px-2 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono" placeholder="1.5" /></div>
                   )}
                 </div>
               ))}
-              <button onClick={() => addLevel(activeTf)} className="w-full py-2 border border-dashed border-slate-600 rounded-lg text-xs text-slate-400 hover:border-slate-500 hover:text-slate-300 flex items-center justify-center gap-1">
-                <Plus className="w-3 h-3" />Add Level
-              </button>
+              <button onClick={() => addLevel(activeTf)} className="w-full py-2 border border-dashed border-slate-600 rounded-lg text-xs text-slate-400 hover:border-slate-500 hover:text-slate-300 flex items-center justify-center gap-1"><Plus className="w-3 h-3" />Add Level</button>
             </div>
 
-            {/* Info */}
-            <div className="text-[10px] text-slate-600">
-              Tất cả giá trị nhập theo %. VD: SL=2 nghĩa là 2%.
-              <br />Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d
-            </div>
+            <div className="text-[10px] text-slate-600">Tất cả giá trị nhập theo %. VD: SL=2 nghĩa là 2%.<br />Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d</div>
 
-            {/* Quick summary — hiện config tất cả TF */}
             <div className="p-2 bg-slate-900/70 rounded text-[10px] text-slate-400 font-mono space-y-0.5">
               {uniformMode ? (
-                <div>
-                  <span className="text-indigo-400">ALL TF:</span>{' '}
-                  SL={currentTfPolicy.sl_pct || 0}% TP={currentTfPolicy.tp_pct || 0}% Levels={currentTfPolicy.levels?.length || 0}
-                </div>
+                <div><span className="text-indigo-400">ALL TF:</span> SL={currentTfPolicy.sl_pct || 0}% TP={currentTfPolicy.tp_pct || 0}% Levels={currentTfPolicy.levels?.length || 0}</div>
               ) : (
                 TIMEFRAMES.map(tf => {
                   const p = policy.timeframes[tf] || {};
-                  return (
-                    <div key={tf}>
-                      <span className={tf === activeTf ? 'text-indigo-400' : 'text-slate-300'}>{tf}:</span>{' '}
-                      SL={p.sl_pct || 0}% TP={p.tp_pct || 0}% Levels={p.levels?.length || 0}
-                    </div>
-                  );
+                  return (<div key={tf}><span className={tf === activeTf ? 'text-indigo-400' : 'text-slate-300'}>{tf}:</span> SL={p.sl_pct || 0}% TP={p.tp_pct || 0}% Levels={p.levels?.length || 0}</div>);
                 })
               )}
             </div>
@@ -527,11 +407,7 @@ export function SimulationPage() {
             </div>
             <span className="text-xs text-slate-500">{jobMessage}</span>
           </div>
-          {isRunning && (
-            <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500" style={{ width: `${jobProgress}%` }} />
-            </div>
-          )}
+          {isRunning && (<div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden"><div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-500" style={{ width: `${jobProgress}%` }} /></div>)}
           {jobError && <div className="mt-2 p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">{jobError}</div>}
         </Card>
       )}
@@ -542,68 +418,112 @@ export function SimulationPage() {
           <Card>
             <CardHeader title="Actual" subtitle="Real results" />
             <div className="space-y-2">
-              {[
-                ['Win Rate', `${((summary.actual?.winrate || 0) * 100).toFixed(1)}%`, pnlClr(summary.actual?.winrate - 0.5)],
-                ['Avg Return', `${$n(summary.actual?.avg_return_pct)}%`, pnlClr(summary.actual?.avg_return_pct)],
-                ['Avg RR', $n(summary.actual?.avg_rr_realized, 3), pnlClr(summary.actual?.avg_rr_realized)],
-                ['Total RR', $n(summary.actual?.total_rr_realized, 2), pnlClr(summary.actual?.total_rr_realized)],
-              ].map(([l, v, c]) => (
-                <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0">
-                  <span className="text-slate-400 text-sm">{l}</span>
-                  <span className={`font-bold font-mono ${c}`}>{v}</span>
-                </div>
+              {[['Win Rate', `${((summary.actual?.winrate || 0) * 100).toFixed(1)}%`, pnlClr(summary.actual?.winrate - 0.5)], ['Avg Return', `${$n(summary.actual?.avg_return_pct)}%`, pnlClr(summary.actual?.avg_return_pct)], ['Avg RR', $n(summary.actual?.avg_rr_realized, 3), pnlClr(summary.actual?.avg_rr_realized)], ['Total RR', $n(summary.actual?.total_rr_realized, 2), pnlClr(summary.actual?.total_rr_realized)]].map(([l, v, c]) => (
+                <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${c}`}>{v}</span></div>
               ))}
             </div>
           </Card>
           <Card>
             <CardHeader title="Simulated" subtitle="Policy replay" />
             <div className="space-y-2">
-              {[
-                ['Win Rate', `${((summary.simulated?.winrate || 0) * 100).toFixed(1)}%`, pnlClr(summary.simulated?.winrate - 0.5)],
-                ['Avg Return', `${$n(summary.simulated?.avg_return_pct)}%`, pnlClr(summary.simulated?.avg_return_pct)],
-                ['Avg RR', $n(summary.simulated?.avg_rr_realized, 3), pnlClr(summary.simulated?.avg_rr_realized)],
-                ['Total RR', $n(summary.simulated?.total_rr_realized, 2), pnlClr(summary.simulated?.total_rr_realized)],
-              ].map(([l, v, c]) => (
-                <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0">
-                  <span className="text-slate-400 text-sm">{l}</span>
-                  <span className={`font-bold font-mono ${c}`}>{v}</span>
-                </div>
+              {[['Win Rate', `${((summary.simulated?.winrate || 0) * 100).toFixed(1)}%`, pnlClr(summary.simulated?.winrate - 0.5)], ['Avg Return', `${$n(summary.simulated?.avg_return_pct)}%`, pnlClr(summary.simulated?.avg_return_pct)], ['Avg RR', $n(summary.simulated?.avg_rr_realized, 3), pnlClr(summary.simulated?.avg_rr_realized)], ['Total RR', $n(summary.simulated?.total_rr_realized, 2), pnlClr(summary.simulated?.total_rr_realized)]].map(([l, v, c]) => (
+                <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${c}`}>{v}</span></div>
               ))}
             </div>
           </Card>
           <Card>
             <CardHeader title="Delta & Breakdown" subtitle={`${summary.sample_size} trades`} />
             <div className="space-y-2 mb-4">
-              {[
-                ['Δ Win Rate', `${summary.delta?.winrate_diff >= 0 ? '+' : ''}${((summary.delta?.winrate_diff || 0) * 100).toFixed(1)}%`],
-                ['Δ Avg RR', `${summary.delta?.avg_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.avg_rr_realized_diff, 3)}`],
-                ['Δ Total RR', `${summary.delta?.total_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.total_rr_realized_diff, 2)}`],
-              ].map(([l, v]) => (
-                <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0">
-                  <span className="text-slate-400 text-sm">{l}</span>
-                  <span className={`font-bold font-mono ${diffClr(parseFloat(v))}`}>{v}</span>
-                </div>
+              {[['Δ Win Rate', `${summary.delta?.winrate_diff >= 0 ? '+' : ''}${((summary.delta?.winrate_diff || 0) * 100).toFixed(1)}%`], ['Δ Avg RR', `${summary.delta?.avg_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.avg_rr_realized_diff, 3)}`], ['Δ Total RR', `${summary.delta?.total_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.total_rr_realized_diff, 2)}`]].map(([l, v]) => (
+                <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${diffClr(parseFloat(v))}`}>{v}</span></div>
               ))}
             </div>
             {summary.sim_exit_breakdown && (
               <div className="space-y-1.5">
                 <p className="text-xs text-slate-500 font-medium uppercase">Exit Breakdown</p>
                 {Object.entries(summary.sim_exit_breakdown).map(([r, c]) => (
-                  <div key={r} className="flex justify-between">
-                    <span className={`text-xs ${EXIT_COLORS[r] || 'text-slate-400'}`}>{r}</span>
-                    <span className="text-xs text-white font-mono">{c}</span>
-                  </div>
+                  <div key={r} className="flex justify-between"><span className={`text-xs ${EXIT_COLORS[r] || 'text-slate-400'}`}>{r}</span><span className="text-xs text-white font-mono">{c}</span></div>
                 ))}
-                {summary.ambiguous_bars > 0 && (
-                  <div className="flex justify-between pt-1 border-t border-slate-700/50">
-                    <span className="text-xs text-orange-400">Ambiguous</span>
-                    <span className="text-xs text-white font-mono">{summary.ambiguous_bars}</span>
-                  </div>
-                )}
+                {summary.ambiguous_bars > 0 && (<div className="flex justify-between pt-1 border-t border-slate-700/50"><span className="text-xs text-orange-400">Ambiguous</span><span className="text-xs text-white font-mono">{summary.ambiguous_bars}</span></div>)}
               </div>
             )}
           </Card>
         </div>
+      )}
+
+      {/* RR Debug Panel */}
+      {rows.length > 0 && (
+        <Card>
+          <div className="flex items-center justify-between mb-3">
+            <CardHeader title="RR Debug Panel" subtitle={`${rows.length} trades — chi tiết SL/TP/PnL`} />
+            <button onClick={() => setShowDebug(!showDebug)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-3 py-1 rounded bg-slate-700/50 hover:bg-slate-700">
+              <Bug className="w-3 h-3" />{showDebug ? 'Hide' : 'Show'}
+            </button>
+          </div>
+          {showDebug && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-700 text-slate-500">
+                    <th className="py-2 px-1 text-left">ID</th>
+                    <th className="py-2 px-1 text-left">Symbol</th>
+                    <th className="py-2 px-1 text-center">TF</th>
+                    <th className="py-2 px-1 text-center">Dir</th>
+                    <th className="py-2 px-1 text-right">Entry</th>
+                    <th className="py-2 px-1 text-right">SL orig</th>
+                    <th className="py-2 px-1 text-right">TP orig</th>
+                    <th className="py-2 px-1 text-right">Exit sim</th>
+                    <th className="py-2 px-1 text-right">SL% sim</th>
+                    <th className="py-2 px-1 text-right">TP% sim</th>
+                    <th className="py-2 px-1 text-right">PnL orig</th>
+                    <th className="py-2 px-1 text-right">PnL sim</th>
+                    <th className="py-2 px-1 text-center">Orig</th>
+                    <th className="py-2 px-1 text-center">Sim</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((row, idx) => {
+                    const entry = row.entry_price || 0;
+                    const slOrig = row.initial_stop_loss || 0;
+                    const tpOrig = row.tp_2r_price || 0;
+                    const exitSim = row.simulated?.exit_price || 0;
+
+                    // SL% và TP% sim tính từ entry
+                    const slPctSim = entry > 0 ? ((Math.abs(entry - slOrig) / entry) * 100).toFixed(2) : '-';
+                    const tpPctSim = entry > 0 ? ((Math.abs(tpOrig - entry) / entry) * 100).toFixed(2) : '-';
+
+                    const pnlOrig = row.actual?.result_pct;
+                    const pnlSim = row.simulated?.result_pct;
+
+                    const statusOrig = row.actual?.exit_reason || row.actual?.status || '-';
+                    const statusSim = row.simulated?.exit_reason || '-';
+
+                    return (
+                      <tr key={idx} className="border-b border-slate-800 hover:bg-slate-800/50">
+                        <td className="py-1.5 px-1 text-slate-300 font-mono">{row.signal_id}</td>
+                        <td className="py-1.5 px-1 text-white">{row.symbol}</td>
+                        <td className="py-1.5 px-1 text-center text-slate-400">{row.timeframe}</td>
+                        <td className="py-1.5 px-1 text-center">
+                          <span className={row.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{row.direction === 'LONG' ? '▲' : '▼'}</span>
+                        </td>
+                        <td className="py-1.5 px-1 text-right text-white font-mono">{fmtPrice(entry)}</td>
+                        <td className="py-1.5 px-1 text-right text-red-400 font-mono">{fmtPrice(slOrig)}</td>
+                        <td className="py-1.5 px-1 text-right text-emerald-400 font-mono">{fmtPrice(tpOrig)}</td>
+                        <td className="py-1.5 px-1 text-right text-white font-mono">{fmtPrice(exitSim)}</td>
+                        <td className="py-1.5 px-1 text-right text-slate-300 font-mono">{slPctSim}%</td>
+                        <td className="py-1.5 px-1 text-right text-slate-300 font-mono">{tpPctSim}%</td>
+                        <td className={`py-1.5 px-1 text-right font-mono font-bold ${pnlClr(pnlOrig)}`}>{fmtPct(pnlOrig)}</td>
+                        <td className={`py-1.5 px-1 text-right font-mono font-bold ${pnlClr(pnlSim)}`}>{fmtPct(pnlSim)}</td>
+                        <td className="py-1.5 px-1 text-center"><span className={`text-[10px] ${EXIT_COLORS[statusOrig] || 'text-slate-400'}`}>{statusOrig}</span></td>
+                        <td className="py-1.5 px-1 text-center"><span className={`text-[10px] ${EXIT_COLORS[statusSim] || 'text-slate-400'}`}>{statusSim}</span></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
       )}
 
       {/* Trades Table */}
@@ -643,10 +563,7 @@ export function SimulationPage() {
                 <h4 className="text-sm font-semibold text-slate-300 mb-3">Trade Info</h4>
                 <div className="space-y-2 text-sm">
                   {[['Entry', tradeDetail.entry_price], ['Initial SL', tradeDetail.initial_stop_loss], ['TP', tradeDetail.tp_2r_price], ['R Value', tradeDetail.r_value_abs]].map(([l, v]) => (
-                    <div key={l} className="flex justify-between">
-                      <span className="text-slate-400">{l}</span>
-                      <span className="text-white font-mono">{v?.toFixed(v > 100 ? 2 : 6)}</span>
-                    </div>
+                    <div key={l} className="flex justify-between"><span className="text-slate-400">{l}</span><span className="text-white font-mono">{fmtPrice(v)}</span></div>
                   ))}
                   <div className="flex justify-between"><span className="text-slate-400">Entry Time</span><span className="text-slate-300">{utcToVN(tradeDetail.entry_time)}</span></div>
                 </div>
@@ -679,8 +596,8 @@ export function SimulationPage() {
                   {tradeDetail.policy_levels.map((lv, i) => (
                     <div key={i} className="bg-slate-800/50 rounded-lg p-3 text-center">
                       <p className="text-xs text-slate-400">{lv.name} ({lv.trigger_r}R)</p>
-                      <p className="text-sm text-white font-mono mt-1">→ {lv.trigger_price?.toFixed(4)}</p>
-                      <p className="text-xs text-yellow-400 mt-0.5">Stop: {lv.stop_after_trigger?.toFixed(4)}</p>
+                      <p className="text-sm text-white font-mono mt-1">→ {fmtPrice(lv.trigger_price)}</p>
+                      <p className="text-xs text-yellow-400 mt-0.5">Stop: {fmtPrice(lv.stop_after_trigger)}</p>
                     </div>
                   ))}
                 </div>
@@ -694,8 +611,8 @@ export function SimulationPage() {
                     <div key={i} className="flex items-center gap-3 text-sm">
                       <span className="text-xs text-slate-500 font-mono w-28">{utcToVN(ev.time)}</span>
                       <span className={`text-xs font-medium ${ev.event.includes('EXIT') ? 'text-emerald-400' : ev.event.includes('TRIGGERED') ? 'text-yellow-400' : 'text-slate-400'}`}>{ev.event}</span>
-                      {ev.new_stop && <span className="text-xs text-slate-400">→ Stop: {ev.new_stop.toFixed(4)}</span>}
-                      {ev.exit_price && <span className="text-xs text-white">@ {ev.exit_price.toFixed(4)}</span>}
+                      {ev.new_stop && <span className="text-xs text-slate-400">→ Stop: {fmtPrice(ev.new_stop)}</span>}
+                      {ev.exit_price && <span className="text-xs text-white">@ {fmtPrice(ev.exit_price)}</span>}
                     </div>
                   ))}
                 </div>

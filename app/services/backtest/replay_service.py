@@ -95,9 +95,9 @@ def _resolve_policy(params: dict) -> dict:
 
 
 def run_replay_job(job_id: str, params: dict):
-    print("[BT JOB] params.policy =", params.get("policy"))
-    policy_config = _resolve_policy(params)
-    print("[BT JOB] resolved policy =", policy_config)
+    #print("[BT JOB] params.policy =", params.get("policy"))
+    #policy_config = _resolve_policy(params)
+    #print("[BT JOB] resolved policy =", policy_config)
     """
     Main orchestration. Gọi từ background thread.
 
@@ -133,12 +133,21 @@ def run_replay_job(job_id: str, params: dict):
         live_active = _is_live_active()
         throttle_mode = "SLOW (live active)" if live_active else "FAST (idle)"
 
-        print(
-            f"[BACKTEST] Job {job_id} started "
-            f"| {len(signals)} signals "
-            f"| policy: tp={policy_config.get('tp_r')}R levels={len(policy_config.get('levels', []))} "
-            f"| throttle: {throttle_mode}"
-        )
+        if policy_config.get("mode") == "percent":
+            tfs = policy_config.get("timeframes", {})
+            tf_parts = []
+            for tf, tf_cfg in tfs.items():
+                tf_parts.append(
+                    f"{tf}(SL={float(tf_cfg.get('sl_pct', 0))*100:.2f}%,TP={float(tf_cfg.get('tp_pct', 0))*100:.2f}%,L={len(tf_cfg.get('levels', []))})"
+                )
+            policy_desc = "percent " + ", ".join(tf_parts)
+        else:
+            policy_desc = f"R-based tp={policy_config.get('tp_r')}R levels={len(policy_config.get('levels', []))}"
+
+        """print(
+            f"[BACKTEST] Job {job_id} started | {len(signals)} signals | "
+            f"policy: {policy_desc} | throttle: {throttle_mode}"
+        )"""
 
         set_job_progress(job_id, 5, f"Loaded {len(signals)} signals. Preparing batch fetch...")
 

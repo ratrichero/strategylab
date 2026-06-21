@@ -38,7 +38,7 @@ def load_closed_signals(
     """
     date_from = ensure_utc(date_from)
     date_to = ensure_utc(date_to)
-    
+    symbols = _normalize_symbols(symbols)
 
     results = []
 
@@ -122,6 +122,16 @@ def load_closed_signals(
 
     return results
 
+def _normalize_symbols(symbols: List[str]) -> List[str]:
+    out = []
+    for s in symbols or []:
+        s = str(s).strip().upper()
+        if not s:
+            continue
+        if not s.endswith("USDT"):
+            s = s + "USDT"
+        out.append(s)
+    return out
 
 def _resolve_initial_params(db, signal: Signal):
     """
