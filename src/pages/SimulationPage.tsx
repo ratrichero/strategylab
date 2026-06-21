@@ -381,14 +381,14 @@ export function SimulationPage() {
         <Card><CardHeader title="Delta & Breakdown" subtitle={`${summary.sample_size} trades`} /><div className="space-y-2 mb-4">{[['Δ WR', `${summary.delta?.winrate_diff >= 0 ? '+' : ''}${((summary.delta?.winrate_diff || 0) * 100).toFixed(1)}%`], ['Δ Avg RR', `${summary.delta?.avg_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.avg_rr_realized_diff, 3)}`], ['Δ Total RR', `${summary.delta?.total_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.total_rr_realized_diff, 2)}`]].map(([l, v]) => <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${diffClr(parseFloat(v))}`}>{v}</span></div>)}</div>{summary.sim_exit_breakdown && <div className="space-y-1.5"><p className="text-xs text-slate-500 font-medium uppercase">Exit Breakdown</p>{Object.entries(summary.sim_exit_breakdown).map(([r, c]) => <div key={r} className="flex justify-between"><span className={`text-xs ${EXIT_COLORS[r] || 'text-slate-400'}`}>{r}</span><span className="text-xs text-white font-mono">{c}</span></div>)}{summary.ambiguous_bars > 0 && <div className="flex justify-between pt-1 border-t border-slate-700/50"><span className="text-xs text-orange-400">Ambiguous</span><span className="text-xs text-white font-mono">{summary.ambiguous_bars}</span></div>}</div>}</Card>
       </div>)}
 
-      {/* RR Debug Panel */}
+      {/* RR Debug Panel — always visible */}
       {rows.length > 0 && (
         <Card>
-          <div className="flex items-center justify-between mb-3">
-            <div><h3 className="text-sm font-semibold text-white">🔍 RR Debug Panel</h3><p className="text-xs text-slate-500">Chi tiết SL/TP/PnL — {rows.length} trades</p></div>
-            <button onClick={() => setShowDebug(!showDebug)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-3 py-1 rounded bg-slate-700/50 hover:bg-slate-700"><Bug className="w-3 h-3" />{showDebug ? 'Hide' : 'Show'}</button>
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bug className="w-4 h-4 text-slate-400" /> RR Debug Panel</h3>
+            <p className="text-xs text-slate-500 mt-0.5">Chi tiết SL/TP/PnL — {rows.length} trades</p>
           </div>
-          {showDebug && renderDebugTable()}
+          {renderDebugTable()}
         </Card>
       )}
 

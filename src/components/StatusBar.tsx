@@ -32,7 +32,7 @@ export function StatusBar() {
     };
 
     load();
-    const id = setInterval(load, 5000);
+    const id = setInterval(load, 10000);
     return () => clearInterval(id);
   }, [setTradingMode, setPriceFeed]);
 
