@@ -37,16 +37,6 @@ async def engine_status():
 
 
 # ============================================================
-# PRICE FEED
-# ============================================================
-
-@router.get("/api/price-feed/status")
-async def price_feed_status():
-    from app.services.price_feed import get_price_feed
-    return get_price_feed().get_stats()
-
-
-# ============================================================
 # TRADING MODE
 # ============================================================
 
@@ -54,6 +44,19 @@ async def price_feed_status():
 async def get_mode():
     from app.core.trading_mode import get_trading_mode
     return get_trading_mode().describe()
+
+
+@router.get("/api/user-stream/status")
+async def user_stream_status():
+    from app.services.binance_user_stream_service import get_user_stream
+    return get_user_stream().get_stats()
+
+
+@router.post("/api/user-stream/restart")
+async def user_stream_restart():
+    from app.services.binance_user_stream_service import restart_user_stream
+    restart_user_stream()
+    return {"ok": True, "message": "User stream restart requested"}
 
 
 @router.put("/api/trading-mode")

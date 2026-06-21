@@ -23,6 +23,9 @@ from app.services.price_feed import (
     start_price_feed, stop_price_feed,
     get_price_feed, add_price_callback
 )
+from app.services.binance_user_stream_service import (
+    start_user_stream, stop_user_stream
+)
 from app.services.config_service import get_runtime_config, get_connection_value
 from app.api.account import router as account_router
 
@@ -348,6 +351,7 @@ async def lifespan(app: FastAPI):
     ]
 
     if mode != TradingMode.PAPER:
+        start_user_stream()
         from app.services.live.runtime import (
             live_intent_loop,
             live_reconcile_loop,
@@ -392,6 +396,7 @@ async def lifespan(app: FastAPI):
     _main_loop = None
 
     stop_price_feed()
+    stop_user_stream()
 
     for t in tasks:
         t.cancel()

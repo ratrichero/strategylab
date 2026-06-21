@@ -16,7 +16,15 @@ async def ml_status():
 
 @router.get("/ml/evaluate")
 async def ml_evaluate(days: int = 30):
-    from app.ml.evaluate import evaluate_recent
+    try:
+        from app.ml.evaluate import evaluate_recent
+    except ImportError:
+        return {
+            "status": "unavailable",
+            "enabled": False,
+            "reason": "legacy_ml_evaluate_missing",
+            "days": days,
+        }
     return evaluate_recent(days=days)
 
 @router.get("/ml/models")
