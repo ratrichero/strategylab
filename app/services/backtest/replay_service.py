@@ -95,6 +95,9 @@ def _resolve_policy(params: dict) -> dict:
 
 
 def run_replay_job(job_id: str, params: dict):
+    print("[BT JOB] params.policy =", params.get("policy"))
+    policy_config = _resolve_policy(params)
+    print("[BT JOB] resolved policy =", policy_config)
     """
     Main orchestration. Gọi từ background thread.
 
