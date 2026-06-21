@@ -62,16 +62,25 @@ class VolatilityAlertService:
     def __init__(self):
         self._states: Dict[str, _SymbolState] = {}
         self._last_cycle = 0.0
+        # Khoảng thời gian giữa các lần duyệt cảnh báo để không chạy quá tải price feed.
         self._cycle_delay = float(os.getenv("VOL_ALERT_CYCLE_SECONDS", "3"))
+        # Giới hạn số symbol được xử lý mỗi lần để giữ hiệu năng.
         self._symbols_limit = int(os.getenv("VOL_ALERT_SYMBOL_LIMIT", "1200"))
+        # Ngưỡng cảnh báo cho BTC.
         self._btc_threshold_1m = float(os.getenv("VOL_ALERT_BTC_1M_PCT", "2.0"))
         self._btc_threshold_5m = float(os.getenv("VOL_ALERT_BTC_5M_PCT", "3.5"))
+        # Thời gian chờ giữa 2 cảnh báo BTC cùng loại, tránh spam.
         self._btc_cooldown = float(os.getenv("VOL_ALERT_BTC_COOLDOWN_MINUTES", "20")) * 60
-        self._coin_threshold_1m = float(os.getenv("VOL_ALERT_COIN_1M_PCT", "3.0"))
-        self._coin_threshold_5m = float(os.getenv("VOL_ALERT_COIN_5M_PCT", "5.0"))
+        # Coin khác: 1 phút > 10%, 5 phút > 15% mới cảnh báo.
+        self._coin_threshold_1m = float(os.getenv("VOL_ALERT_COIN_1M_PCT", "10.0"))
+        self._coin_threshold_5m = float(os.getenv("VOL_ALERT_COIN_5M_PCT", "15.0"))
+        # Thời gian chờ giữa 2 cảnh báo cùng symbol coin khác.
         self._coin_cooldown = float(os.getenv("VOL_ALERT_COIN_COOLDOWN_MINUTES", "40")) * 60
+        # Ngưỡng phát hiện sớm: biến động 1m lớn bất thường so với trung bình và tối thiểu 5%.
         self._unusual_ratio = float(os.getenv("VOL_ALERT_UNUSUAL_RATIO", "3.0"))
+        # Bật/tắt toàn bộ cơ chế cảnh báo.
         self._enabled = os.getenv("ENABLE_VOL_ALERTS", "true").lower() in ["1", "true", "yes", "on"]
+        # Loại trừ các symbol dạng token đòn bẩy, hướng tăng giảm, vì chỉ cần USDT spot.
         self._exclude_tokens = ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"]
 
     def callback(self, price_map: dict):
@@ -143,11 +152,13 @@ class VolatilityAlertService:
         cooldown = self._btc_cooldown if btc else self._coin_cooldown
         age_since_alert = now - state.last_alert_at
 
+        # Chỉ gửi cảnh báo với mỗi symbol sau khi cooldown hết hạn.
         if age_since_alert < cooldown:
             return None
 
+        # Tính biến động ngắn hạn, dùng để phát hiện cú tăng/giảm bất thường sớm.
         avg_move = state.avg_short_move(now)
-        unusual_move = avg_move and abs_1m >= max(1.2, avg_move * self._unusual_ratio) and abs_1m >= 1.5
+        unusual_move = avg_move and abs_1m >= max(1.2, avg_move * self._unusual_ratio) and abs_1m >= 5.0
 
         alert_type = None
         if btc and abs_1m >= threshold_1m:
