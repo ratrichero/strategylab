@@ -455,11 +455,14 @@ export function SimulationPage() {
       {rows.length > 0 && (
         <Card>
           <div className="flex items-center justify-between mb-3">
-            <CardHeader title="RR Debug Panel" subtitle={`${rows.length} trades — chi tiết SL/TP/PnL`} />
-            <button onClick={() => setShowDebug(!showDebug)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-3 py-1 rounded bg-slate-700/50 hover:bg-slate-700">
-              <Bug className="w-3 h-3" />{showDebug ? 'Hide' : 'Show'}
+            <div>
+              <h3 className="text-sm font-semibold text-white">RR Debug Panel</h3>
+              <p className="text-xs text-slate-500">{rows.length} trades — chi tiết SL/TP/PnL</p>
+            </div>
+            <button onClick={() => setShowDebug(!showDebug)} className="text-xs text-slate-400 hover:text-white flex items-center gap-1 px-3 py-1.5 rounded bg-slate-700/50 hover:bg-slate-700 transition-colors">
+              <Bug className="w-3 h-3" />{showDebug ? 'Hide Debug' : 'Show Debug'}
             </button>
-          </div>
+        </div>
           {showDebug && (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
