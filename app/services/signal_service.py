@@ -433,6 +433,18 @@ def run_market_scan_multi_tf():
     if runtime_cfg.get("TOP_LIMIT", 0) <= 0:
         print(f"💤 Scan system is PAUSED (TOP_LIMIT = 0)")
         return
+    
+    # ← CHANGED: Bot runtime gate check
+    from app.core.app_role import is_bot
+    if is_bot():
+        try:
+            from app.bot_runtime.runtime_gate import get_runtime_gate
+            gate = get_runtime_gate()
+            if gate.is_monitor_only():
+                print(f"⏸️ [SCAN] Bot monitor_only — skipping multi-tf scan")
+                return
+        except ImportError:
+            pass
 
     now = utc_now()
 
@@ -465,6 +477,22 @@ def run_market_scan_single_tf(timeframe):
     runtime_cfg = get_runtime_config(force_reload=True)
 
     print(f"\n🚀 Running SINGLE TF scan: {timeframe}")
+
+    # ← CHANGED: Bot runtime gate check
+    from app.core.app_role import is_bot
+    if is_bot():
+        try:
+            from app.bot_runtime.runtime_gate import get_runtime_gate
+            gate = get_runtime_gate()
+            if gate.is_monitor_only():
+                print(f"⏸️ [SCAN] Bot monitor_only — skipping {timeframe}")
+                return {
+                    "timeframe": timeframe,
+                    "skipped": True,
+                    "reason": "monitor_only",
+                }
+        except ImportError:
+            pass
 
     with SessionLocal() as db:
         # LIVE scan pause gate:
@@ -499,6 +527,23 @@ def run_market_scan_single_tf(timeframe):
 # ============================================================
 
 def scan_timeframe(db, timeframe, runtime_cfg):
+    # ← CHANGED: Bot runtime gate check
+    # Nếu bot đang ở monitor_only → skip scan hoàn toàn
+    from app.core.app_role import is_bot
+    if is_bot():
+        try:
+            from app.bot_runtime.runtime_gate import get_runtime_gate
+            gate = get_runtime_gate()
+            if gate.is_monitor_only():
+                print(f"⏸️ [SCAN SKIP] Bot is in monitor_only mode — skipping {timeframe}")
+                return {
+                    "timeframe": timeframe,
+                    "total_symbols": 0,
+                    "skipped": True,
+                    "reason": "monitor_only",
+                }
+        except ImportError:
+            pass  # bot_runtime chưa install, bỏ qua
 
     config = ScanConfig(
     timeframe=timeframe,

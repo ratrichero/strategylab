@@ -219,6 +219,15 @@ def _schedule_place_retry_or_reject(db, p: PendingSignal, error_msg: str, now):
 
 
 def process_live_pending_intents():
+    try:
+        from app.core.app_role import is_bot
+        if is_bot():
+            from app.bot_runtime.runtime_gate import get_runtime_gate
+            if get_runtime_gate().is_monitor_only():
+                return
+    except Exception:
+        pass
+
     cfg = get_runtime_config(force_reload=True)
     price_map = get_all_current_prices() or {}
     now = utc_now()

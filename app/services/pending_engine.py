@@ -806,6 +806,15 @@ def _process_single_live(db, p, price_map, now):
 # ============================================================
 
 def process_pending_signals(price_map: Optional[Dict[str, float]] = None):
+    try:
+        from app.core.app_role import is_bot
+        if is_bot():
+            from app.bot_runtime.runtime_gate import get_runtime_gate
+            if get_runtime_gate().is_monitor_only():
+                return
+    except Exception:
+        pass
+
     with SessionLocal() as db:
         now = utc_now()
         mode = get_current_mode()

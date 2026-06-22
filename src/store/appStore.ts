@@ -36,6 +36,14 @@ interface AppState {
   updateResearchQuery: (id: string, updates: Partial<ResearchQuery>) => void;
   deleteResearchQuery: (id: string) => void;
   toggleQueryPin: (id: string) => void;
+  // ← CHANGED: thêm auth + role state
+  currentUser: { id: number; username: string; role: string } | null;
+  appRole: string; // "ADMIN" | "BOT"
+  licenseInfo: any | null;
+  setCurrentUser: (user: any) => void;
+  clearCurrentUser: () => void;
+  setAppRole: (role: string) => void;
+  setLicenseInfo: (info: any) => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -68,6 +76,14 @@ export const useAppStore = create<AppState>()(
       toggleQueryPin: (id) => set((s) => ({
         researchQueries: s.researchQueries.map((q) => q.id === id ? { ...q, is_pinned: !q.is_pinned } : q),
       })),
+      // ← CHANGED: auth + role defaults
+      currentUser: null,
+      appRole: "ADMIN",
+      licenseInfo: null,
+      setCurrentUser: (user) => set({ currentUser: user }),
+      clearCurrentUser: () => set({ currentUser: null }),
+      setAppRole: (role) => set({ appRole: role }),
+      setLicenseInfo: (info) => set({ licenseInfo: info }),
     }),
     {
       name: "quant-lab-v2",
@@ -77,6 +93,8 @@ export const useAppStore = create<AppState>()(
         theme: s.theme,
         activeStrategies: s.activeStrategies,
         researchQueries: s.researchQueries,
+        // ← CHANGED: KHÔNG persist currentUser/appRole
+        // vì auth state phải verify từ cookie mỗi lần load
       }),
     }
   )

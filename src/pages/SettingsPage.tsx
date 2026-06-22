@@ -1,6 +1,7 @@
 // @ts-nocheck
 /* eslint-disable */
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardHeader } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Select } from "../components/ui/Select";
@@ -8,138 +9,100 @@ import { Toggle } from "../components/ui/Toggle";
 import {
   Settings as SettingsIcon, Save, RotateCcw, Loader2,
   CheckCircle, AlertCircle, Radar, ShieldCheck, Server,
-  Layers, Filter, Crosshair, Activity, Plug, KeyRound, Palette,
-  ChevronDown, ChevronRight, Bell,
+  Layers, Filter, Activity, Plug, KeyRound, Palette,
+  ChevronDown, ChevronRight, Bell, LogOut,
 } from "lucide-react";
 import {
   config, tradingMode as tmApi, strategies as stratsApi,
-  otf as otfApi, prefill as prefillApi, ml,
+  otf as otfApi, prefill as prefillApi, ml, auth, appRoleApi,
 } from "../services/api";
 import { useAppStore } from "../store/appStore";
 import toast from "react-hot-toast";
 
-const API = "/api";
-async function loadConfig() { const r = await fetch(`${API}/app-config`); return r.json(); }
-async function saveConfigKeys(u) { await fetch(`${API}/app-config`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(u) }); }
+const API_BASE=import.meta.env.VITE_API_BASE||"";
+const API=`${API_BASE}/api`;
+async function loadConfig(){const r=await fetch(`${API}/app-config`,{credentials:"include"});return r.json();}
+async function saveConfigKeys(u){await fetch(`${API}/app-config`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(u),credentials:"include"});}
 
-function Field({ label, hint, children }) { return (<div><label className="block text-sm font-medium text-slate-300 mb-1.5">{label}</label>{children}{hint && <p className="text-xs text-slate-500 mt-1">{hint}</p>}</div>); }
-function NumField({ label, value, onChange, hint, step }) { return (<Field label={label} hint={hint}><input type="number" step={step||"any"} value={value} onChange={e=>onChange(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" /></Field>); }
-function TextField({ label, value, onChange, hint, type="text", placeholder="" }) { return (<Field label={label} hint={hint}><input type={type} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500" /></Field>); }
-function BoolField({ label, value, onChange, hint }) {
-  return (
-    <Field label={label} hint={hint}>
-      <div className="flex items-center gap-3">
-        <Toggle checked={value} onChange={onChange} />
-        <span className={`text-sm font-medium ${value?"text-emerald-400":"text-slate-500"}`}>
-          {value?"Enabled":"Disabled"}
-        </span>
-      </div>
-    </Field>
-  );
+function Field({label,hint,children}){return <div><label className="block text-sm font-medium text-slate-300 mb-1.5">{label}</label>{children}{hint&&<p className="text-xs text-slate-500 mt-1">{hint}</p>}</div>;}
+function NumField({label,value,onChange,hint,step}){return <Field label={label} hint={hint}><input type="number" step={step||"any"} value={value} onChange={e=>onChange(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></Field>;}
+function TextField({label,value,onChange,hint,type="text",placeholder=""}){return <Field label={label} hint={hint}><input type={type} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></Field>;}
+function BoolField({label,value,onChange,hint}){return <Field label={label} hint={hint}><div className="flex items-center gap-3"><Toggle checked={value} onChange={onChange}/><span className={`text-sm font-medium ${value?"text-emerald-400":"text-slate-500"}`}>{value?"Enabled":"Disabled"}</span></div></Field>;}
+function SaveRow({saving,saved,onSave,onCancel}){return <div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-700"><Button variant="primary" icon={saving?undefined:<Save className="w-4 h-4"/>} loading={saving} onClick={onSave}>Apply</Button>{onCancel&&<Button variant="ghost" icon={<RotateCcw className="w-4 h-4"/>} onClick={onCancel}>Cancel</Button>}{saved&&<span className="flex items-center gap-1 text-sm text-emerald-400"><CheckCircle className="w-4 h-4"/> Saved</span>}</div>;}
+function MultiRow({label,allItems,selected,onToggle,onSetAll}){const isAll=allItems.length>0&&allItems.every(i=>(selected||[]).includes(i));return <div className="flex gap-2 items-center flex-wrap"><span className="text-xs text-slate-400 w-24 flex-shrink-0">{label}</span><button onClick={()=>onSetAll(isAll?[]:[...allItems])} className={`px-2 py-1 rounded text-xs font-medium border transition-colors ${isAll?"border-indigo-500 bg-indigo-600/30 text-indigo-300":"border-slate-600 bg-slate-800 text-slate-500 hover:border-slate-500"}`}>All</button>{allItems.map(item=><button key={item} onClick={()=>onToggle(item)} className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${(selected||[]).includes(item)?"bg-blue-600 text-white":"bg-slate-700 text-slate-400 hover:bg-slate-600"}`}>{item}</button>)}{(selected||[]).length===0&&<span className="text-xs text-slate-500 italic">(All allowed)</span>}</div>;}
+
+function LicenseStatusCard(){
+  const [info,setInfo]=useState(null);
+  useEffect(()=>{(async()=>{try{const d=await appRoleApi.botLicenseInfo();setInfo(d?.license);}catch{}})();},[]);
+  if(!info)return <div className="text-slate-500 text-sm">Loading license info...</div>;
+  const colors={active:"text-emerald-400",disabled:"text-red-400",expired:"text-yellow-400"};
+  return <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="bg-slate-900/50 rounded-lg p-3"><div className="text-xs text-slate-400">Status</div><div className={`text-lg font-bold mt-1 ${colors[info.status]||"text-white"}`}>{info.status?.toUpperCase()}</div></div>
+    <div className="bg-slate-900/50 rounded-lg p-3"><div className="text-xs text-slate-400">Expires</div><div className="text-white font-medium mt-1">{info.license_expires_at?new Date(info.license_expires_at).toLocaleDateString():"Unlimited"}</div></div>
+    <div className="bg-slate-900/50 rounded-lg p-3"><div className="text-xs text-slate-400">Mode</div><div className={`text-lg font-bold mt-1 ${info.monitor_only?"text-yellow-400":"text-emerald-400"}`}>{info.monitor_only?"MONITOR ONLY":"FULL TRADING"}</div></div>
+    <div className="bg-slate-900/50 rounded-lg p-3"><div className="text-xs text-slate-400">Boot Source</div><div className="text-white font-medium mt-1">{info.boot_source||"—"}</div></div>
+  </div>;
 }
-function SaveRow({ saving, saved, onSave, onCancel }) { return (<div className="flex items-center gap-3 mt-6 pt-4 border-t border-slate-700"><Button variant="primary" icon={saving?undefined:<Save className="w-4 h-4"/>} loading={saving} onClick={onSave}>Apply</Button>{onCancel&&<Button variant="ghost" icon={<RotateCcw className="w-4 h-4"/>} onClick={onCancel}>Cancel</Button>}{saved&&<span className="flex items-center gap-1 text-sm text-emerald-400"><CheckCircle className="w-4 h-4"/> Saved</span>}</div>); }
-function MultiRow({ label, allItems, selected, onToggle, onSetAll }) {
-  const isAll = allItems.length>0 && allItems.every(i=>(selected||[]).includes(i));
-  return (<div className="flex gap-2 items-center flex-wrap"><span className="text-xs text-slate-400 w-24 flex-shrink-0">{label}</span><button onClick={()=>onSetAll(isAll?[]:[...allItems])} className={`px-2 py-1 rounded text-xs font-medium border transition-colors ${isAll?"border-indigo-500 bg-indigo-600/30 text-indigo-300":"border-slate-600 bg-slate-800 text-slate-500 hover:border-slate-500"}`}>All</button>{allItems.map(item=>(<button key={item} onClick={()=>onToggle(item)} className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${(selected||[]).includes(item)?"bg-blue-600 text-white":"bg-slate-700 text-slate-400 hover:bg-slate-600"}`}>{item}</button>))}{(selected||[]).length===0&&<span className="text-xs text-slate-500 italic">(All allowed)</span>}</div>);
-}
 
-const TABS = [
-  { id:"scan", label:"Scan & Signal", icon:Radar },
-  { id:"filter", label:"Trade Filter", icon:Filter },
-  { id:"prefill", label:"Pre-Fill", icon:ShieldCheck },
-  { id:"strats", label:"Strategies", icon:Layers },
-  { id:"live", label:"Live Trading", icon:Activity },
-  { id:"alerts", label:"Alerts", icon:Bell },
-  { id:"system", label:"System", icon:Server },
-  { id:"conn", label:"Connection", icon:Plug },
-  { id:"apikey", label:"API Keys", icon:KeyRound },
-];
+export function SettingsPage(){
+  const navigate=useNavigate();
+  const {theme:storeTheme,setTheme:setStoreTheme,currentUser,clearCurrentUser,appRole}=useAppStore();
+  const role=appRole||currentUser?.role;
+  const isAdmin=role==="ADMIN";
+  const isBot=role==="BOT";
 
-export function SettingsPage() {
-  const [tab,setTab]=useState("scan"); const [loading,setLoading]=useState(true); const [error,setError]=useState(""); const [orig,setOrig]=useState({});
-  const { theme: storeTheme, setTheme: setStoreTheme } = useAppStore();
+  const TABS=[
+    {id:"scan",label:"Scan & Signal",icon:Radar},
+    {id:"filter",label:"Trade Filter",icon:Filter},
+    {id:"prefill",label:"Pre-Fill",icon:ShieldCheck},
+    {id:"strats",label:"Strategies",icon:Layers},
+    {id:"live",label:"Live Trading",icon:Activity},
+    {id:"alerts",label:"Alerts",icon:Bell},
+    {id:"system",label:"System",icon:Server},
+    ...(isAdmin?[{id:"conn",label:"Connection",icon:Plug}]:[]),
+    ...(isAdmin?[{id:"apikey",label:"API Keys",icon:KeyRound}]:[]),
+  ];
 
-  const [scoreThreshold,setScoreThreshold]=useState(""); const [bodyRatio,setBodyRatio]=useState(""); const [volMult,setVolMult]=useState(""); const [atrMin,setAtrMin]=useState(""); const [cooldown,setCooldown]=useState(""); const [aiThreshold,setAiThreshold]=useState(""); const [mtfEnabled,setMtfEnabled]=useState(false);
-  const [derivBias15m,setDerivBias15m]=useState(""); const [derivBias1h,setDerivBias1h]=useState(""); const [derivBias4h,setDerivBias4h]=useState(""); const [derivPreBuffer,setDerivPreBuffer]=useState("");
-  const [riskSl15m,setRiskSl15m]=useState(""); const [riskTp15m,setRiskTp15m]=useState(""); const [riskSl1h,setRiskSl1h]=useState(""); const [riskTp1h,setRiskTp1h]=useState(""); const [riskSl4h,setRiskSl4h]=useState(""); const [riskTp4h,setRiskTp4h]=useState("");
-  const [pendEnabled,setPendEnabled]=useState(true);
-  const [pendAtr15m,setPendAtr15m]=useState(""); const [pendAtr1h,setPendAtr1h]=useState(""); const [pendAtr4h,setPendAtr4h]=useState("");
-  const [pendExp15m,setPendExp15m]=useState(""); const [pendExp1h,setPendExp1h]=useState(""); const [pendExp4h,setPendExp4h]=useState("");
-  const [s1,setS1]=useState(false); const [sv1,setSv1]=useState(false);
-  const [engVer,setEngVer]=useState(""); const [topLimit,setTopLimit]=useState(""); const [maxOpenTrades,setMaxOpenTrades]=useState("50"); const [timeframe,setTimeframe]=useState("15m"); const [scheduler,setScheduler]=useState(false); const [monitor,setMonitor]=useState(false);
-  const [s2,setS2]=useState(false); const [sv2,setSv2]=useState(false);
-  const [otfConfig,setOtfConfig]=useState(null); const [otfStatus,setOtfStatus]=useState(null); const [sOtf,setSOtf]=useState(false); const [svOtf,setSvOtf]=useState(false);
-  const [pfConfig,setPfConfig]=useState(null); const [sPf,setSPf]=useState(false); const [svPf,setSvPf]=useState(false);
-  const [wlInput,setWlInput]=useState(""); const [wlLoading,setWlLoading]=useState(false);
-  const [stratsList,setStratsList]=useState([]); const [sSt,setSSt]=useState(false); const [svSt,setSvSt]=useState(false);
-  // ← CHANGED: thêm state cho STRATEGY_CONFIG (threshold per-strategy/per-pattern)
-  const [stratConfig,setStratConfig]=useState({});
-  const [expandedStrat,setExpandedStrat]=useState(null);
-  // ← CHANGED: thêm state cho VOL_ALERT_CONFIG
-  const [volAlertEnabled,setVolAlertEnabled]=useState(true);
-  const [volCycleSeconds,setVolCycleSeconds]=useState("3");
-  const [volSymbolsLimit,setVolSymbolsLimit]=useState("1200");
-  const [volHistorySeconds,setVolHistorySeconds]=useState("600");
-  const [volBtc1m,setVolBtc1m]=useState("2.0");
-  const [volBtc5m,setVolBtc5m]=useState("3.5");
-  const [volBtcCooldown,setVolBtcCooldown]=useState("20");
-  const [volMajor1m,setVolMajor1m]=useState("5.0");
-  const [volMajor5m,setVolMajor5m]=useState("8.0");
-  const [volMajorCooldown,setVolMajorCooldown]=useState("30");
-  const [volMajorSymbols,setVolMajorSymbols]=useState("ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT");
-  const [volWatch1m,setVolWatch1m]=useState("6.0");
-  const [volWatch5m,setVolWatch5m]=useState("10.0");
-  const [volWatchCooldown,setVolWatchCooldown]=useState("25");
-  const [volWatchSymbols,setVolWatchSymbols]=useState("");
-  const [volCoin1m,setVolCoin1m]=useState("10.0");
-  const [volCoin5m,setVolCoin5m]=useState("15.0");
-  const [volCoinCooldown,setVolCoinCooldown]=useState("40");
-  const [volUnusualRatio,setVolUnusualRatio]=useState("3.0");
-  const [volPrioritySymbols,setVolPrioritySymbols]=useState("BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT");
-  const [volExcludeTokens,setVolExcludeTokens]=useState("UP,DOWN,BULL,BEAR,SHORT,LONG");
-  const [sVol,setSVol]=useState(false); const [svVol,setSvVol]=useState(false);
-  const [limitEnabled,setLimitEnabled]=useState(true);
-  const [limitRp15m,setLimitRp15m]=useState(""); const [limitRp1h,setLimitRp1h]=useState(""); const [limitRp4h,setLimitRp4h]=useState("");
-  const [posSizeMode,setPosSizeMode]=useState("fixed_usdt");
-  const [posFixedUsdt,setPosFixedUsdt]=useState("200"); const [posRiskPct,setPosRiskPct]=useState("0.01");
-  const [posLeverage,setPosLeverage]=useState("3"); const [posMaxUsdt,setPosMaxUsdt]=useState("500");
-  const [sLt,setSLt]=useState(false); const [svLt,setSvLt]=useState(false);
-  const [bnConnecting,setBnConnecting]=useState(false); const [bnAccount,setBnAccount]=useState(null);
-  // Profit Lock
-  const [plEnabled,setPlEnabled]=useState(false); const [plThreshold,setPlThreshold]=useState("20"); const [plMinTrades,setPlMinTrades]=useState("3"); const [plCooldown,setPlCooldown]=useState("60");
-  // Protection Levels
-  const [protEnabled,setProtEnabled]=useState(true); const [protLevels,setProtLevels]=useState({
-    "15m":{levels:[{trigger_pct:0.02,action:"move_to_entry",buffer_pct:0.002}]},
-    "1h":{levels:[{trigger_pct:0.025,action:"move_to_entry",buffer_pct:0.0025}]},
-    "4h":{levels:[{trigger_pct:0.03,action:"move_to_entry",buffer_pct:0.003}]}
-  });
-  const [modeInfo,setModeInfo]=useState(null); const [feedInfo,setFeedInfo]=useState(null); const [mlInfo,setMlInfo]=useState(null);
-  const [retraining,setRetraining]=useState(false); const [retainResult,setRetainResult]=useState(null);
-  const [scanning, setScanning] = useState(false);
-  const [connOverride,setConnOverride]=useState(false);
-  const [connBnKey,setConnBnKey]=useState(""); const [connBnSecret,setConnBnSecret]=useState("");
-  const [connTgToken,setConnTgToken]=useState(""); const [connGroq,setConnGroq]=useState(""); const [connGemini,setConnGemini]=useState("");
-  const [sConn,setSConn]=useState(false); const [svConn,setSvConn]=useState(false);
-  const [dashApiKey,setDashApiKey]=useState(""); const [sKey,setSKey]=useState(false); const [svKey,setSvKey]=useState(false);
+  const [tab,setTab]=useState("scan"),[loading,setLoading]=useState(true),[error,setError]=useState(""),[orig,setOrig]=useState({});
+  const [scoreThreshold,setScoreThreshold]=useState(""),[bodyRatio,setBodyRatio]=useState(""),[volMult,setVolMult]=useState(""),[atrMin,setAtrMin]=useState(""),[cooldown,setCooldown]=useState(""),[aiThreshold,setAiThreshold]=useState(""),[mtfEnabled,setMtfEnabled]=useState(false);
+  const [derivBias15m,setDerivBias15m]=useState(""),[derivBias1h,setDerivBias1h]=useState(""),[derivBias4h,setDerivBias4h]=useState(""),[derivPreBuffer,setDerivPreBuffer]=useState("");
+  const [riskSl15m,setRiskSl15m]=useState(""),[riskTp15m,setRiskTp15m]=useState(""),[riskSl1h,setRiskSl1h]=useState(""),[riskTp1h,setRiskTp1h]=useState(""),[riskSl4h,setRiskSl4h]=useState(""),[riskTp4h,setRiskTp4h]=useState("");
+  const [pendEnabled,setPendEnabled]=useState(true),[pendAtr15m,setPendAtr15m]=useState(""),[pendAtr1h,setPendAtr1h]=useState(""),[pendAtr4h,setPendAtr4h]=useState(""),[pendExp15m,setPendExp15m]=useState(""),[pendExp1h,setPendExp1h]=useState(""),[pendExp4h,setPendExp4h]=useState("");
+  const [engVer,setEngVer]=useState(""),[topLimit,setTopLimit]=useState(""),[maxOpenTrades,setMaxOpenTrades]=useState("50"),[timeframe,setTimeframe]=useState("15m"),[scheduler,setScheduler]=useState(false),[monitor,setMonitor]=useState(false),[s2,setS2]=useState(false),[sv2,setSv2]=useState(false);
+  const [otfConfig,setOtfConfig]=useState(null),[otfStatus,setOtfStatus]=useState(null),[sOtf,setSOtf]=useState(false),[svOtf,setSvOtf]=useState(false);
+  const [pfConfig,setPfConfig]=useState(null),[sPf,setSPf]=useState(false),[svPf,setSvPf]=useState(false),[wlInput,setWlInput]=useState(""),[wlLoading,setWlLoading]=useState(false);
+  const [stratsList,setStratsList]=useState([]),[sSt,setSSt]=useState(false),[svSt,setSvSt]=useState(false),[stratConfig,setStratConfig]=useState({}),[expandedStrat,setExpandedStrat]=useState(null);
 
-  const applyConfig = (c) => {
-    setScoreThreshold(c["SCORE_THRESHOLD"]||""); setBodyRatio(c["BODY_RATIO_THRESHOLD"]||""); setVolMult(c["VOLUME_MULTIPLIER"]||""); setAtrMin(c["ATR_RATIO_MIN"]||""); setCooldown(c["COOLDOWN_HOURS"]||""); setAiThreshold(c["AI_THRESHOLD"]||""); setMtfEnabled(c["MTF_ENABLED"]?.toLowerCase()==="true");
+  const [volAlertEnabled,setVolAlertEnabled]=useState(true),[volCycleSeconds,setVolCycleSeconds]=useState("3"),[volSymbolsLimit,setVolSymbolsLimit]=useState("1200"),[volHistorySeconds,setVolHistorySeconds]=useState("600");
+  const [volBtc1m,setVolBtc1m]=useState("2.0"),[volBtc5m,setVolBtc5m]=useState("3.5"),[volBtcCooldown,setVolBtcCooldown]=useState("20");
+  const [volMajor1m,setVolMajor1m]=useState("5.0"),[volMajor5m,setVolMajor5m]=useState("8.0"),[volMajorCooldown,setVolMajorCooldown]=useState("30"),[volMajorSymbols,setVolMajorSymbols]=useState("ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT");
+  const [volWatch1m,setVolWatch1m]=useState("6.0"),[volWatch5m,setVolWatch5m]=useState("10.0"),[volWatchCooldown,setVolWatchCooldown]=useState("25"),[volWatchSymbols,setVolWatchSymbols]=useState("");
+  const [volCoin1m,setVolCoin1m]=useState("10.0"),[volCoin5m,setVolCoin5m]=useState("15.0"),[volCoinCooldown,setVolCoinCooldown]=useState("40"),[volUnusualRatio,setVolUnusualRatio]=useState("3.0"),[volPrioritySymbols,setVolPrioritySymbols]=useState("BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"),[volExcludeTokens,setVolExcludeTokens]=useState("UP,DOWN,BULL,BEAR,SHORT,LONG"),[sVol,setSVol]=useState(false),[svVol,setSvVol]=useState(false);
+
+  const [limitEnabled,setLimitEnabled]=useState(true),[limitRp15m,setLimitRp15m]=useState(""),[limitRp1h,setLimitRp1h]=useState(""),[limitRp4h,setLimitRp4h]=useState("");
+  const [posSizeMode,setPosSizeMode]=useState("fixed_usdt"),[posFixedUsdt,setPosFixedUsdt]=useState("200"),[posRiskPct,setPosRiskPct]=useState("0.01"),[posLeverage,setPosLeverage]=useState("3"),[posMaxUsdt,setPosMaxUsdt]=useState("500"),[sLt,setSLt]=useState(false),[svLt,setSvLt]=useState(false);
+  const [bnConnecting,setBnConnecting]=useState(false),[bnAccount,setBnAccount]=useState(null);
+  const [plEnabled,setPlEnabled]=useState(false),[plThreshold,setPlThreshold]=useState("20"),[plMinTrades,setPlMinTrades]=useState("3"),[plCooldown,setPlCooldown]=useState("60");
+  const [protEnabled,setProtEnabled]=useState(true),[protLevels,setProtLevels]=useState({"15m":{levels:[{trigger_pct:0.02,action:"move_to_entry",buffer_pct:0.002}]},"1h":{levels:[{trigger_pct:0.025,action:"move_to_entry",buffer_pct:0.0025}]},"4h":{levels:[{trigger_pct:0.03,action:"move_to_entry",buffer_pct:0.003}]}});
+  const [modeInfo,setModeInfo]=useState(null),[feedInfo,setFeedInfo]=useState(null),[mlInfo,setMlInfo]=useState(null),[retraining,setRetraining]=useState(false),[retainResult,setRetainResult]=useState(null),[scanning,setScanning]=useState(false);
+  const [connBnKey,setConnBnKey]=useState(""),[connBnSecret,setConnBnSecret]=useState(""),[connTestnetKey,setConnTestnetKey]=useState(""),[connTestnetSecret,setConnTestnetSecret]=useState(""),[connGroq,setConnGroq]=useState(""),[connGemini,setConnGemini]=useState(""),[sConn,setSConn]=useState(false),[svConn,setSvConn]=useState(false);
+  const [dashApiKey,setDashApiKey]=useState(""),[sKey,setSKey]=useState(false),[svKey,setSvKey]=useState(false);
+
+  const arr=s=>s.split(",").map(x=>x.trim().toUpperCase()).filter(Boolean);
+  const applyConfig=c=>{
+    setScoreThreshold(c["SCORE_THRESHOLD"]||"");setBodyRatio(c["BODY_RATIO_THRESHOLD"]||"");setVolMult(c["VOLUME_MULTIPLIER"]||"");setAtrMin(c["ATR_RATIO_MIN"]||"");setCooldown(c["COOLDOWN_HOURS"]||"");setAiThreshold(c["AI_THRESHOLD"]||"");setMtfEnabled(c["MTF_ENABLED"]?.toLowerCase()==="true");
     try{const d=JSON.parse(c["DERIVATIVE_CONFIG"]||"{}");setDerivBias15m(String(d.bias_scale?.["15m"]??""));setDerivBias1h(String(d.bias_scale?.["1h"]??""));setDerivBias4h(String(d.bias_scale?.["4h"]??""));setDerivPreBuffer(String(d.pre_buffer??""));}catch{setDerivBias15m("");setDerivBias1h("");setDerivBias4h("");setDerivPreBuffer("");}
     try{const r=JSON.parse(c["RISK_CONFIG"]||"{}");setRiskSl15m(String(r["15m"]?.sl_mult??""));setRiskTp15m(String(r["15m"]?.tp_mult??""));setRiskSl1h(String(r["1h"]?.sl_mult??""));setRiskTp1h(String(r["1h"]?.tp_mult??""));setRiskSl4h(String(r["4h"]?.sl_mult??""));setRiskTp4h(String(r["4h"]?.tp_mult??""));}catch{setRiskSl15m("");setRiskTp15m("");setRiskSl1h("");setRiskTp1h("");setRiskSl4h("");setRiskTp4h("");}
     try{const p=JSON.parse(c["PENDING_CONFIG"]||"{}");setPendEnabled(p.enabled!==false);setPendAtr15m(String(p.atr_entry_multiplier?.["15m"]??""));setPendAtr1h(String(p.atr_entry_multiplier?.["1h"]??""));setPendAtr4h(String(p.atr_entry_multiplier?.["4h"]??""));setPendExp15m(String(p.expire_hours?.["15m"]??""));setPendExp1h(String(p.expire_hours?.["1h"]??""));setPendExp4h(String(p.expire_hours?.["4h"]??""));}catch{setPendEnabled(true);setPendAtr15m("");setPendAtr1h("");setPendAtr4h("");setPendExp15m("");setPendExp1h("");setPendExp4h("");}
     try{const l=JSON.parse(c["LIMIT_ORDER_CONFIG"]||"{}");setLimitEnabled(l.enabled!==false);setLimitRp15m(String(l.entry_reprice_pct?.["15m"]??""));setLimitRp1h(String(l.entry_reprice_pct?.["1h"]??""));setLimitRp4h(String(l.entry_reprice_pct?.["4h"]??""));}catch{setLimitEnabled(true);setLimitRp15m("");setLimitRp1h("");setLimitRp4h("");}
     try{const ps=JSON.parse(c["POSITION_SIZE_CONFIG"]||"{}");setPosSizeMode(ps.mode||"fixed_usdt");setPosFixedUsdt(String(ps.fixed_usdt_per_trade??"200"));setPosRiskPct(String(ps.risk_per_trade_pct??"0.01"));setPosLeverage(String(ps.default_leverage??"3"));setPosMaxUsdt(String(ps.max_position_usdt??"500"));}catch{setPosSizeMode("fixed_usdt");setPosFixedUsdt("200");setPosRiskPct("0.01");setPosLeverage("3");setPosMaxUsdt("500");}
-    setEngVer(c["ENGINE_VERSION"]||""); setTopLimit(c["TOP_LIMIT"]||""); setTimeframe(c["TIMEFRAME"]||"15m"); setScheduler(c["ENABLE_SCHEDULER"]?.toLowerCase()==="true"); setMonitor(c["ENABLE_MONITOR"]?.toLowerCase()==="true"); setMaxOpenTrades(c["MAX_OPEN_TRADES"]||"50");
+    setEngVer(c["ENGINE_VERSION"]||"");setTopLimit(c["TOP_LIMIT"]||"");setTimeframe(c["TIMEFRAME"]||"15m");setScheduler(c["ENABLE_SCHEDULER"]?.toLowerCase()==="true");setMonitor(c["ENABLE_MONITOR"]?.toLowerCase()==="true");setMaxOpenTrades(c["MAX_OPEN_TRADES"]||"50");
     try{const pl=JSON.parse(c["PROFIT_LOCK_CONFIG"]||"{}");setPlEnabled(pl.enabled===true);setPlThreshold(String(pl.threshold_pct??"20"));setPlMinTrades(String(pl.min_open_trades??"3"));setPlCooldown(String(pl.cooldown_minutes??"60"));}catch{}
     try{const pr=JSON.parse(c["PROTECTION_LEVELS_CONFIG"]||"{}");setProtEnabled(pr.enabled!==false);if(pr.timeframes)setProtLevels(pr.timeframes);}catch{}
-    // ← CHANGED: parse STRATEGY_CONFIG vào state
-    try{const sc=JSON.parse(c["STRATEGY_CONFIG"]||"{}");setStratConfig(sc);}catch{setStratConfig({});}
-    // ← CHANGED: parse VOL_ALERT_CONFIG vào state
-    try{const vc=JSON.parse(c["VOL_ALERT_CONFIG"]||"{}");setVolAlertEnabled(vc.enabled!==false);setVolCycleSeconds(String(vc.cycle_seconds||3));setVolSymbolsLimit(String(vc.symbols_limit||1200));setVolHistorySeconds(String(vc.history_seconds||600));if(vc.btc){setVolBtc1m(String(vc.btc.threshold_1m_pct||2.0));setVolBtc5m(String(vc.btc.threshold_5m_pct||3.5));setVolBtcCooldown(String(vc.btc.cooldown_minutes||20));}if(vc.major){setVolMajor1m(String(vc.major.threshold_1m_pct||5.0));setVolMajor5m(String(vc.major.threshold_5m_pct||8.0));setVolMajorCooldown(String(vc.major.cooldown_minutes||30));setVolMajorSymbols(Array.isArray(vc.major.symbols)?vc.major.symbols.join(","):vc.major.symbols||"");}if(vc.watchlist){setVolWatch1m(String(vc.watchlist.threshold_1m_pct||6.0));setVolWatch5m(String(vc.watchlist.threshold_5m_pct||10.0));setVolWatchCooldown(String(vc.watchlist.cooldown_minutes||25));setVolWatchSymbols(Array.isArray(vc.watchlist.symbols)?vc.watchlist.symbols.join(","):vc.watchlist.symbols||"");}if(vc.coin){setVolCoin1m(String(vc.coin.threshold_1m_pct||10.0));setVolCoin5m(String(vc.coin.threshold_5m_pct||15.0));setVolCoinCooldown(String(vc.coin.cooldown_minutes||40));}setVolUnusualRatio(String(vc.unusual_ratio||3.0));setVolPrioritySymbols(Array.isArray(vc.priority_symbols)?vc.priority_symbols.join(","):vc.priority_symbols||"");setVolExcludeTokens(Array.isArray(vc.exclude_tokens)?vc.exclude_tokens.join(","):vc.exclude_tokens||"");}catch{setVolAlertEnabled(true);setVolCycleSeconds("3");setVolSymbolsLimit("1200");setVolHistorySeconds("600");setVolBtc1m("2.0");setVolBtc5m("3.5");setVolBtcCooldown("20");setVolMajor1m("5.0");setVolMajor5m("8.0");setVolMajorCooldown("30");setVolMajorSymbols("ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT");setVolWatch1m("6.0");setVolWatch5m("10.0");setVolWatchCooldown("25");setVolWatchSymbols("");setVolCoin1m("10.0");setVolCoin5m("15.0");setVolCoinCooldown("40");setVolUnusualRatio("3.0");setVolPrioritySymbols("BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT");setVolExcludeTokens("UP,DOWN,BULL,BEAR,SHORT,LONG");}
-    if(c["THEME"]) setStoreTheme(c["THEME"]);
-    setConnOverride(c["CONNECTION_OVERRIDE"]?.toLowerCase()==="true");
-    setConnBnKey(c["BINANCE_API_KEY"]||""); setConnBnSecret(c["BINANCE_API_SECRET"]||""); setConnTgToken(c["TELEGRAM_BOT_TOKEN"]||""); setConnGroq(c["GROQ_API_KEY"]||""); setConnGemini(c["GEMINI_API_KEY"]||"");
-    setDashApiKey(c["DASHBOARD_API_KEY"]||"");
+    try{setStratConfig(JSON.parse(c["STRATEGY_CONFIG"]||"{}"));}catch{setStratConfig({});}
+    try{const vc=JSON.parse(c["VOL_ALERT_CONFIG"]||"{}");setVolAlertEnabled(vc.enabled!==false);setVolCycleSeconds(String(vc.cycle_seconds||3));setVolSymbolsLimit(String(vc.symbols_limit||1200));setVolHistorySeconds(String(vc.history_seconds||600));if(vc.btc){setVolBtc1m(String(vc.btc.threshold_1m_pct||2));setVolBtc5m(String(vc.btc.threshold_5m_pct||3.5));setVolBtcCooldown(String(vc.btc.cooldown_minutes||20));}if(vc.major){setVolMajor1m(String(vc.major.threshold_1m_pct||5));setVolMajor5m(String(vc.major.threshold_5m_pct||8));setVolMajorCooldown(String(vc.major.cooldown_minutes||30));setVolMajorSymbols(Array.isArray(vc.major.symbols)?vc.major.symbols.join(","):vc.major.symbols||"");}if(vc.watchlist){setVolWatch1m(String(vc.watchlist.threshold_1m_pct||6));setVolWatch5m(String(vc.watchlist.threshold_5m_pct||10));setVolWatchCooldown(String(vc.watchlist.cooldown_minutes||25));setVolWatchSymbols(Array.isArray(vc.watchlist.symbols)?vc.watchlist.symbols.join(","):vc.watchlist.symbols||"");}if(vc.coin){setVolCoin1m(String(vc.coin.threshold_1m_pct||10));setVolCoin5m(String(vc.coin.threshold_5m_pct||15));setVolCoinCooldown(String(vc.coin.cooldown_minutes||40));}setVolUnusualRatio(String(vc.unusual_ratio||3));setVolPrioritySymbols(Array.isArray(vc.priority_symbols)?vc.priority_symbols.join(","):vc.priority_symbols||"");setVolExcludeTokens(Array.isArray(vc.exclude_tokens)?vc.exclude_tokens.join(","):vc.exclude_tokens||"");}catch{}
+    if(c["THEME"])setStoreTheme(c["THEME"]);
+    setConnBnKey(c["BINANCE_API_KEY"]||"");setConnBnSecret(c["BINANCE_API_SECRET"]||"");setConnTestnetKey(c["BINANCE_TESTNET_API_KEY"]||"");setConnTestnetSecret(c["BINANCE_TESTNET_API_SECRET"]||"");setConnGroq(c["GROQ_API_KEY"]||"");setConnGemini(c["GEMINI_API_KEY"]||"");setDashApiKey(c["DASHBOARD_API_KEY"]||"");
   };
 
   const buildDerivJson=()=>JSON.stringify({bias_scale:{"15m":parseFloat(derivBias15m)||0,"1h":parseFloat(derivBias1h)||0,"4h":parseFloat(derivBias4h)||0},pre_buffer:parseFloat(derivPreBuffer)||0});
@@ -147,438 +110,103 @@ export function SettingsPage() {
   const buildPendJson=()=>JSON.stringify({enabled:pendEnabled,atr_entry_multiplier:{"15m":parseFloat(pendAtr15m)||0,"1h":parseFloat(pendAtr1h)||0,"4h":parseFloat(pendAtr4h)||0},expire_hours:{"15m":parseFloat(pendExp15m)||0,"1h":parseFloat(pendExp1h)||0,"4h":parseFloat(pendExp4h)||0}});
   const buildLimitJson=()=>JSON.stringify({enabled:limitEnabled,entry_reprice_pct:{"15m":parseFloat(limitRp15m)||0,"1h":parseFloat(limitRp1h)||0,"4h":parseFloat(limitRp4h)||0}});
   const buildPosSizeJson=()=>JSON.stringify({mode:posSizeMode,fixed_usdt_per_trade:parseFloat(posFixedUsdt)||200,risk_per_trade_pct:parseFloat(posRiskPct)||0.01,default_leverage:parseInt(posLeverage)||3,max_position_usdt:parseFloat(posMaxUsdt)||500});
-  const buildVolAlertJson=()=>JSON.stringify({enabled:volAlertEnabled,cycle_seconds:parseFloat(volCycleSeconds)||3,symbols_limit:parseInt(volSymbolsLimit)||1200,history_seconds:parseInt(volHistorySeconds)||600,btc:{threshold_1m_pct:parseFloat(volBtc1m)||2.0,threshold_5m_pct:parseFloat(volBtc5m)||3.5,cooldown_minutes:parseFloat(volBtcCooldown)||20},major:{threshold_1m_pct:parseFloat(volMajor1m)||5.0,threshold_5m_pct:parseFloat(volMajor5m)||8.0,cooldown_minutes:parseFloat(volMajorCooldown)||30,symbols:volMajorSymbols.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)},watchlist:{threshold_1m_pct:parseFloat(volWatch1m)||6.0,threshold_5m_pct:parseFloat(volWatch5m)||10.0,cooldown_minutes:parseFloat(volWatchCooldown)||25,symbols:volWatchSymbols.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)},coin:{threshold_1m_pct:parseFloat(volCoin1m)||10.0,threshold_5m_pct:parseFloat(volCoin5m)||15.0,cooldown_minutes:parseFloat(volCoinCooldown)||40},unusual_ratio:parseFloat(volUnusualRatio)||3.0,priority_symbols:volPrioritySymbols.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean),exclude_tokens:volExcludeTokens.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)});
-
-  useEffect(()=>{(async()=>{setLoading(true);try{const[cfg,otf,pf,strats,mode,feed,mlEval]=await Promise.all([loadConfig(),otfApi.get().catch(()=>({enabled:false})),prefillApi.get().catch(()=>({enabled:true})),stratsApi.list().catch(()=>null),tmApi.get().catch(()=>null),fetch("/api/price-feed/status").then(r=>r.json()).catch(()=>null),ml.evaluate(30).catch(()=>null)]);
-    setOrig(cfg);applyConfig(cfg);setOtfConfig(otf);setPfConfig(pf);
-    if(pf?.whitelist&&Array.isArray(pf.whitelist)){setWlInput(pf.whitelist.map(s=>s.replace("USDT","")).join(" "));}
-    const ALL_STRATS=["candlestick","breakout","mean_reversion","pullback","trend_following"];
-    let allS=strats?.all||ALL_STRATS;let activeS=strats?.active||[];
-    if(!activeS.length&&cfg["ACTIVE_STRATEGIES"]){activeS=cfg["ACTIVE_STRATEGIES"].split(",").map(s=>s.trim()).filter(Boolean);}
-    setStratsList(allS.map(name=>({name,active:activeS.includes(name)})));
-    setModeInfo(mode);setFeedInfo(feed);setMlInfo(mlEval);const s=await otfApi.status().catch(()=>null);setOtfStatus(s);}catch(e){setError(e.message);}finally{setLoading(false);}})();},[]);
-
-  const saveScanAndSignal=async()=>{setS2(true);setSv2(false);setError("");try{await saveConfigKeys({SCORE_THRESHOLD:scoreThreshold,BODY_RATIO_THRESHOLD:bodyRatio,VOLUME_MULTIPLIER:volMult,ATR_RATIO_MIN:atrMin,COOLDOWN_HOURS:cooldown,AI_THRESHOLD:aiThreshold,MTF_ENABLED:String(mtfEnabled),ENGINE_VERSION:engVer,TOP_LIMIT:topLimit,TIMEFRAME:timeframe,ENABLE_SCHEDULER:String(scheduler),ENABLE_MONITOR:String(monitor),DERIVATIVE_CONFIG:buildDerivJson(),RISK_CONFIG:buildRiskJson(),PENDING_CONFIG:buildPendJson()});setSv2(true);setTimeout(()=>setSv2(false),3000);toast.success("Config saved");}catch(e){setError(e.message);toast.error(e.message);}finally{setS2(false);}};
-  const updOtf=(path,value)=>{setOtfConfig(prev=>{if(!prev)return prev;const next=JSON.parse(JSON.stringify(prev));const keys=path.split(".");let obj=next;for(let i=0;i<keys.length-1;i++){if(!obj[keys[i]]||typeof obj[keys[i]]!=="object")obj[keys[i]]={};obj=obj[keys[i]];}obj[keys[keys.length-1]]=value;return next;});};
-  const togOtfArr=(path,val)=>{setOtfConfig(prev=>{if(!prev)return prev;const next=JSON.parse(JSON.stringify(prev));const keys=path.split(".");const lastKey=keys[keys.length-1];let parent=next;for(let i=0;i<keys.length-1;i++){if(!parent[keys[i]]||typeof parent[keys[i]]!=="object")parent[keys[i]]={};parent=parent[keys[i]];}if(!Array.isArray(parent[lastKey]))parent[lastKey]=[];const arr=parent[lastKey];const idx=arr.indexOf(val);if(idx>=0)arr.splice(idx,1);else arr.push(val);return next;});};
-  const saveOtf=async()=>{setSOtf(true);setSvOtf(false);try{await saveConfigKeys({OPEN_TRADE_FILTER:JSON.stringify(otfConfig)});setSvOtf(true);setTimeout(()=>setSvOtf(false),3000);toast.success("Trade Filter saved");}catch(e){toast.error(e.message);}finally{setSOtf(false);}};
-  const updPf=(path,value)=>{setPfConfig(prev=>{if(!prev)return prev;const next=JSON.parse(JSON.stringify(prev));const keys=path.split(".");let obj=next;for(let i=0;i<keys.length-1;i++){if(!obj[keys[i]]||typeof obj[keys[i]]!=="object")obj[keys[i]]={};obj=obj[keys[i]];}obj[keys[keys.length-1]]=value;return next;});};
-  const savePf=async()=>{setSPf(true);setSvPf(false);try{const wlSymbols=wlInput.trim().split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>0).map(s=>s.endsWith("USDT")?s:s+"USDT");const configToSave={...pfConfig,whitelist:wlSymbols.length>0?wlSymbols:[]};await prefillApi.save(configToSave);setPfConfig(configToSave);setSvPf(true);setTimeout(()=>setSvPf(false),3000);toast.success("Pre-Fill Config saved");}catch(e){toast.error(e.message);}finally{setSPf(false);}};
-  const toggleStrat=(name)=>{setStratsList(prev=>prev.map(s=>s.name===name?{...s,active:!s.active}:s));};
-
-  // ← CHANGED: helper cập nhật stratConfig (strategy threshold)
-  const updStratThreshold=(stratName,value)=>{
-    setStratConfig(prev=>{
-      const next=JSON.parse(JSON.stringify(prev));
-      if(!next[stratName])next[stratName]={};
-      if(value===""){
-        delete next[stratName].threshold;  // Remove to use fallback
-      }else{
-        next[stratName].threshold=parseFloat(value)||0;
-      }
-      return next;
-    });
-  };
-
-  // ← CHANGED: helper cập nhật stratConfig (pattern threshold)
-  const updPatternThreshold=(stratName,pattern,value)=>{
-    setStratConfig(prev=>{
-      const next=JSON.parse(JSON.stringify(prev));
-      if(!next[stratName])next[stratName]={};
-      if(!next[stratName].patterns)next[stratName].patterns={};
-      if(value===""){
-        delete next[stratName].patterns[pattern];  // Remove to use fallback
-      }else{
-        next[stratName].patterns[pattern]=parseFloat(value)||0;
-      }
-      return next;
-    });
-  };
-
-  // ← CHANGED: save strategies giờ gồm cả ACTIVE_STRATEGIES + STRATEGY_CONFIG
-  const saveStrats=async()=>{setSSt(true);setSvSt(false);try{const active=stratsList.filter(s=>s.active).map(s=>s.name);if(!active.length)active.push("candlestick");await saveConfigKeys({ACTIVE_STRATEGIES:active.join(","),STRATEGY_CONFIG:JSON.stringify(stratConfig)});setSvSt(true);setTimeout(()=>setSvSt(false),3000);toast.success("Strategies saved");}catch(e){toast.error(e.message);}finally{setSSt(false);}};
-
-  // ← CHANGED: save volatility alerts config
-  const saveVolAlerts=async()=>{setSVol(true);setSvVol(false);try{await saveConfigKeys({VOL_ALERT_CONFIG:buildVolAlertJson()});setSvVol(true);setTimeout(()=>setSvVol(false),3000);toast.success("Volatility Alerts saved");}catch(e){toast.error(e.message);}finally{setSVol(false);}};
-
+  const buildVolAlertJson=()=>JSON.stringify({enabled:volAlertEnabled,cycle_seconds:parseFloat(volCycleSeconds)||3,symbols_limit:parseInt(volSymbolsLimit)||1200,history_seconds:parseInt(volHistorySeconds)||600,btc:{threshold_1m_pct:parseFloat(volBtc1m)||2,threshold_5m_pct:parseFloat(volBtc5m)||3.5,cooldown_minutes:parseFloat(volBtcCooldown)||20},major:{threshold_1m_pct:parseFloat(volMajor1m)||5,threshold_5m_pct:parseFloat(volMajor5m)||8,cooldown_minutes:parseFloat(volMajorCooldown)||30,symbols:arr(volMajorSymbols)},watchlist:{threshold_1m_pct:parseFloat(volWatch1m)||6,threshold_5m_pct:parseFloat(volWatch5m)||10,cooldown_minutes:parseFloat(volWatchCooldown)||25,symbols:arr(volWatchSymbols)},coin:{threshold_1m_pct:parseFloat(volCoin1m)||10,threshold_5m_pct:parseFloat(volCoin5m)||15,cooldown_minutes:parseFloat(volCoinCooldown)||40},unusual_ratio:parseFloat(volUnusualRatio)||3,priority_symbols:arr(volPrioritySymbols),exclude_tokens:arr(volExcludeTokens)});
   const buildProfitLockJson=()=>JSON.stringify({enabled:plEnabled,threshold_pct:parseFloat(plThreshold)||20,min_open_trades:parseInt(plMinTrades)||3,cooldown_minutes:parseInt(plCooldown)||60});
   const buildProtLevelsJson=()=>JSON.stringify({enabled:protEnabled,timeframes:protLevels});
+
+  useEffect(()=>{(async()=>{setLoading(true);try{const[cfg,otf,pf,strats,mode,feed,mlEval]=await Promise.all([loadConfig(),otfApi.get().catch(()=>({enabled:false})),prefillApi.get().catch(()=>({enabled:true})),stratsApi.list().catch(()=>null),tmApi.get().catch(()=>null),fetch(`${API}/price-feed/status`,{credentials:"include"}).then(r=>r.json()).catch(()=>null),ml.evaluate(30).catch(()=>null)]);setOrig(cfg);applyConfig(cfg);setOtfConfig(otf);setPfConfig(pf);if(pf?.whitelist&&Array.isArray(pf.whitelist))setWlInput(pf.whitelist.map(s=>s.replace("USDT","")).join(" "));const ALL=["candlestick","breakout","mean_reversion","pullback","trend_following"];let allS=strats?.all||ALL,activeS=strats?.active||[];if(!activeS.length&&cfg["ACTIVE_STRATEGIES"])activeS=cfg["ACTIVE_STRATEGIES"].split(",").map(s=>s.trim()).filter(Boolean);setStratsList(allS.map(name=>({name,active:activeS.includes(name)})));setModeInfo(mode);setFeedInfo(feed);setMlInfo(mlEval);setOtfStatus(await otfApi.status().catch(()=>null));}catch(e){setError(e.message);}finally{setLoading(false);}})();},[]);
+
+  const saveScanAndSignal=async()=>{setS2(true);setSv2(false);setError("");try{await saveConfigKeys({SCORE_THRESHOLD:scoreThreshold,BODY_RATIO_THRESHOLD:bodyRatio,VOLUME_MULTIPLIER:volMult,ATR_RATIO_MIN:atrMin,COOLDOWN_HOURS:cooldown,AI_THRESHOLD:aiThreshold,MTF_ENABLED:String(mtfEnabled),ENGINE_VERSION:engVer,TOP_LIMIT:topLimit,TIMEFRAME:timeframe,ENABLE_SCHEDULER:String(scheduler),ENABLE_MONITOR:String(monitor),DERIVATIVE_CONFIG:buildDerivJson(),RISK_CONFIG:buildRiskJson(),PENDING_CONFIG:buildPendJson()});setSv2(true);setTimeout(()=>setSv2(false),3000);toast.success("Config saved");}catch(e){setError(e.message);toast.error(e.message);}finally{setS2(false);}};
+  const updDeep=(setter,path,value)=>setter(prev=>{if(!prev)return prev;const next=JSON.parse(JSON.stringify(prev)),ks=path.split(".");let o=next;for(let i=0;i<ks.length-1;i++){if(!o[ks[i]]||typeof o[ks[i]]!=="object")o[ks[i]]={};o=o[ks[i]];}o[ks.at(-1)]=value;return next;});
+  const updOtf=(p,v)=>updDeep(setOtfConfig,p,v),updPf=(p,v)=>updDeep(setPfConfig,p,v);
+  const togOtfArr=(path,val)=>setOtfConfig(prev=>{if(!prev)return prev;const next=JSON.parse(JSON.stringify(prev)),ks=path.split("."),last=ks.at(-1);let p=next;for(let i=0;i<ks.length-1;i++){if(!p[ks[i]]||typeof p[ks[i]]!=="object")p[ks[i]]={};p=p[ks[i]];}if(!Array.isArray(p[last]))p[last]=[];const a=p[last],idx=a.indexOf(val);idx>=0?a.splice(idx,1):a.push(val);return next;});
+  const saveOtf=async()=>{setSOtf(true);setSvOtf(false);try{await saveConfigKeys({OPEN_TRADE_FILTER:JSON.stringify(otfConfig)});setSvOtf(true);setTimeout(()=>setSvOtf(false),3000);toast.success("Trade Filter saved");}catch(e){toast.error(e.message);}finally{setSOtf(false);}};
+  const savePf=async()=>{setSPf(true);setSvPf(false);try{const wl=wlInput.trim().split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(Boolean).map(s=>s.endsWith("USDT")?s:s+"USDT"),cfg={...pfConfig,whitelist:wl.length?wl:[]};await prefillApi.save(cfg);setPfConfig(cfg);setSvPf(true);setTimeout(()=>setSvPf(false),3000);toast.success("Pre-Fill Config saved");}catch(e){toast.error(e.message);}finally{setSPf(false);}};
+  const toggleStrat=name=>setStratsList(p=>p.map(s=>s.name===name?{...s,active:!s.active}:s));
+  const updStratThreshold=(name,value)=>setStratConfig(prev=>{const n=JSON.parse(JSON.stringify(prev));if(!n[name])n[name]={};value===""?delete n[name].threshold:n[name].threshold=parseFloat(value)||0;return n;});
+  const updPatternThreshold=(name,pat,value)=>setStratConfig(prev=>{const n=JSON.parse(JSON.stringify(prev));if(!n[name])n[name]={};if(!n[name].patterns)n[name].patterns={};value===""?delete n[name].patterns[pat]:n[name].patterns[pat]=parseFloat(value)||0;return n;});
+  const saveStrats=async()=>{setSSt(true);setSvSt(false);try{const active=stratsList.filter(s=>s.active).map(s=>s.name);if(!active.length)active.push("candlestick");await saveConfigKeys({ACTIVE_STRATEGIES:active.join(","),STRATEGY_CONFIG:JSON.stringify(stratConfig)});setSvSt(true);setTimeout(()=>setSvSt(false),3000);toast.success("Strategies saved");}catch(e){toast.error(e.message);}finally{setSSt(false);}};
+  const saveVolAlerts=async()=>{setSVol(true);setSvVol(false);try{await saveConfigKeys({VOL_ALERT_CONFIG:buildVolAlertJson()});setSvVol(true);setTimeout(()=>setSvVol(false),3000);toast.success("Volatility Alerts saved");}catch(e){toast.error(e.message);}finally{setSVol(false);}};
   const saveLiveTrading=async()=>{setSLt(true);setSvLt(false);try{await saveConfigKeys({LIMIT_ORDER_CONFIG:buildLimitJson(),POSITION_SIZE_CONFIG:buildPosSizeJson(),MAX_OPEN_TRADES:maxOpenTrades,PROFIT_LOCK_CONFIG:buildProfitLockJson(),PROTECTION_LEVELS_CONFIG:buildProtLevelsJson()});setSvLt(true);setTimeout(()=>setSvLt(false),3000);toast.success("Live Trading config saved");}catch(e){toast.error(e.message);}finally{setSLt(false);}};
-  const switchMode=async(mode)=>{if(mode==="LIVE"&&!confirm("⚠️ LIVE mode uses REAL MONEY. Confirm?"))return;try{const r=await tmApi.set(mode);setModeInfo(r);const{setTradingMode}=useAppStore.getState();setTradingMode(r);toast.success(`Mode → ${mode}`);}catch(e){toast.error(e.message);}};
-  const retrain=async()=>{setRetraining(true);setRetainResult(null);try{const r=await ml.retrain(false);setRetainResult(r);}catch(e){toast.error(e.message);}finally{setRetraining(false);}};
-  const saveConn=async()=>{setSConn(true);setSvConn(false);try{const u={CONNECTION_OVERRIDE:String(connOverride)};if(connBnKey)u["BINANCE_API_KEY"]=connBnKey;if(connBnSecret)u["BINANCE_API_SECRET"]=connBnSecret;if(connTgToken)u["TELEGRAM_BOT_TOKEN"]=connTgToken;if(connGroq)u["GROQ_API_KEY"]=connGroq;if(connGemini)u["GEMINI_API_KEY"]=connGemini;await saveConfigKeys(u);setSvConn(true);setTimeout(()=>setSvConn(false),3000);toast.success("Connection saved");}catch(e){toast.error(e.message);}finally{setSConn(false);}};
+  const switchMode=async(mode)=>{if(mode==="LIVE"&&!confirm("⚠️ LIVE mode uses REAL MONEY. Confirm?"))return;try{const r=await tmApi.set(mode);setModeInfo(r);useAppStore.getState().setTradingMode(r);toast.success(`Mode → ${mode}`);}catch(e){toast.error(e.message);}};
+  const retrain=async()=>{setRetraining(true);setRetainResult(null);try{setRetainResult(await ml.retrain(false));}catch(e){toast.error(e.message);}finally{setRetraining(false);}};
+  const saveConn=async()=>{setSConn(true);setSvConn(false);try{const u={};u.BINANCE_API_KEY=connBnKey;u.BINANCE_API_SECRET=connBnSecret;u.BINANCE_TESTNET_API_KEY=connTestnetKey;u.BINANCE_TESTNET_API_SECRET=connTestnetSecret;u.GROQ_API_KEY=connGroq;u.GEMINI_API_KEY=connGemini;await saveConfigKeys(u);setSvConn(true);setTimeout(()=>setSvConn(false),3000);toast.success("Connection saved");}catch(e){toast.error(e.message);}finally{setSConn(false);}};
   const saveApiKey=async()=>{setSKey(true);setSvKey(false);try{await saveConfigKeys({DASHBOARD_API_KEY:dashApiKey});setSvKey(true);setTimeout(()=>setSvKey(false),3000);toast.success("API Key saved");}catch(e){toast.error(e.message);}finally{setSKey(false);}};
-  const saveTheme=async(t)=>{setStoreTheme(t);try{await saveConfigKeys({THEME:t});toast.success(`Theme → ${t}`);}catch(e){toast.error(e.message);}};
-  const testBnConn=async(target)=>{setBnConnecting(true);setBnAccount(null);try{const res=await fetch(`/api/binance/account?target=${target}`);const data=await res.json();setBnAccount(data);if(data.connected)toast.success(`✅ ${target}: $${data.balance}`);else toast.error(data.message);}catch(e){toast.error(e.message);}finally{setBnConnecting(false);}};
+  const saveTheme=async t=>{setStoreTheme(t);try{await saveConfigKeys({THEME:t});toast.success(`Theme → ${t}`);}catch(e){toast.error(e.message);}};
+  const testBnConn=async target=>{setBnConnecting(true);setBnAccount(null);try{const data=await fetch(`${API}/binance/account?target=${target}`,{credentials:"include"}).then(r=>r.json());setBnAccount(data);data.connected?toast.success(`✅ ${target}: $${data.balance}`):toast.error(data.message);}catch(e){toast.error(e.message);}finally{setBnConnecting(false);}};
+  const handleLogout=async()=>{try{await auth.logout();clearCurrentUser();navigate("/login");}catch{toast.error("Logout failed");}};
 
-  if(loading)return(<div className="flex items-center justify-center h-96"><div className="text-center"><Loader2 className="w-8 h-8 animate-spin text-indigo-500 mx-auto mb-4"/><p className="text-slate-400">Loading...</p></div></div>);
+  if(loading)return <div className="flex items-center justify-center h-96"><div className="text-center"><Loader2 className="w-8 h-8 animate-spin text-indigo-500 mx-auto mb-4"/><p className="text-slate-400">Loading...</p></div></div>;
 
-  const otf=otfConfig||{};const pf=pfConfig||{};
+  const otf=otfConfig||{},pf=pfConfig||{};
+  const inputCls="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500";
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between"><div><h2 className="text-2xl font-bold text-white flex items-center gap-3"><SettingsIcon className="w-7 h-7 text-indigo-400"/> Settings</h2><p className="text-slate-400 mt-1">Runtime configuration from database (app_config)</p></div></div>
-      {error&&(<div className="flex items-center gap-2 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm"><AlertCircle className="w-5 h-5 flex-shrink-0"/>{error}</div>)}
-      <div className="flex gap-1.5 bg-slate-800/50 p-1.5 rounded-xl overflow-x-auto">{TABS.map(t=>(<button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap rounded-lg transition-all ${tab===t.id?"bg-indigo-600 text-white shadow-lg shadow-indigo-500/20":"text-slate-400 hover:text-white hover:bg-slate-700/50"}`}><t.icon className="w-4 h-4"/>{t.label}</button>))}</div>
-
-      {tab==="scan"&&(<Card padding="lg"><CardHeader title="Scan & Signal Config" subtitle="Scanner + Signal detection parameters" action={<div className="flex items-center gap-2"><Button variant="secondary" size="sm" loading={scanning} onClick={async()=>{setScanning(true);try{await fetch("/scan",{method:"POST"});toast.success("Scan triggered");}catch(e){toast.error(`Scan failed: ${e.message}`);}finally{setScanning(false);}}}>{scanning?"Scanning...":"🔍 Scan Now"}</Button><Radar className="w-5 h-5 text-cyan-400"/></div>}/>
-        {/* KHU VỰC 1: Signal Detection */}
-        <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 mt-2">Signal Detection</h4>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"><NumField label="SCORE_THRESHOLD" value={scoreThreshold} onChange={setScoreThreshold} hint="Min score" step="0.1"/><NumField label="BODY_RATIO_THRESHOLD" value={bodyRatio} onChange={setBodyRatio} hint="Candle body ratio" step="0.01"/><NumField label="VOLUME_MULTIPLIER" value={volMult} onChange={setVolMult} hint="Volume filter" step="0.1"/><NumField label="ATR_RATIO_MIN" value={atrMin} onChange={setAtrMin} hint="Min ATR ratio" step="0.0001"/><NumField label="COOLDOWN_HOURS" value={cooldown} onChange={setCooldown} hint="Hours between signals" step="1"/><NumField label="AI_THRESHOLD" value={aiThreshold} onChange={setAiThreshold} hint="ML probability" step="0.05"/><BoolField label="MTF_ENABLED" value={mtfEnabled} onChange={setMtfEnabled} hint="Multi-timeframe"/></div>
-        {/* KHU VỰC 2: Scanner Engine */}
-        <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 mt-8">Scanner Engine</h4>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"><NumField label="ENGINE_VERSION" value={engVer} onChange={setEngVer} hint="Engine version" step="0.01"/><NumField label="TOP_LIMIT" value={topLimit} onChange={setTopLimit} hint="Max symbols to scan" step="1"/><Field label="TIMEFRAME" hint="Scan timeframe"><Select value={timeframe} onChange={setTimeframe} options={[{value:"15m",label:"15m"},{value:"1h",label:"1h"},{value:"4h",label:"4h"}]}/></Field><BoolField label="ENABLE_SCHEDULER" value={scheduler} onChange={setScheduler} hint="Auto scan"/><BoolField label="ENABLE_MONITOR" value={monitor} onChange={setMonitor} hint="Monitor trades"/></div>
-        {/* JSON Configs */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">DERIVATIVE_CONFIG</h4><div className="space-y-3"><NumField label="bias_scale · 15m" value={derivBias15m} onChange={setDerivBias15m} step="0.1"/><NumField label="bias_scale · 1h" value={derivBias1h} onChange={setDerivBias1h} step="0.1"/><NumField label="bias_scale · 4h" value={derivBias4h} onChange={setDerivBias4h} step="0.1"/><NumField label="pre_buffer" value={derivPreBuffer} onChange={setDerivPreBuffer} step="0.1"/></div></div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">RISK_CONFIG</h4><div className="space-y-3"><div className="grid grid-cols-2 gap-3"><NumField label="15m · SL %" value={riskSl15m} onChange={setRiskSl15m} step="0.001"/><NumField label="15m · TP %" value={riskTp15m} onChange={setRiskTp15m} step="0.001"/></div><div className="grid grid-cols-2 gap-3"><NumField label="1h · SL %" value={riskSl1h} onChange={setRiskSl1h} step="0.001"/><NumField label="1h · TP %" value={riskTp1h} onChange={setRiskTp1h} step="0.001"/></div><div className="grid grid-cols-2 gap-3"><NumField label="4h · SL %" value={riskSl4h} onChange={setRiskSl4h} step="0.001"/><NumField label="4h · TP %" value={riskTp4h} onChange={setRiskTp4h} step="0.001"/></div></div></div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">PENDING_CONFIG</h4><div className="space-y-3"><BoolField label="Pending Enabled" value={pendEnabled} onChange={setPendEnabled}/><div className="grid grid-cols-2 gap-3"><NumField label="ATR mult · 15m" value={pendAtr15m} onChange={setPendAtr15m} step="0.1"/><NumField label="Expire hrs · 15m" value={pendExp15m} onChange={setPendExp15m} step="1"/></div><div className="grid grid-cols-2 gap-3"><NumField label="ATR mult · 1h" value={pendAtr1h} onChange={setPendAtr1h} step="0.1"/><NumField label="Expire hrs · 1h" value={pendExp1h} onChange={setPendExp1h} step="1"/></div><div className="grid grid-cols-2 gap-3"><NumField label="ATR mult · 4h" value={pendAtr4h} onChange={setPendAtr4h} step="0.1"/><NumField label="Expire hrs · 4h" value={pendExp4h} onChange={setPendExp4h} step="1"/></div></div></div>
-        </div>
-        <SaveRow saving={s2} saved={sv2} onSave={saveScanAndSignal} onCancel={()=>applyConfig(orig)}/></Card>)}
-
-      {tab==="filter"&&otf&&(<div className="space-y-4"><Card><div className="flex items-center justify-between mb-4"><div className="min-w-0"><h3 className="text-lg font-semibold text-white">Open Trade Filter</h3><p className="text-sm text-slate-400">Kiểm soát điều kiện trước khi mở lệnh</p></div><div className="flex items-center gap-4 flex-shrink-0 ml-4"><Toggle checked={!!otf.enabled} onChange={v=>updOtf("enabled",v)} /><span className={`text-sm font-medium whitespace-nowrap ${otf.enabled?"text-green-400":"text-slate-500"}`}>{otf.enabled?"ACTIVE":"OFF"}</span><Button variant="primary" size="sm" loading={sOtf} onClick={saveOtf}>{svOtf?"✅ Saved":"Save"}</Button></div></div>
-        {otfStatus&&(<div className="grid grid-cols-4 gap-3 mb-4">{[{label:"Open Trades",value:otfStatus.open_trades,max:otf.position?.max_concurrent_trades},{label:"Pending",value:otfStatus.pending_trades},{label:"Today PnL",value:`${(otfStatus.today?.pnl_pct||0)>=0?"+":""}${(otfStatus.today?.pnl_pct||0).toFixed(2)}%`},{label:"Loss Streak",value:otfStatus.current_loss_streak}].map((c,i)=>(<div key={i} className="p-3 bg-slate-900/50 rounded-lg border border-slate-700"><div className="text-xs text-slate-400">{c.label}</div><div className="text-xl font-bold text-white mt-1">{c.value}{c.max!==undefined&&<span className="text-sm text-slate-500 font-normal ml-1">/ {c.max}</span>}</div></div>))}</div>)}
-        <div className="space-y-6">
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">🎯 A. Identity</h4><div className="space-y-3"><MultiRow label="Direction" allItems={["LONG","SHORT"]} selected={otf.identity?.directions} onToggle={v=>togOtfArr("identity.directions",v)} onSetAll={v=>updOtf("identity.directions",v)}/><MultiRow label="Strategies" allItems={["candlestick","breakout","mean_reversion","pullback","trend_following"]} selected={otf.identity?.strategies} onToggle={v=>togOtfArr("identity.strategies",v)} onSetAll={v=>updOtf("identity.strategies",v)}/><MultiRow label="Patterns" allItems={["engulfing","hammer","shooting_star","doji","morning_star","evening_star","harami","marubozu"]} selected={otf.identity?.patterns} onToggle={v=>togOtfArr("identity.patterns",v)} onSetAll={v=>updOtf("identity.patterns",v)}/><MultiRow label="Timeframes" allItems={["15m","1h","4h"]} selected={otf.identity?.timeframes} onToggle={v=>togOtfArr("identity.timeframes",v)} onSetAll={v=>updOtf("identity.timeframes",v)}/><MultiRow label="Regimes" allItems={["BULL","BEAR","SIDEWAYS"]} selected={otf.market_condition?.allowed_regimes} onToggle={v=>togOtfArr("market_condition.allowed_regimes",v)} onSetAll={v=>updOtf("market_condition.allowed_regimes",v)}/></div></div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">⭐ C. Score Requirements</h4><div className="space-y-3">{[{key:"score.min_overall",label:"Min Score",step:0.5,min:0,max:10},{key:"score.min_ml_prob",label:"Min ML Prob",step:0.05,min:0,max:1},{key:"score.min_trend_score",label:"Min Trend",step:0.1,min:0,max:3},{key:"score.min_mtf_score",label:"Min MTF",step:0.05,min:0,max:1}].map(f=>{const keys=f.key.split(".");const val=otf?.[keys[0]]?.[keys[1]]??0;return(<div key={f.key}><label className="block text-xs text-slate-400 mb-1">{f.label}</label><input type="number" step={f.step} min={f.min} max={f.max} value={val} onChange={e=>updOtf(f.key,parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>);})}</div></div>
-            <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">📐 D. Position Management</h4><div className="space-y-3">{[{key:"position.max_concurrent_trades",label:"Max Concurrent",step:1,min:1,max:100},{key:"position.max_per_symbol",label:"Max / Symbol",step:1,min:1,max:10},{key:"position.max_daily_trades",label:"Max Daily Trades",step:1,min:0,max:500},{key:"position.max_daily_loss_pct",label:"Max Daily Loss %",step:0.5,min:0,max:50},{key:"position.pause_after_loss_streak",label:"Pause After Streak",step:1,min:0,max:20}].map(f=>{const keys=f.key.split(".");const val=otf?.[keys[0]]?.[keys[1]]??0;return(<div key={f.key}><label className="block text-xs text-slate-400 mb-1">{f.label}</label><input type="number" step={f.step} min={f.min} max={f.max} value={val} onChange={e=>updOtf(f.key,parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>);})}</div></div>
-          </div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">🕐 E. Time Restrictions (UTC+7)</h4><label className="flex items-center gap-2 cursor-pointer mb-3"><input type="checkbox" checked={otf.time?.enabled||false} onChange={e=>updOtf("time.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm text-slate-300">Enable time restriction</span></label>{otf.time?.enabled&&(<div className="flex items-center gap-3"><input type="time" value={otf.time?.allowed_hours?.start||"00:00"} onChange={e=>updOtf("time.allowed_hours.start",e.target.value)} className="px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm text-white"/><span className="text-slate-500">→</span><input type="time" value={otf.time?.allowed_hours?.end||"23:59"} onChange={e=>updOtf("time.allowed_hours.end",e.target.value)} className="px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm text-white"/></div>)}</div>
-        </div></Card></div>)}
-
-      {tab==="prefill"&&pf&&(<div className="space-y-4"><Card>
-        <div className="flex items-center justify-between mb-6"><div className="min-w-0"><h3 className="text-lg font-semibold text-white">Pre-Fill Validation</h3><p className="text-sm text-slate-400">Kiểm tra thị trường TRƯỚC khi fill Pending → Signal</p></div><div className="flex items-center gap-4 flex-shrink-0 ml-4"><Toggle checked={!!pf.enabled} onChange={v=>updPf("enabled",v)} /><span className={`text-sm font-medium whitespace-nowrap ${pf.enabled?"text-green-400":"text-slate-500"}`}>{pf.enabled?"ACTIVE":"OFF"}</span><Button variant="primary" size="sm" loading={sPf} onClick={savePf}>{svPf?"✅ Saved":"Save"}</Button></div></div>
-        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><h4 className="text-sm font-semibold text-slate-300 mb-2">📋 Symbol Whitelist</h4><p className="text-xs text-slate-500 mb-3">Chỉ coin trong danh sách mới pass Prefill. Để trống = tất cả pass.</p><div className="flex gap-2 mb-3"><input type="text" value={wlInput} onChange={e=>setWlInput(e.target.value)} placeholder="BTC ETH SOL BNB ADA..." className="flex-1 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div><div className="flex gap-2 flex-wrap">{[{label:"📊 Top 50 MC",limit:50},{label:"📊 Top 100 MC",limit:100}].map(btn=>(<button key={btn.limit} className="px-3 py-1.5 bg-blue-600/20 border border-blue-600/50 rounded text-xs text-blue-300 hover:bg-blue-600/30 disabled:opacity-50" disabled={wlLoading} onClick={async()=>{setWlLoading(true);try{const res=await fetch(`/api/coingecko/top-mc?limit=${btn.limit}`);const data=await res.json();if(data.raw_symbols?.length){setWlInput(data.raw_symbols.map(s=>s.replace("USDT","")).join(" "));toast.success(`Loaded ${data.count} symbols`);}else toast.error(data.error||"No data");}catch{toast.error("Failed to load");}finally{setWlLoading(false);}}}>{wlLoading?"...":btn.label}</button>))}<button className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-xs text-slate-400 hover:bg-slate-600" onClick={()=>setWlInput("")}>✕ Clear</button></div>{wlInput.trim()?<div className="mt-3 text-xs text-slate-500">✅ {wlInput.trim().split(/[\s,]+/).filter(Boolean).length} symbols in whitelist</div>:<div className="mt-3 text-xs text-slate-500">ℹ️ Whitelist trống — tất cả symbols đều pass</div>}</div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><div className="flex items-center gap-3 mb-4"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={pf.price_context?.enabled??true} onChange={e=>updPf("price_context.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">1. Price Context</span></label></div><div className="space-y-3">{[{l:"Max adverse 15m %",p:"price_context.max_adverse_move_pct.15m",s:0.1},{l:"Max adverse 1h %",p:"price_context.max_adverse_move_pct.1h",s:0.1},{l:"Max adverse 4h %",p:"price_context.max_adverse_move_pct.4h",s:0.1}].map(f=>{const ks=f.p.split(".");let v=pf;for(const k of ks)v=v?.[k];return(<div key={f.p}><label className="block text-xs text-slate-400 mb-1">{f.l}</label><input type="number" step={f.s} value={v??0} onChange={e=>updPf(f.p,parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>);})}</div></div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><div className="flex items-center gap-3 mb-4"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={pf.candle_invalidation?.enabled??true} onChange={e=>updPf("candle_invalidation.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">2. Candle Invalidation</span></label></div><div><label className="block text-xs text-slate-400 mb-1">Adverse body ATR mult</label><input type="number" step={0.1} value={pf.candle_invalidation?.adverse_body_atr_mult??0} onChange={e=>updPf("candle_invalidation.adverse_body_atr_mult",parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div></div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><div className="flex items-center gap-3 mb-4"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={pf.momentum_check?.enabled??true} onChange={e=>updPf("momentum_check.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">3. Momentum Check</span></label></div><div className="space-y-3">{[{l:"Reject LONG if RSI above",p:"momentum_check.rsi_reject_long_above",s:1},{l:"Reject SHORT if RSI below",p:"momentum_check.rsi_reject_short_below",s:1}].map(f=>{const ks=f.p.split(".");let v=pf;for(const k of ks)v=v?.[k];return(<div key={f.p}><label className="block text-xs text-slate-400 mb-1">{f.l}</label><input type="number" step={f.s} value={v??0} onChange={e=>updPf(f.p,parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>);})}</div></div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><div className="flex items-center gap-3 mb-4"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={pf.volatility_guard?.enabled??true} onChange={e=>updPf("volatility_guard.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">4. Volatility Guard</span></label></div><div><label className="block text-xs text-slate-400 mb-1">ATR spike multiplier</label><input type="number" step={0.1} value={pf.volatility_guard?.atr_spike_multiplier??0} onChange={e=>updPf("volatility_guard.atr_spike_multiplier",parseFloat(e.target.value))} className="w-full px-2 py-1.5 bg-slate-900 border border-slate-600 rounded text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div></div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 lg:col-span-2"><div className="flex items-center gap-3"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={pf.regime_check?.enabled??true} onChange={e=>updPf("regime_check.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">5. Regime Check</span></label><span className="text-xs text-slate-500">Regime flip → conflict direction → reject</span></div></div>
-        </div>
-        <div className="flex justify-end pt-4"><Button variant="primary" loading={sPf} onClick={savePf}>{svPf?"✅ Saved!":"💾 Save Prefill Config"}</Button></div>
-      </Card></div>)}
-
-      {/* ← CHANGED: Tab Strategies — thêm expand/collapse, threshold per-strategy/per-pattern */}
-      {tab==="strats"&&(()=>{
-        const STRAT_DESC={candlestick:"Mô hình nến: Engulfing, Hammer, Star...",breakout:"Phá vỡ swing high/low + volume surge",mean_reversion:"RSI extreme + BB touch → đảo chiều",pullback:"Trend mạnh → giá về EMA50",trend_following:"EMA crossover + volume confirm"};
-        const globalThreshold = parseFloat(scoreThreshold) || 5.0;
-
-        return(
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h3 className="text-lg font-semibold text-white">Strategy Management</h3>
-                <p className="text-sm text-slate-400">Bật/tắt chiến thuật & cấu hình score threshold</p>
-              </div>
-              <Button variant="primary" size="sm" loading={sSt} onClick={saveStrats}>{svSt?"✅ Saved":"Save"}</Button>
-            </div>
-
-            {/* Global threshold hint */}
-            <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-              <span className="text-xs text-blue-300">
-                ℹ️ Global SCORE_THRESHOLD = <span className="font-mono font-bold">{globalThreshold}</span>
-                <span className="text-blue-400/60 ml-1">(fallback nếu strategy/pattern không có threshold riêng)</span>
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {stratsList.map(s => {
-                const isExpanded = expandedStrat === s.name;
-                const sc = stratConfig[s.name] || {};
-                const stratThreshold = sc.threshold;
-                const patterns = sc.patterns || {};
-                const patternKeys = Object.keys(patterns);
-                const hasPatterns = patternKeys.length > 0;
-
-                return (
-                  <div key={s.name} className="bg-slate-900/30 rounded-xl border border-slate-700 overflow-hidden">
-                    {/* Header row */}
-                    <div className="flex items-center p-4">
-                      <Toggle checked={s.active} onChange={() => toggleStrat(s.name)} />
-                      <div
-                        className="ml-4 flex-1 min-w-0 cursor-pointer select-none"
-                        onClick={() => setExpandedStrat(isExpanded ? null : s.name)}
-                      >
-                        <div className="flex items-center gap-3">
-                          {isExpanded
-                            ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                            : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
-                          }
-                          <span className="font-medium text-white capitalize">
-                            {s.name.replace(/_/g, " ")}
-                          </span>
-                          <span className={`text-xs flex-shrink-0 ${s.active ? "text-emerald-400" : "text-slate-500"}`}>
-                            {s.active ? "● Active" : "○ Inactive"}
-                          </span>
-                          {/* Badge hiển thị strategy threshold nhanh */}
-                          {stratThreshold !== undefined && (
-                            <span className={`text-xs px-2 py-0.5 rounded font-mono flex-shrink-0 ${
-                              parseFloat(stratThreshold) >= 99
-                                ? "bg-red-500/20 text-red-400 border border-red-500/30"
-                                : "bg-slate-700 text-slate-300"
-                            }`}>
-                              {parseFloat(stratThreshold) >= 99 ? "DISABLED" : `≥ ${stratThreshold}`}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-xs text-slate-500 mt-0.5 ml-7">
-                          {STRAT_DESC[s.name] || ""}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Expanded detail */}
-                    {isExpanded && (
-                      <div className="px-4 pb-4 border-t border-slate-700/50">
-                        <div className="pt-4 space-y-4">
-                          {/* Strategy-level threshold */}
-                          <div className="flex items-center gap-4">
-                            <label className="text-sm text-slate-300 w-40 flex-shrink-0">Strategy Threshold</label>
-                            <input
-                              type="number"
-                              step="0.1"
-                              min="0"
-                              max="99"
-                              value={stratThreshold ?? ""}
-                              placeholder={String(globalThreshold)}
-                              onChange={e => {
-                                const val = parseFloat(e.target.value);
-                                if (e.target.value === "" || (val >= 0 && val <= 99)) {
-                                  updStratThreshold(s.name, e.target.value);
-                                }
-                              }}
-                              className="w-32 px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                            <span className="text-xs text-slate-500">
-                              {stratThreshold === undefined || stratThreshold === ""
-                                ? `→ dùng global (${globalThreshold})`
-                                : parseFloat(stratThreshold) >= 99
-                                  ? "→ strategy bị tắt hoàn toàn"
-                                  : `→ cần score ≥ ${stratThreshold} để pass`
-                              }
-                            </span>
-                          </div>
-
-                          {/* Pattern-level thresholds */}
-                          {hasPatterns && (
-                            <div>
-                              <h5 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
-                                Pattern Thresholds
-                              </h5>
-                              <div className="space-y-2">
-                                {patternKeys.map(pat => {
-                                  const patVal = patterns[pat];
-                                  const isDisabled = parseFloat(patVal) >= 99;
-                                  const effectiveFallback = stratThreshold ?? globalThreshold;
-
-                                  return (
-                                    <div
-                                      key={pat}
-                                      className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${
-                                        isDisabled
-                                          ? "bg-red-500/5 border-red-500/20"
-                                          : "bg-slate-800/50 border-slate-700/50"
-                                      }`}
-                                    >
-                                      <span className={`text-sm w-44 flex-shrink-0 ${
-                                        isDisabled ? "text-red-400/60 line-through" : "text-slate-300"
-                                      }`}>
-                                        {pat}
-                                      </span>
-                                      <input
-                                        type="number"
-                                        step="0.1"
-                                        min="0"
-                                        max="99"
-                                        value={patVal ?? ""}
-                                        placeholder={String(effectiveFallback)}
-                                        onChange={e => {
-                                          const val = parseFloat(e.target.value);
-                                          if (e.target.value === "" || (val >= 0 && val <= 99)) {
-                                            updPatternThreshold(s.name, pat, e.target.value);
-                                          }
-                                        }}
-                                        className={`w-24 px-2 py-1 bg-slate-900 border rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
-                                          isDisabled
-                                            ? "border-red-500/30 text-red-400"
-                                            : "border-slate-600 text-white"
-                                        }`}
-                                      />
-                                      {isDisabled && (
-                                        <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 font-medium">
-                                          DISABLED
-                                        </span>
-                                      )}
-                                      {!isDisabled && patVal !== undefined && (
-                                        <span className="text-xs text-slate-500">
-                                          ≥ {patVal}
-                                        </span>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Nếu chưa có patterns, hiển thị hint */}
-                          {!hasPatterns && (
-                            <div className="text-xs text-slate-500 italic px-1">
-                              Chưa có pattern threshold riêng — tất cả dùng strategy threshold
-                              {stratThreshold ? ` (${stratThreshold})` : ` hoặc global (${globalThreshold})`}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-
-            <SaveRow saving={sSt} saved={svSt} onSave={saveStrats} onCancel={() => applyConfig(orig)} />
-          </Card>
-        );
-      })()}
-
-      {tab==="alerts"&&(<Card padding="lg"><CardHeader title="Volatility Alerts" subtitle="Cảnh báo biến động giá bất thường" action={<Bell className="w-5 h-5 text-yellow-400"/>}/>
-        <div className="space-y-6">
-          <div className="flex items-center gap-4">
-            <BoolField label="Enable Volatility Alerts" value={volAlertEnabled} onChange={setVolAlertEnabled} hint="Bật/tắt cảnh báo biến động giá"/>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <NumField label="Cycle Seconds" value={volCycleSeconds} onChange={setVolCycleSeconds} hint="Delay giữa các cycle (s)" step="1"/>
-            <NumField label="Symbols Limit" value={volSymbolsLimit} onChange={setVolSymbolsLimit} hint="Max symbols để scan" step="100"/>
-            <NumField label="History Seconds" value={volHistorySeconds} onChange={setVolHistorySeconds} hint="Lịch sử giá (s)" step="60"/>
-          </div>
-
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔶 BTC Alerts</h4>
-            <div className="grid grid-cols-3 gap-4">
-              <NumField label="1M Threshold %" value={volBtc1m} onChange={setVolBtc1m} hint="Biến động 1 phút" step="0.1"/>
-              <NumField label="5M Threshold %" value={volBtc5m} onChange={setVolBtc5m} hint="Biến động 5 phút" step="0.1"/>
-              <NumField label="Cooldown (min)" value={volBtcCooldown} onChange={setVolBtcCooldown} hint="Thời gian chờ" step="5"/>
-            </div>
-          </div>
-
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔷 Major Coins Alerts</h4>
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <NumField label="1M Threshold %" value={volMajor1m} onChange={setVolMajor1m} hint="Biến động 1 phút" step="0.1"/>
-              <NumField label="5M Threshold %" value={volMajor5m} onChange={setVolMajor5m} hint="Biến động 5 phút" step="0.1"/>
-              <NumField label="Cooldown (min)" value={volMajorCooldown} onChange={setVolMajorCooldown} hint="Thời gian chờ" step="5"/>
-            </div>
-            <TextField label="Major Symbols" value={volMajorSymbols} onChange={setVolMajorSymbols} hint="ETHUSDT,BNBUSDT,SOLUSDT..." placeholder="ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT"/>
-          </div>
-
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔷 Watchlist Alerts</h4>
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <NumField label="1M Threshold %" value={volWatch1m} onChange={setVolWatch1m} hint="Biến động 1 phút" step="0.1"/>
-              <NumField label="5M Threshold %" value={volWatch5m} onChange={setVolWatch5m} hint="Biến động 5 phút" step="0.1"/>
-              <NumField label="Cooldown (min)" value={volWatchCooldown} onChange={setVolWatchCooldown} hint="Thời gian chờ" step="5"/>
-            </div>
-            <TextField label="Watchlist Symbols" value={volWatchSymbols} onChange={setVolWatchSymbols} hint="Danh sách coin theo dõi (trống = tắt)" placeholder=""/>
-          </div>
-
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔸 Generic Coin Alerts</h4>
-            <div className="grid grid-cols-3 gap-4">
-              <NumField label="1M Threshold %" value={volCoin1m} onChange={setVolCoin1m} hint="Biến động 1 phút" step="0.1"/>
-              <NumField label="5M Threshold %" value={volCoin5m} onChange={setVolCoin5m} hint="Biến động 5 phút" step="0.1"/>
-              <NumField label="Cooldown (min)" value={volCoinCooldown} onChange={setVolCoinCooldown} hint="Thời gian chờ" step="5"/>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <NumField label="Unusual Ratio" value={volUnusualRatio} onChange={setVolUnusualRatio} hint="Tỷ lệ biến động bất thường" step="0.1"/>
-            <TextField label="Priority Symbols" value={volPrioritySymbols} onChange={setVolPrioritySymbols} hint="Coin ưu tiên scan" placeholder="BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"/>
-          </div>
-
-          <TextField label="Exclude Tokens" value={volExcludeTokens} onChange={setVolExcludeTokens} hint="Token loại bỏ (UP,DOWN,BULL,BEAR...)" placeholder="UP,DOWN,BULL,BEAR,SHORT,LONG"/>
-        </div>
-        <SaveRow saving={sVol} saved={svVol} onSave={saveVolAlerts} onCancel={()=>applyConfig(orig)}/>
-      </Card>)}
-
-      {tab==="live"&&(<Card padding="lg"><CardHeader title="Live Trading Config" subtitle="Connection, position sizing & limit order execution" action={<Activity className="w-5 h-5 text-green-400"/>}/>
-        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><div className="flex items-center justify-between mb-4"><div><h4 className="text-sm font-semibold text-slate-300">Binance Connection</h4><p className="text-xs text-slate-500 mt-0.5">Test kết nối</p></div><div className="flex gap-2"><Button variant="secondary" size="sm" loading={bnConnecting} onClick={()=>testBnConn("testnet")}>🧪 Test Testnet</Button><Button variant="primary" size="sm" loading={bnConnecting} onClick={()=>testBnConn("live")}>💰 Test Live</Button></div></div>
-          {bnAccount&&(<div className={`rounded-lg border p-4 ${bnAccount.connected?"bg-green-900/20 border-green-700/50":"bg-red-900/20 border-red-700/50"}`}>{bnAccount.connected?(<div className="space-y-3"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"/><span className="text-sm font-medium text-green-300">{bnAccount.message}</span></div><span className="text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded">{bnAccount.target}</span></div><div className="bg-slate-900/50 rounded-lg p-4 text-center"><div className="text-xs text-slate-400 mb-1">Available Balance</div><div className="text-3xl font-bold text-white">${bnAccount.balance?.toLocaleString()}</div></div></div>):(<div className="flex items-center gap-3"><div className="w-2.5 h-2.5 rounded-full bg-red-400"/><div><div className="text-sm font-medium text-red-300">Not Connected</div><div className="text-xs text-red-400/70 mt-0.5">{bnAccount.message}</div></div></div>)}</div>)}
-        </div>
-        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><h4 className="text-sm font-semibold text-slate-300 mb-4">POSITION_SIZE_CONFIG</h4>
-          <div className="flex gap-3 mb-5">{[{id:"fixed_usdt",label:"Fixed USDT",desc:"Cố định $ mỗi lệnh"},{id:"risk_based",label:"Risk Based",desc:"% vốn chịu rủi ro"}].map(m=>(<button key={m.id} onClick={()=>setPosSizeMode(m.id)} className={`flex-1 py-3 px-4 rounded-lg border text-sm font-medium transition text-left ${posSizeMode===m.id?"border-indigo-500 bg-indigo-600/20 text-indigo-300":"border-slate-600 bg-slate-800 text-slate-400 hover:border-slate-500"}`}><div className="font-semibold">{m.label}</div><div className="text-xs opacity-70 mt-0.5">{m.desc}</div></button>))}</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4"><div className={posSizeMode!=="fixed_usdt"?"opacity-30 pointer-events-none":""}><NumField label="USDT per trade" value={posFixedUsdt} onChange={setPosFixedUsdt} step="10"/></div><div className={posSizeMode!=="risk_based"?"opacity-30 pointer-events-none":""}><NumField label="Risk per trade %" value={posRiskPct} onChange={setPosRiskPct} step="0.001"/></div><NumField label="Default leverage" value={posLeverage} onChange={setPosLeverage} step="1"/><NumField label="Max position USDT" value={posMaxUsdt} onChange={setPosMaxUsdt} step="50"/></div>
-        </div>
-        {/* SAFETY + Limit Order + Profit Lock */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-            <h4 className="text-sm font-semibold text-slate-300 mb-4">SAFETY — Hard Cap & Limit Order</h4>
-            <div className="space-y-4">
-              <NumField label="MAX_OPEN_TRADES" value={maxOpenTrades} onChange={setMaxOpenTrades} hint="Hard fuse — dù OTF pass, quá số này thì không mở thêm" step="1"/>
-              <div className="pt-3 border-t border-slate-700"><BoolField label="Limit Order Enabled" value={limitEnabled} onChange={setLimitEnabled}/></div>
-              <div className="grid grid-cols-3 gap-3"><NumField label="Reprice 15m (%)" value={String((parseFloat(limitRp15m)||0)*100)} onChange={v=>setLimitRp15m(String((parseFloat(v)||0)/100))} step="0.1"/><NumField label="Reprice 1h (%)" value={String((parseFloat(limitRp1h)||0)*100)} onChange={v=>setLimitRp1h(String((parseFloat(v)||0)/100))} step="0.1"/><NumField label="Reprice 4h (%)" value={String((parseFloat(limitRp4h)||0)*100)} onChange={v=>setLimitRp4h(String((parseFloat(v)||0)/100))} step="0.1"/></div>
-            </div>
-          </div>
-          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
-            <div className="flex items-center justify-between mb-4"><h4 className="text-sm font-semibold text-slate-300">PROFIT_LOCK_CONFIG</h4><div className="flex items-center gap-2"><Toggle checked={plEnabled} onChange={setPlEnabled} /><span className={`text-xs ${plEnabled?"text-green-400":"text-slate-500"}`}>{plEnabled?"ON":"OFF"}</span></div></div>
-            <div className="space-y-3"><NumField label="Threshold PnL %" value={plThreshold} onChange={setPlThreshold} hint="Ngưỡng tổng PnL %" step="1"/><NumField label="Min Open Trades" value={plMinTrades} onChange={setPlMinTrades} step="1"/><NumField label="Cooldown (minutes)" value={plCooldown} onChange={setPlCooldown} step="5"/></div>
-          </div>
-        </div>
-        {/* PROTECTION_LEVELS_CONFIG */}
-        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6">
-          <div className="flex items-center justify-between mb-4"><h4 className="text-sm font-semibold text-slate-300">PROTECTION_LEVELS_CONFIG</h4><div className="flex items-center gap-3"><Toggle checked={protEnabled} onChange={setProtEnabled} /><span className={`text-xs ${protEnabled?"text-green-400":"text-slate-500"}`}>{protEnabled?"ON":"OFF"}</span></div></div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {["15m","1h","4h"].map(tf=>{const tfData=protLevels[tf]||{levels:[]};return(
-              <div key={tf} className="bg-slate-800/50 rounded-lg p-3"><h5 className="text-xs font-semibold text-slate-400 mb-2">{tf}</h5>
-                {(tfData.levels||[]).map((lv,i)=>(
-                  <div key={i} className="p-2 bg-slate-900/50 rounded border border-slate-700/50 mb-2 space-y-2">
-                    <div className="flex items-center justify-between"><span className="text-[10px] text-slate-500">Level {i+1}</span><button onClick={()=>{const next={...protLevels};next[tf]={levels:(tfData.levels||[]).filter((_,j)=>j!==i)};setProtLevels(next);}} className="text-[10px] text-red-400">Remove</button></div>
-                    <div className="grid grid-cols-2 gap-1">
-                      <div><label className="block text-[10px] text-slate-500">Trigger (%)</label><input type="number" step="0.1" value={((lv.trigger_pct||0)*100).toFixed(1)} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].trigger_pct=(parseFloat(e.target.value)||0)/100;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>
-                      <div><label className="block text-[10px] text-slate-500">Action</label><select value={lv.action||"move_to_entry"} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].action=e.target.value;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white"><option value="move_to_entry">BE + Buffer</option><option value="move_stop_to_profit_pct">Lock Profit %</option></select></div>
-                    </div>
-                    {lv.action==="move_to_entry"&&<div><label className="block text-[10px] text-slate-500">Buffer (%)</label><input type="number" step="0.01" value={((lv.buffer_pct||0)*100).toFixed(2)} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].buffer_pct=(parseFloat(e.target.value)||0)/100;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>}
-                    {lv.action==="move_stop_to_profit_pct"&&<div><label className="block text-[10px] text-slate-500">Target (%)</label><input type="number" step="0.01" value={((lv.target_profit_pct||0)*100).toFixed(2)} onChange={e=>{const next=JSON.parse(JSON.stringify(protLevels));next[tf].levels[i].target_profit_pct=(parseFloat(e.target.value)||0)/100;setProtLevels(next);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>}
-                  </div>
-                ))}
-                <button onClick={()=>{const next=JSON.parse(JSON.stringify(protLevels));if(!next[tf])next[tf]={levels:[]};next[tf].levels.push({trigger_pct:0.03,action:"move_to_entry",buffer_pct:0.002});setProtLevels(next);}} className="w-full py-1.5 border border-dashed border-slate-600 rounded text-[10px] text-slate-400 hover:border-slate-500">+ Add Level</button>
-              </div>
-            );})}
-          </div>
-        </div>
-        
-        <SaveRow saving={sLt} saved={svLt} onSave={saveLiveTrading} onCancel={()=>applyConfig(orig)}/></Card>)}
-
-      {tab==="system"&&(<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">🔄 Trading Mode</h3><div className="flex gap-3 mb-4">{["PAPER","TESTNET","LIVE"].map(m=>{const colors={PAPER:"bg-blue-900/30 border-blue-700 text-blue-300",TESTNET:"bg-yellow-900/30 border-yellow-700 text-yellow-300",LIVE:"bg-red-900/30 border-red-700 text-red-300"};const current=modeInfo?.mode===m;return(<button key={m} onClick={()=>switchMode(m)} className={`flex-1 py-3 rounded-lg border font-medium text-sm transition ${current?colors[m]:"bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"}`}>{m==="PAPER"?"📋 PAPER":m==="TESTNET"?"🧪 TESTNET":"💰 LIVE"}</button>);})}</div>{modeInfo&&(<div className="p-3 bg-slate-900/30 rounded-lg border border-slate-700 text-sm text-slate-300">{modeInfo.description}</div>)}</Card>
-        <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">📡 Price Feed</h3>{feedInfo?(<div className="grid grid-cols-2 md:grid-cols-4 gap-4">{[{label:"Status",value:feedInfo.healthy?"🟢 Healthy":"🔴 Unhealthy"},{label:"Mode",value:(feedInfo.mode||"").toUpperCase()},{label:"Symbols",value:feedInfo.symbols_count},{label:"Last Update",value:feedInfo.last_update_ago_s!=null?`${feedInfo.last_update_ago_s}s ago`:"—"}].map((item,i)=>(<div key={i} className="bg-slate-900/30 rounded-lg p-3 text-center"><div className="text-xs text-slate-400">{item.label}</div><div className="text-white font-medium mt-1">{item.value}</div></div>))}</div>):<div className="text-slate-400 text-sm">Loading...</div>}</Card>
-        <Card padding="lg"><div className="flex items-center justify-between mb-4"><h3 className="text-lg font-semibold text-white">🤖 ML Model</h3><Button variant="secondary" size="sm" loading={retraining} onClick={retrain}>🔁 Retrain</Button></div>{mlInfo&&!mlInfo.error?(<div className="space-y-3"><div className="grid grid-cols-3 gap-3">{[{label:"Signals (30d)",value:mlInfo.total_signals},{label:"AUC",value:mlInfo.auc?.toFixed(4)},{label:"Win Rate",value:`${(mlInfo.overall_winrate*100).toFixed(1)}%`}].map((item,i)=>(<div key={i} className="bg-slate-900/30 rounded-lg p-3 text-center"><div className="text-xs text-slate-400">{item.label}</div><div className="text-white font-medium mt-1">{item.value}</div></div>))}</div></div>):<div className="text-slate-400 text-sm">{mlInfo?.error||"Loading..."}</div>}{retainResult&&(<div className={`mt-3 p-3 rounded-lg border text-sm ${retainResult.status==="success"?"bg-green-900/30 border-green-700 text-green-300":"bg-slate-700 border-slate-600 text-slate-300"}`}>{retainResult.status==="success"&&`✅ AUC: ${retainResult.avg_auc?.toFixed(4)} | Samples: ${retainResult.train_size}`}{retainResult.status==="skipped"&&`⏭ ${retainResult.reason}`}{retainResult.status==="rejected"&&`❌ ${retainResult.reason}`}</div>)}</Card>
-        <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Palette className="w-5 h-5 text-purple-400"/> Theme</h3><div className="space-y-3">{[
-          { id: "dark", name: "Dark Mode", desc: "Default — Slate + Indigo", colors: ["#1e293b","#334155","#6366f1","#10b981","#ef4444"] },
-          { id: "trading", name: "Trading Pro", desc: "Bloomberg / TradingView style", colors: ["#0a0e17","#111827","#2196f3","#00c853","#ff1744"] },
-          { id: "light", name: "Light Gold", desc: "Nền sáng ấm — tông vàng chủ đạo", colors: ["#faf8f4","#f5f0e8","#b8860b","#16a34a","#dc2626"] },
-        ].map(t=>(<button key={t.id} onClick={()=>saveTheme(t.id)} className={`w-full flex items-center gap-4 p-4 rounded-lg border text-left transition ${storeTheme===t.id?"border-indigo-500 bg-indigo-500/10":"border-slate-700 bg-slate-900/30 hover:border-slate-600"}`}><div className="flex-shrink-0"><div className={`w-5 h-5 rounded-full border-2 ${storeTheme===t.id?"border-indigo-500 bg-indigo-500":"border-slate-600"}`}/><div className="flex gap-0.5 mt-2">{t.colors.map((c,i)=><div key={i} className="w-3 h-3 rounded-sm" style={{backgroundColor:c}}/>)}</div></div><div><div className="text-sm font-medium text-white">{t.name}</div><div className="text-xs text-slate-500">{t.desc}</div></div></button>))}</div></Card>
-        <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">⚡ Admin Actions</h3><div className="flex flex-wrap gap-3"><Button variant="secondary" onClick={async()=>{const r=await fetch("/api/admin/cancel-all-pending",{method:"POST"}).then(r=>r.json());toast.success(`Cancelled ${r.cancelled||0} pending`);}}>🚫 Cancel All Pending</Button><Button variant="secondary" onClick={async()=>{await fetch("/api/admin/refresh-views",{method:"POST"});toast.success("Views refreshed");}}>♻️ Refresh DB Views</Button><Button variant="danger" onClick={async()=>{if(!confirm("⚠️ KILL SWITCH: Close all positions and cancel all pending?"))return;const r=await fetch("/api/admin/kill-switch",{method:"POST"}).then(r=>r.json());toast.success(`Kill switch: ${r.signals_closed||0} signals closed, ${r.pending_cancelled||0} cancelled`);}}>🛑 Kill Switch</Button></div></Card>
-      </div>)}
-
-      {tab==="conn"&&(<Card padding="lg"><CardHeader title="Connection Settings" subtitle="Cấu hình kết nối — mặc định dùng .env" action={<Plug className="w-5 h-5 text-orange-400"/>}/>
-        <div className="flex items-center gap-4 p-4 mb-6 rounded-lg border border-slate-700/50 bg-slate-900/30"><Toggle checked={connOverride} onChange={setConnOverride} /><div className="min-w-0"><div className="text-sm font-medium text-white">{connOverride?"Override Active":"Using .env"}</div></div></div>
-        <div className={`grid grid-cols-1 lg:grid-cols-2 gap-6 ${!connOverride?"opacity-40 pointer-events-none":""}`}>
-          <div><label className="block text-sm font-medium text-slate-300 mb-1.5">DATABASE_URL</label><div className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-3 py-2 text-slate-500 text-sm font-mono cursor-not-allowed">●●●●●●●●●●●●</div><p className="text-xs text-amber-500/80 mt-1">⚠️ Chỉnh trong .env</p></div>
-          <TextField label="BINANCE_API_KEY" value={connBnKey} onChange={setConnBnKey} type="password"/>
-          <TextField label="BINANCE_API_SECRET" value={connBnSecret} onChange={setConnBnSecret} type="password"/>
-          <TextField label="TELEGRAM_BOT_TOKEN" value={connTgToken} onChange={setConnTgToken} type="password"/>
-          <TextField label="GROQ_API_KEY" value={connGroq} onChange={setConnGroq} type="password"/>
-          <TextField label="GEMINI_API_KEY" value={connGemini} onChange={setConnGemini} type="password"/>
-        </div>
-        {!connOverride&&(<div className="mt-4 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-xs text-blue-300">ℹ️ Bật Override để nhập giá trị thay thế .env.</div>)}
-        <SaveRow saving={sConn} saved={svConn} onSave={saveConn} onCancel={()=>applyConfig(orig)}/></Card>)}
-
-      {tab==="apikey"&&(<Card padding="lg"><CardHeader title="API Keys" subtitle="Dashboard authentication key" action={<KeyRound className="w-5 h-5 text-amber-400"/>}/>
-        <div className="max-w-lg"><TextField label="DASHBOARD_API_KEY" value={dashApiKey} onChange={setDashApiKey} placeholder="Enter API key..."/></div>
-        <SaveRow saving={sKey} saved={svKey} onSave={saveApiKey} onCancel={()=>applyConfig(orig)}/></Card>)}
+  return <div className="space-y-6">
+    <div className="flex items-center justify-between">
+      <div><h2 className="text-2xl font-bold text-white flex items-center gap-3"><SettingsIcon className="w-7 h-7 text-indigo-400"/> Settings</h2><p className="text-slate-400 mt-1">Runtime configuration from database (app_config)</p></div>
+      <div className="flex items-center gap-3">{currentUser&&<span className="text-sm text-slate-400">{currentUser.username} <span className="text-xs text-slate-600">({currentUser.role||role})</span></span>}<Button variant="ghost" size="sm" icon={<LogOut className="w-4 h-4"/>} onClick={handleLogout}>Logout</Button></div>
     </div>
-  );
+    {error&&<div className="flex items-center gap-2 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm"><AlertCircle className="w-5 h-5 flex-shrink-0"/>{error}</div>}
+    <div className="flex gap-1.5 bg-slate-800/50 p-1.5 rounded-xl overflow-x-auto">{TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap rounded-lg transition-all ${tab===t.id?"bg-indigo-600 text-white shadow-lg shadow-indigo-500/20":"text-slate-400 hover:text-white hover:bg-slate-700/50"}`}><t.icon className="w-4 h-4"/>{t.label}</button>)}</div>
+
+    {tab==="scan"&&<Card padding="lg"><CardHeader title="Scan & Signal Config" subtitle="Scanner + Signal detection parameters" action={<div className="flex items-center gap-2"><Button variant="secondary" size="sm" loading={scanning} onClick={async()=>{setScanning(true);try{await fetch("/scan",{method:"POST",credentials:"include"});toast.success("Scan triggered");}catch(e){toast.error(`Scan failed: ${e.message}`);}finally{setScanning(false);}}}>{scanning?"Scanning...":"🔍 Scan Now"}</Button><Radar className="w-5 h-5 text-cyan-400"/></div>}/>
+      <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 mt-2">Signal Detection</h4>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"><NumField label="SCORE_THRESHOLD" value={scoreThreshold} onChange={setScoreThreshold} hint="Min score" step="0.1"/><NumField label="BODY_RATIO_THRESHOLD" value={bodyRatio} onChange={setBodyRatio} hint="Candle body ratio" step="0.01"/><NumField label="VOLUME_MULTIPLIER" value={volMult} onChange={setVolMult} hint="Volume filter" step="0.1"/><NumField label="ATR_RATIO_MIN" value={atrMin} onChange={setAtrMin} hint="Min ATR ratio" step="0.0001"/><NumField label="COOLDOWN_HOURS" value={cooldown} onChange={setCooldown} hint="Hours between signals" step="1"/><NumField label="AI_THRESHOLD" value={aiThreshold} onChange={setAiThreshold} hint="ML probability" step="0.05"/><BoolField label="MTF_ENABLED" value={mtfEnabled} onChange={setMtfEnabled} hint="Multi-timeframe"/></div>
+      <h4 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3 mt-8">Scanner Engine</h4>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6"><NumField label="ENGINE_VERSION" value={engVer} onChange={setEngVer} hint="Engine version" step="0.01"/><NumField label="TOP_LIMIT" value={topLimit} onChange={setTopLimit} hint="Max symbols to scan" step="1"/><Field label="TIMEFRAME" hint="Scan timeframe"><Select value={timeframe} onChange={setTimeframe} options={[{value:"15m",label:"15m"},{value:"1h",label:"1h"},{value:"4h",label:"4h"}]}/></Field><BoolField label="ENABLE_SCHEDULER" value={scheduler} onChange={setScheduler} hint="Auto scan"/><BoolField label="ENABLE_MONITOR" value={monitor} onChange={setMonitor} hint="Monitor trades"/></div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">DERIVATIVE_CONFIG</h4><div className="space-y-3"><NumField label="bias_scale · 15m" value={derivBias15m} onChange={setDerivBias15m} step="0.1"/><NumField label="bias_scale · 1h" value={derivBias1h} onChange={setDerivBias1h} step="0.1"/><NumField label="bias_scale · 4h" value={derivBias4h} onChange={setDerivBias4h} step="0.1"/><NumField label="pre_buffer" value={derivPreBuffer} onChange={setDerivPreBuffer} step="0.1"/></div></div>
+        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">RISK_CONFIG</h4><div className="space-y-3">{[["15m",riskSl15m,setRiskSl15m,riskTp15m,setRiskTp15m],["1h",riskSl1h,setRiskSl1h,riskTp1h,setRiskTp1h],["4h",riskSl4h,setRiskSl4h,riskTp4h,setRiskTp4h]].map(([tf,sl,setSl,tp,setTp])=><div key={tf} className="grid grid-cols-2 gap-3"><NumField label={`${tf} · SL %`} value={sl} onChange={setSl} step="0.001"/><NumField label={`${tf} · TP %`} value={tp} onChange={setTp} step="0.001"/></div>)}</div></div>
+        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">PENDING_CONFIG</h4><div className="space-y-3"><BoolField label="Pending Enabled" value={pendEnabled} onChange={setPendEnabled}/>{[["15m",pendAtr15m,setPendAtr15m,pendExp15m,setPendExp15m],["1h",pendAtr1h,setPendAtr1h,pendExp1h,setPendExp1h],["4h",pendAtr4h,setPendAtr4h,pendExp4h,setPendExp4h]].map(([tf,a,setA,e,setE])=><div key={tf} className="grid grid-cols-2 gap-3"><NumField label={`ATR mult · ${tf}`} value={a} onChange={setA} step="0.1"/><NumField label={`Expire hrs · ${tf}`} value={e} onChange={setE} step="1"/></div>)}</div></div>
+      </div><SaveRow saving={s2} saved={sv2} onSave={saveScanAndSignal} onCancel={()=>applyConfig(orig)}/></Card>}
+
+    {tab==="filter"&&otf&&<Card><div className="flex items-center justify-between mb-4"><div><h3 className="text-lg font-semibold text-white">Open Trade Filter</h3><p className="text-sm text-slate-400">Kiểm soát điều kiện trước khi mở lệnh</p></div><div className="flex items-center gap-4"><Toggle checked={!!otf.enabled} onChange={v=>updOtf("enabled",v)}/><span className={`text-sm font-medium ${otf.enabled?"text-green-400":"text-slate-500"}`}>{otf.enabled?"ACTIVE":"OFF"}</span><Button variant="primary" size="sm" loading={sOtf} onClick={saveOtf}>{svOtf?"✅ Saved":"Save"}</Button></div></div>
+      {otfStatus&&<div className="grid grid-cols-4 gap-3 mb-4">{[{label:"Open Trades",value:otfStatus.open_trades,max:otf.position?.max_concurrent_trades},{label:"Pending",value:otfStatus.pending_trades},{label:"Today PnL",value:`${(otfStatus.today?.pnl_pct||0)>=0?"+":""}${(otfStatus.today?.pnl_pct||0).toFixed(2)}%`},{label:"Loss Streak",value:otfStatus.current_loss_streak}].map((c,i)=><div key={i} className="p-3 bg-slate-900/50 rounded-lg border border-slate-700"><div className="text-xs text-slate-400">{c.label}</div><div className="text-xl font-bold text-white mt-1">{c.value}{c.max!==undefined&&<span className="text-sm text-slate-500 font-normal ml-1">/ {c.max}</span>}</div></div>)}</div>}
+      <div className="space-y-6">
+        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">🎯 A. Identity</h4><div className="space-y-3"><MultiRow label="Direction" allItems={["LONG","SHORT"]} selected={otf.identity?.directions} onToggle={v=>togOtfArr("identity.directions",v)} onSetAll={v=>updOtf("identity.directions",v)}/><MultiRow label="Strategies" allItems={["candlestick","breakout","mean_reversion","pullback","trend_following"]} selected={otf.identity?.strategies} onToggle={v=>togOtfArr("identity.strategies",v)} onSetAll={v=>updOtf("identity.strategies",v)}/><MultiRow label="Patterns" allItems={["engulfing","hammer","shooting_star","doji","morning_star","evening_star","harami","marubozu"]} selected={otf.identity?.patterns} onToggle={v=>togOtfArr("identity.patterns",v)} onSetAll={v=>updOtf("identity.patterns",v)}/><MultiRow label="Timeframes" allItems={["15m","1h","4h"]} selected={otf.identity?.timeframes} onToggle={v=>togOtfArr("identity.timeframes",v)} onSetAll={v=>updOtf("identity.timeframes",v)}/><MultiRow label="Regimes" allItems={["BULL","BEAR","SIDEWAYS"]} selected={otf.market_condition?.allowed_regimes} onToggle={v=>togOtfArr("market_condition.allowed_regimes",v)} onSetAll={v=>updOtf("market_condition.allowed_regimes",v)}/></div></div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">⭐ C. Score Requirements</h4><div className="space-y-3">{[{key:"score.min_overall",label:"Min Score",step:.5},{key:"score.min_ml_prob",label:"Min ML Prob",step:.05},{key:"score.min_trend_score",label:"Min Trend",step:.1},{key:"score.min_mtf_score",label:"Min MTF",step:.05}].map(f=>{const k=f.key.split("."),v=otf?.[k[0]]?.[k[1]]??0;return <div key={f.key}><label className="block text-xs text-slate-400 mb-1">{f.label}</label><input type="number" step={f.step} value={v} onChange={e=>updOtf(f.key,parseFloat(e.target.value))} className={inputCls}/></div>;})}</div></div>
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">📐 D. Position Management</h4><div className="space-y-3">{[{key:"position.max_concurrent_trades",label:"Max Concurrent"},{key:"position.max_per_symbol",label:"Max / Symbol"},{key:"position.max_daily_trades",label:"Max Daily Trades"},{key:"position.max_daily_loss_pct",label:"Max Daily Loss %"},{key:"position.pause_after_loss_streak",label:"Pause After Streak"}].map(f=>{const k=f.key.split("."),v=otf?.[k[0]]?.[k[1]]??0;return <div key={f.key}><label className="block text-xs text-slate-400 mb-1">{f.label}</label><input type="number" value={v} onChange={e=>updOtf(f.key,parseFloat(e.target.value))} className={inputCls}/></div>;})}</div></div>
+        </div>
+        <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-3">🕐 E. Time Restrictions (UTC+7)</h4><label className="flex items-center gap-2 cursor-pointer mb-3"><input type="checkbox" checked={otf.time?.enabled||false} onChange={e=>updOtf("time.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm text-slate-300">Enable time restriction</span></label>{otf.time?.enabled&&<div className="flex items-center gap-3"><input type="time" value={otf.time?.allowed_hours?.start||"00:00"} onChange={e=>updOtf("time.allowed_hours.start",e.target.value)} className="px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm text-white"/><span className="text-slate-500">→</span><input type="time" value={otf.time?.allowed_hours?.end||"23:59"} onChange={e=>updOtf("time.allowed_hours.end",e.target.value)} className="px-2 py-1 bg-slate-900 border border-slate-600 rounded text-sm text-white"/></div>}</div>
+      </div></Card>}
+
+    {tab==="prefill"&&pf&&<Card><div className="flex items-center justify-between mb-6"><div><h3 className="text-lg font-semibold text-white">Pre-Fill Validation</h3><p className="text-sm text-slate-400">Kiểm tra thị trường TRƯỚC khi fill Pending → Signal</p></div><div className="flex items-center gap-4"><Toggle checked={!!pf.enabled} onChange={v=>updPf("enabled",v)}/><span className={`text-sm font-medium ${pf.enabled?"text-green-400":"text-slate-500"}`}>{pf.enabled?"ACTIVE":"OFF"}</span><Button variant="primary" size="sm" loading={sPf} onClick={savePf}>{svPf?"✅ Saved":"Save"}</Button></div></div>
+      <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><h4 className="text-sm font-semibold text-slate-300 mb-2">📋 Symbol Whitelist</h4><p className="text-xs text-slate-500 mb-3">Chỉ coin trong danh sách mới pass Prefill. Để trống = tất cả pass.</p><input type="text" value={wlInput} onChange={e=>setWlInput(e.target.value)} placeholder="BTC ETH SOL BNB ADA..." className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 mb-3"/><div className="flex gap-2 flex-wrap">{[{label:"📊 Top 50 MC",limit:50},{label:"📊 Top 100 MC",limit:100}].map(btn=><button key={btn.limit} className="px-3 py-1.5 bg-blue-600/20 border border-blue-600/50 rounded text-xs text-blue-300 hover:bg-blue-600/30 disabled:opacity-50" disabled={wlLoading} onClick={async()=>{setWlLoading(true);try{const d=await fetch(`${API}/coingecko/top-mc?limit=${btn.limit}`,{credentials:"include"}).then(r=>r.json());if(d.raw_symbols?.length){setWlInput(d.raw_symbols.map(s=>s.replace("USDT","")).join(" "));toast.success(`Loaded ${d.count} symbols`);}else toast.error(d.error||"No data");}catch{toast.error("Failed to load");}finally{setWlLoading(false);}}}>{wlLoading?"...":btn.label}</button>)}<button className="px-3 py-1.5 bg-slate-700 border border-slate-600 rounded text-xs text-slate-400 hover:bg-slate-600" onClick={()=>setWlInput("")}>✕ Clear</button></div><div className="mt-3 text-xs text-slate-500">{wlInput.trim()?`✅ ${wlInput.trim().split(/[\s,]+/).filter(Boolean).length} symbols in whitelist`:"ℹ️ Whitelist trống — tất cả symbols đều pass"}</div></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{[
+        ["1. Price Context","price_context.enabled",[["Max adverse 15m %","price_context.max_adverse_move_pct.15m",.1],["Max adverse 1h %","price_context.max_adverse_move_pct.1h",.1],["Max adverse 4h %","price_context.max_adverse_move_pct.4h",.1]]],
+        ["2. Candle Invalidation","candle_invalidation.enabled",[["Adverse body ATR mult","candle_invalidation.adverse_body_atr_mult",.1]]],
+        ["3. Momentum Check","momentum_check.enabled",[["Reject LONG if RSI above","momentum_check.rsi_reject_long_above",1],["Reject SHORT if RSI below","momentum_check.rsi_reject_short_below",1]]],
+        ["4. Volatility Guard","volatility_guard.enabled",[["ATR spike multiplier","volatility_guard.atr_spike_multiplier",.1]]],
+      ].map(([title,en,fields])=><div key={title} className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><label className="flex items-center gap-2 cursor-pointer mb-4"><input type="checkbox" checked={en.split(".").reduce((o,k)=>o?.[k],pf)??true} onChange={e=>updPf(en,e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">{title}</span></label><div className="space-y-3">{fields.map(([l,p,s])=>{let v=p.split(".").reduce((o,k)=>o?.[k],pf);return <div key={p}><label className="block text-xs text-slate-400 mb-1">{l}</label><input type="number" step={s} value={v??0} onChange={e=>updPf(p,parseFloat(e.target.value))} className={inputCls}/></div>;})}</div></div>)}<div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 lg:col-span-2"><label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" checked={pf.regime_check?.enabled??true} onChange={e=>updPf("regime_check.enabled",e.target.checked)} className="w-4 h-4 accent-blue-500"/><span className="text-sm font-semibold text-slate-300">5. Regime Check</span><span className="text-xs text-slate-500">Regime flip → conflict direction → reject</span></label></div></div>
+      <div className="flex justify-end pt-4"><Button variant="primary" loading={sPf} onClick={savePf}>{svPf?"✅ Saved!":"💾 Save Prefill Config"}</Button></div></Card>}
+
+    {tab==="strats"&&(()=>{const DESC={candlestick:"Mô hình nến: Engulfing, Hammer, Star...",breakout:"Phá vỡ swing high/low + volume surge",mean_reversion:"RSI extreme + BB touch → đảo chiều",pullback:"Trend mạnh → giá về EMA50",trend_following:"EMA crossover + volume confirm"},global=parseFloat(scoreThreshold)||5;return <Card><div className="flex items-center justify-between mb-4"><div><h3 className="text-lg font-semibold text-white">Strategy Management</h3><p className="text-sm text-slate-400">Bật/tắt chiến thuật & cấu hình score threshold</p></div><Button variant="primary" size="sm" loading={sSt} onClick={saveStrats}>{svSt?"✅ Saved":"Save"}</Button></div><div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg"><span className="text-xs text-blue-300">ℹ️ Global SCORE_THRESHOLD = <span className="font-mono font-bold">{global}</span><span className="text-blue-400/60 ml-1">(fallback nếu strategy/pattern không có threshold riêng)</span></span></div><div className="space-y-3">{stratsList.map(s=>{const open=expandedStrat===s.name,sc=stratConfig[s.name]||{},st=sc.threshold,patterns=sc.patterns||{},keys=Object.keys(patterns);return <div key={s.name} className="bg-slate-900/30 rounded-xl border border-slate-700 overflow-hidden"><div className="flex items-center p-4"><Toggle checked={s.active} onChange={()=>toggleStrat(s.name)}/><div className="ml-4 flex-1 cursor-pointer select-none" onClick={()=>setExpandedStrat(open?null:s.name)}><div className="flex items-center gap-3">{open?<ChevronDown className="w-4 h-4 text-slate-400"/>:<ChevronRight className="w-4 h-4 text-slate-400"/>}<span className="font-medium text-white capitalize">{s.name.replace(/_/g," ")}</span><span className={`text-xs ${s.active?"text-emerald-400":"text-slate-500"}`}>{s.active?"● Active":"○ Inactive"}</span>{st!==undefined&&<span className={`text-xs px-2 py-0.5 rounded font-mono ${parseFloat(st)>=99?"bg-red-500/20 text-red-400 border border-red-500/30":"bg-slate-700 text-slate-300"}`}>{parseFloat(st)>=99?"DISABLED":`≥ ${st}`}</span>}</div><div className="text-xs text-slate-500 mt-0.5 ml-7">{DESC[s.name]||""}</div></div></div>{open&&<div className="px-4 pb-4 border-t border-slate-700/50"><div className="pt-4 space-y-4"><div className="flex items-center gap-4"><label className="text-sm text-slate-300 w-40">Strategy Threshold</label><input type="number" step="0.1" min="0" max="99" value={st??""} placeholder={String(global)} onChange={e=>{const v=parseFloat(e.target.value);if(e.target.value===""||(v>=0&&v<=99))updStratThreshold(s.name,e.target.value);}} className="w-32 px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/><span className="text-xs text-slate-500">{st===undefined||st===""?`→ dùng global (${global})`:parseFloat(st)>=99?"→ strategy bị tắt hoàn toàn":`→ cần score ≥ ${st} để pass`}</span></div>{keys.length>0?<div><h5 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Pattern Thresholds</h5><div className="space-y-2">{keys.map(p=>{const v=patterns[p],dis=parseFloat(v)>=99,fb=st??global;return <div key={p} className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${dis?"bg-red-500/5 border-red-500/20":"bg-slate-800/50 border-slate-700/50"}`}><span className={`text-sm w-44 ${dis?"text-red-400/60 line-through":"text-slate-300"}`}>{p}</span><input type="number" step="0.1" min="0" max="99" value={v??""} placeholder={String(fb)} onChange={e=>{const n=parseFloat(e.target.value);if(e.target.value===""||(n>=0&&n<=99))updPatternThreshold(s.name,p,e.target.value);}} className={`w-24 px-2 py-1 bg-slate-900 border rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 ${dis?"border-red-500/30 text-red-400":"border-slate-600 text-white"}`}/>{dis?<span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 font-medium">DISABLED</span>:v!==undefined&&<span className="text-xs text-slate-500">≥ {v}</span>}</div>;})}</div></div>:<div className="text-xs text-slate-500 italic px-1">Chưa có pattern threshold riêng — tất cả dùng strategy threshold {st?`(${st})`:`hoặc global (${global})`}</div>}</div></div>}</div>;})}</div><SaveRow saving={sSt} saved={svSt} onSave={saveStrats} onCancel={()=>applyConfig(orig)}/></Card>;})()}
+
+    {tab==="alerts"&&<Card padding="lg"><CardHeader title="Volatility Alerts" subtitle="Cảnh báo biến động giá bất thường" action={<Bell className="w-5 h-5 text-yellow-400"/>}/><div className="space-y-6"><BoolField label="Enable Volatility Alerts" value={volAlertEnabled} onChange={setVolAlertEnabled} hint="Bật/tắt cảnh báo biến động giá"/><div className="grid grid-cols-1 md:grid-cols-3 gap-6"><NumField label="Cycle Seconds" value={volCycleSeconds} onChange={setVolCycleSeconds} hint="Delay giữa các cycle (s)" step="1"/><NumField label="Symbols Limit" value={volSymbolsLimit} onChange={setVolSymbolsLimit} hint="Max symbols để scan" step="100"/><NumField label="History Seconds" value={volHistorySeconds} onChange={setVolHistorySeconds} hint="Lịch sử giá (s)" step="60"/></div>{[
+      ["🔶 BTC Alerts",[[volBtc1m,setVolBtc1m,"1M Threshold %"],[volBtc5m,setVolBtc5m,"5M Threshold %"],[volBtcCooldown,setVolBtcCooldown,"Cooldown (min)"]],null],
+      ["🔷 Major Coins Alerts",[[volMajor1m,setVolMajor1m,"1M Threshold %"],[volMajor5m,setVolMajor5m,"5M Threshold %"],[volMajorCooldown,setVolMajorCooldown,"Cooldown (min)"]],["Major Symbols",volMajorSymbols,setVolMajorSymbols,"ETHUSDT,BNBUSDT,SOLUSDT..."]],
+      ["🔷 Watchlist Alerts",[[volWatch1m,setVolWatch1m,"1M Threshold %"],[volWatch5m,setVolWatch5m,"5M Threshold %"],[volWatchCooldown,setVolWatchCooldown,"Cooldown (min)"]],["Watchlist Symbols",volWatchSymbols,setVolWatchSymbols,"Danh sách coin theo dõi (trống = tắt)"]],
+      ["🔸 Generic Coin Alerts",[[volCoin1m,setVolCoin1m,"1M Threshold %"],[volCoin5m,setVolCoin5m,"5M Threshold %"],[volCoinCooldown,setVolCoinCooldown,"Cooldown (min)"]],null],
+    ].map(([title,nums,text])=><div key={title} className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">{title}</h4><div className="grid grid-cols-3 gap-4 mb-4">{nums.map(([v,set,l])=><NumField key={l} label={l} value={v} onChange={set} step="0.1"/>)}</div>{text&&<TextField label={text[0]} value={text[1]} onChange={text[2]} hint={text[3]}/>}</div>)}<div className="grid grid-cols-1 md:grid-cols-2 gap-6"><NumField label="Unusual Ratio" value={volUnusualRatio} onChange={setVolUnusualRatio} hint="Tỷ lệ biến động bất thường" step="0.1"/><TextField label="Priority Symbols" value={volPrioritySymbols} onChange={setVolPrioritySymbols} hint="Coin ưu tiên scan"/></div><TextField label="Exclude Tokens" value={volExcludeTokens} onChange={setVolExcludeTokens} hint="Token loại bỏ (UP,DOWN,BULL,BEAR...)"/></div><SaveRow saving={sVol} saved={svVol} onSave={saveVolAlerts} onCancel={()=>applyConfig(orig)}/></Card>}
+
+    {tab==="live"&&<Card padding="lg"><CardHeader title="Live Trading Config" subtitle="Connection, position sizing & limit order execution" action={<Activity className="w-5 h-5 text-green-400"/>}/>
+      {isAdmin&&<div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><div className="flex items-center justify-between mb-4"><div><h4 className="text-sm font-semibold text-slate-300">Binance Connection</h4><p className="text-xs text-slate-500 mt-0.5">Test kết nối</p></div><div className="flex gap-2"><Button variant="secondary" size="sm" loading={bnConnecting} onClick={()=>testBnConn("testnet")}>🧪 Test Testnet</Button><Button variant="primary" size="sm" loading={bnConnecting} onClick={()=>testBnConn("live")}>💰 Test Live</Button></div></div>{bnAccount&&<div className={`rounded-lg border p-4 ${bnAccount.connected?"bg-green-900/20 border-green-700/50":"bg-red-900/20 border-red-700/50"}`}>{bnAccount.connected?<div className="space-y-3"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"/><span className="text-sm font-medium text-green-300">{bnAccount.message}</span></div><span className="text-xs text-slate-400 bg-slate-800 px-2 py-0.5 rounded">{bnAccount.target}</span></div><div className="bg-slate-900/50 rounded-lg p-4 text-center"><div className="text-xs text-slate-400 mb-1">Available Balance</div><div className="text-3xl font-bold text-white">${bnAccount.balance?.toLocaleString()}</div></div></div>:<div className="flex items-center gap-3"><div className="w-2.5 h-2.5 rounded-full bg-red-400"/><div><div className="text-sm font-medium text-red-300">Not Connected</div><div className="text-xs text-red-400/70 mt-0.5">{bnAccount.message}</div></div></div>}</div>}</div>
+      }<div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><h4 className="text-sm font-semibold text-slate-300 mb-4">POSITION_SIZE_CONFIG</h4><div className="flex gap-3 mb-5">{[{id:"fixed_usdt",label:"Fixed USDT",desc:"Cố định $ mỗi lệnh"},{id:"risk_based",label:"Risk Based",desc:"% vốn chịu rủi ro"}].map(m=><button key={m.id} onClick={()=>setPosSizeMode(m.id)} className={`flex-1 py-3 px-4 rounded-lg border text-sm font-medium transition text-left ${posSizeMode===m.id?"border-indigo-500 bg-indigo-600/20 text-indigo-300":"border-slate-600 bg-slate-800 text-slate-400 hover:border-slate-500"}`}><div className="font-semibold">{m.label}</div><div className="text-xs opacity-70 mt-0.5">{m.desc}</div></button>)}</div><div className="grid grid-cols-2 md:grid-cols-4 gap-4"><div className={posSizeMode!=="fixed_usdt"?"opacity-30 pointer-events-none":""}><NumField label="USDT per trade" value={posFixedUsdt} onChange={setPosFixedUsdt} step="10"/></div><div className={posSizeMode!=="risk_based"?"opacity-30 pointer-events-none":""}><NumField label="Risk per trade %" value={posRiskPct} onChange={setPosRiskPct} step="0.001"/></div><NumField label="Default leverage" value={posLeverage} onChange={setPosLeverage} step="1"/><NumField label="Max position USDT" value={posMaxUsdt} onChange={setPosMaxUsdt} step="50"/></div></div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6"><div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><h4 className="text-sm font-semibold text-slate-300 mb-4">SAFETY — Hard Cap & Limit Order</h4><div className="space-y-4"><NumField label="MAX_OPEN_TRADES" value={maxOpenTrades} onChange={setMaxOpenTrades} hint="Hard fuse — dù OTF pass, quá số này thì không mở thêm" step="1"/><div className="pt-3 border-t border-slate-700"><BoolField label="Limit Order Enabled" value={limitEnabled} onChange={setLimitEnabled}/></div><div className="grid grid-cols-3 gap-3">{[["15m",limitRp15m,setLimitRp15m],["1h",limitRp1h,setLimitRp1h],["4h",limitRp4h,setLimitRp4h]].map(([tf,v,set])=><NumField key={tf} label={`Reprice ${tf} (%)`} value={String((parseFloat(v)||0)*100)} onChange={x=>set(String((parseFloat(x)||0)/100))} step="0.1"/>)}</div></div></div><div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50"><div className="flex items-center justify-between mb-4"><h4 className="text-sm font-semibold text-slate-300">PROFIT_LOCK_CONFIG</h4><div className="flex items-center gap-2"><Toggle checked={plEnabled} onChange={setPlEnabled}/><span className={`text-xs ${plEnabled?"text-green-400":"text-slate-500"}`}>{plEnabled?"ON":"OFF"}</span></div></div><div className="space-y-3"><NumField label="Threshold PnL %" value={plThreshold} onChange={setPlThreshold} hint="Ngưỡng tổng PnL %" step="1"/><NumField label="Min Open Trades" value={plMinTrades} onChange={setPlMinTrades} step="1"/><NumField label="Cooldown (minutes)" value={plCooldown} onChange={setPlCooldown} step="5"/></div></div></div>
+      <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><div className="flex items-center justify-between mb-4"><h4 className="text-sm font-semibold text-slate-300">PROTECTION_LEVELS_CONFIG</h4><div className="flex items-center gap-3"><Toggle checked={protEnabled} onChange={setProtEnabled}/><span className={`text-xs ${protEnabled?"text-green-400":"text-slate-500"}`}>{protEnabled?"ON":"OFF"}</span></div></div><div className="grid grid-cols-1 md:grid-cols-3 gap-4">{["15m","1h","4h"].map(tf=>{const d=protLevels[tf]||{levels:[]};return <div key={tf} className="bg-slate-800/50 rounded-lg p-3"><h5 className="text-xs font-semibold text-slate-400 mb-2">{tf}</h5>{(d.levels||[]).map((lv,i)=><div key={i} className="p-2 bg-slate-900/50 rounded border border-slate-700/50 mb-2 space-y-2"><div className="flex items-center justify-between"><span className="text-[10px] text-slate-500">Level {i+1}</span><button onClick={()=>{const n={...protLevels};n[tf]={levels:(d.levels||[]).filter((_,j)=>j!==i)};setProtLevels(n);}} className="text-[10px] text-red-400">Remove</button></div><div className="grid grid-cols-2 gap-1"><div><label className="block text-[10px] text-slate-500">Trigger (%)</label><input type="number" step="0.1" value={((lv.trigger_pct||0)*100).toFixed(1)} onChange={e=>{const n=JSON.parse(JSON.stringify(protLevels));n[tf].levels[i].trigger_pct=(parseFloat(e.target.value)||0)/100;setProtLevels(n);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div><div><label className="block text-[10px] text-slate-500">Action</label><select value={lv.action||"move_to_entry"} onChange={e=>{const n=JSON.parse(JSON.stringify(protLevels));n[tf].levels[i].action=e.target.value;setProtLevels(n);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white"><option value="move_to_entry">BE + Buffer</option><option value="move_stop_to_profit_pct">Lock Profit %</option></select></div></div>{lv.action==="move_to_entry"&&<div><label className="block text-[10px] text-slate-500">Buffer (%)</label><input type="number" step="0.01" value={((lv.buffer_pct||0)*100).toFixed(2)} onChange={e=>{const n=JSON.parse(JSON.stringify(protLevels));n[tf].levels[i].buffer_pct=(parseFloat(e.target.value)||0)/100;setProtLevels(n);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>}{lv.action==="move_stop_to_profit_pct"&&<div><label className="block text-[10px] text-slate-500">Target (%)</label><input type="number" step="0.01" value={((lv.target_profit_pct||0)*100).toFixed(2)} onChange={e=>{const n=JSON.parse(JSON.stringify(protLevels));n[tf].levels[i].target_profit_pct=(parseFloat(e.target.value)||0)/100;setProtLevels(n);}} className="w-full px-1.5 py-1 bg-slate-900 border border-slate-600 rounded text-xs text-white font-mono"/></div>}</div>)}<button onClick={()=>{const n=JSON.parse(JSON.stringify(protLevels));if(!n[tf])n[tf]={levels:[]};n[tf].levels.push({trigger_pct:.03,action:"move_to_entry",buffer_pct:.002});setProtLevels(n);}} className="w-full py-1.5 border border-dashed border-slate-600 rounded text-[10px] text-slate-400 hover:border-slate-500">+ Add Level</button></div>;})}</div></div><SaveRow saving={sLt} saved={svLt} onSave={saveLiveTrading} onCancel={()=>applyConfig(orig)}/></Card>}
+
+    {tab==="system"&&<div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {isBot&&<div className="lg:col-span-2"><Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">📋 Bot License</h3><LicenseStatusCard/></Card></div>}
+      <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">🔄 Trading Mode</h3><div className="flex gap-3 mb-4">{["PAPER","TESTNET","LIVE"].map(m=>{const colors={PAPER:"bg-blue-900/30 border-blue-700 text-blue-300",TESTNET:"bg-yellow-900/30 border-yellow-700 text-yellow-300",LIVE:"bg-red-900/30 border-red-700 text-red-300"},cur=modeInfo?.mode===m;return <button key={m} onClick={()=>switchMode(m)} className={`flex-1 py-3 rounded-lg border font-medium text-sm transition ${cur?colors[m]:"bg-slate-700 border-slate-600 text-slate-300 hover:bg-slate-600"}`}>{m==="PAPER"?"📋 PAPER":m==="TESTNET"?"🧪 TESTNET":"💰 LIVE"}</button>;})}</div>{modeInfo&&<div className="p-3 bg-slate-900/30 rounded-lg border border-slate-700 text-sm text-slate-300">{modeInfo.description}</div>}</Card>
+      <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">📡 Price Feed</h3>{feedInfo?<div className="grid grid-cols-2 md:grid-cols-4 gap-4">{[{label:"Status",value:feedInfo.healthy?"🟢 Healthy":"🔴 Unhealthy"},{label:"Mode",value:(feedInfo.mode||"").toUpperCase()},{label:"Symbols",value:feedInfo.symbols_count},{label:"Last Update",value:feedInfo.last_update_ago_s!=null?`${feedInfo.last_update_ago_s}s ago`:"—"}].map((x,i)=><div key={i} className="bg-slate-900/30 rounded-lg p-3 text-center"><div className="text-xs text-slate-400">{x.label}</div><div className="text-white font-medium mt-1">{x.value}</div></div>)}</div>:<div className="text-slate-400 text-sm">Loading...</div>}</Card>
+      <Card padding="lg"><div className="flex items-center justify-between mb-4"><h3 className="text-lg font-semibold text-white">🤖 ML Model</h3><Button variant="secondary" size="sm" loading={retraining} onClick={retrain}>🔁 Retrain</Button></div>{mlInfo&&!mlInfo.error?<div className="grid grid-cols-3 gap-3">{[{label:"Signals (30d)",value:mlInfo.total_signals},{label:"AUC",value:mlInfo.auc?.toFixed(4)},{label:"Win Rate",value:`${(mlInfo.overall_winrate*100).toFixed(1)}%`}].map((x,i)=><div key={i} className="bg-slate-900/30 rounded-lg p-3 text-center"><div className="text-xs text-slate-400">{x.label}</div><div className="text-white font-medium mt-1">{x.value}</div></div>)}</div>:<div className="text-slate-400 text-sm">{mlInfo?.error||"Loading..."}</div>}{retainResult&&<div className={`mt-3 p-3 rounded-lg border text-sm ${retainResult.status==="success"?"bg-green-900/30 border-green-700 text-green-300":"bg-slate-700 border-slate-600 text-slate-300"}`}>{retainResult.status==="success"&&`✅ AUC: ${retainResult.avg_auc?.toFixed(4)} | Samples: ${retainResult.train_size}`}{retainResult.status==="skipped"&&`⏭ ${retainResult.reason}`}{retainResult.status==="rejected"&&`❌ ${retainResult.reason}`}</div>}</Card>
+      <Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2"><Palette className="w-5 h-5 text-purple-400"/> Theme</h3><div className="space-y-3">{[{id:"dark",name:"Dark Mode",desc:"Default — Slate + Indigo",colors:["#1e293b","#334155","#6366f1","#10b981","#ef4444"]},{id:"trading",name:"Trading Pro",desc:"Bloomberg / TradingView style",colors:["#0a0e17","#111827","#2196f3","#00c853","#ff1744"]},{id:"light",name:"Light Gold",desc:"Nền sáng ấm — tông vàng chủ đạo",colors:["#faf8f4","#f5f0e8","#b8860b","#16a34a","#dc2626"]}].map(t=><button key={t.id} onClick={()=>saveTheme(t.id)} className={`w-full flex items-center gap-4 p-4 rounded-lg border text-left transition ${storeTheme===t.id?"border-indigo-500 bg-indigo-500/10":"border-slate-700 bg-slate-900/30 hover:border-slate-600"}`}><div><div className={`w-5 h-5 rounded-full border-2 ${storeTheme===t.id?"border-indigo-500 bg-indigo-500":"border-slate-600"}`}/><div className="flex gap-0.5 mt-2">{t.colors.map((c,i)=><div key={i} className="w-3 h-3 rounded-sm" style={{backgroundColor:c}}/>)}</div></div><div><div className="text-sm font-medium text-white">{t.name}</div><div className="text-xs text-slate-500">{t.desc}</div></div></button>)}</div></Card>
+      {isAdmin&&<Card padding="lg"><h3 className="text-lg font-semibold text-white mb-4">⚡ Admin Actions</h3><div className="flex flex-wrap gap-3"><Button variant="secondary" onClick={async()=>{const r=await fetch(`${API}/admin/cancel-all-pending`,{method:"POST",credentials:"include"}).then(r=>r.json());toast.success(`Cancelled ${r.cancelled||0} pending`);}}>🚫 Cancel All Pending</Button><Button variant="secondary" onClick={async()=>{await fetch(`${API}/admin/refresh-views`,{method:"POST",credentials:"include"});toast.success("Views refreshed");}}>♻️ Refresh DB Views</Button><Button variant="danger" onClick={async()=>{if(!confirm("⚠️ KILL SWITCH: Close all positions and cancel all pending?"))return;const r=await fetch(`${API}/admin/kill-switch`,{method:"POST",credentials:"include"}).then(r=>r.json());toast.success(`Kill switch: ${r.signals_closed||0} signals closed, ${r.pending_cancelled||0} cancelled`);}}>🛑 Kill Switch</Button></div></Card>}
+    </div>}
+
+    {tab==="conn"&&isAdmin&&<Card padding="lg"><CardHeader title="Connection Settings" subtitle="Connection keys for trading and AI" action={<Plug className="w-5 h-5 text-orange-400"/>}/><div className="grid grid-cols-1 lg:grid-cols-2 gap-6"><TextField label="BINANCE_API_KEY" value={connBnKey} onChange={setConnBnKey} type="password"/><TextField label="BINANCE_API_SECRET" value={connBnSecret} onChange={setConnBnSecret} type="password"/><TextField label="BINANCE_TESTNET_API_KEY" value={connTestnetKey} onChange={setConnTestnetKey} type="password"/><TextField label="BINANCE_TESTNET_API_SECRET" value={connTestnetSecret} onChange={setConnTestnetSecret} type="password"/><TextField label="GROQ_API_KEY" value={connGroq} onChange={setConnGroq} type="password"/><TextField label="GEMINI_API_KEY" value={connGemini} onChange={setConnGemini} type="password"/></div><div className="mt-4 p-3 rounded-lg bg-slate-900/40 border border-slate-700/50 text-xs text-slate-400">DATABASE_URL and Telegram are configured in ENV for stable startup. Keys saved here are used first when present; blank values fall back to ENV.</div><SaveRow saving={sConn} saved={svConn} onSave={saveConn} onCancel={()=>applyConfig(orig)}/></Card>}
+
+    {tab==="apikey"&&isAdmin&&<Card padding="lg"><CardHeader title="API Keys" subtitle="Dashboard authentication key" action={<KeyRound className="w-5 h-5 text-amber-400"/>}/><div className="max-w-lg"><TextField label="DASHBOARD_API_KEY" value={dashApiKey} onChange={setDashApiKey} placeholder="Enter API key..."/></div><SaveRow saving={sKey} saved={svKey} onSave={saveApiKey} onCancel={()=>applyConfig(orig)}/></Card>}
+  </div>;
 }

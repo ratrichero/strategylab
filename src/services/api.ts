@@ -8,7 +8,15 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...(options.headers as Record<string, string> || {}),
   };
   if (KEY) headers["X-API-Key"] = KEY;
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  // ← CHANGED: thêm credentials: "include" để gửi cookie auth
+  const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
+  // ← CHANGED: auto redirect về login nếu 401
+  if (res.status === 401) {
+    if (!window.location.hash.includes("/login")) {
+      window.location.hash = "#/login";
+    }
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
     throw new Error(`${res.status}: ${text}`);
@@ -24,6 +32,98 @@ function qs(p: Record<string, any>): string {
   const s = u.toString();
   return s ? `?${s}` : "";
 }
+
+// ============================================================
+// AUTH API (public — không cần auth cookie)
+// ============================================================
+
+export const auth = {
+  setupStatus: async () => {
+    const r = await fetch(`${BASE}/auth/setup-status`, { credentials: "include" });
+    return r.json();
+  },
+  setup: async (username: string, password: string, confirmPassword: string) => {
+    const r = await fetch(`${BASE}/auth/setup`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password, confirm_password: confirmPassword }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || "Setup failed");
+    }
+    return r.json();
+  },
+  login: async (username: string, password: string) => {
+    const r = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || "Login failed");
+    }
+    return r.json();
+  },
+  logout: async () => {
+    await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" });
+  },
+  me: async () => {
+    const r = await fetch(`${BASE}/auth/me`, { credentials: "include" });
+    if (!r.ok) return null;
+    return r.json();
+  },
+};
+
+// ============================================================
+// APP ROLE & LICENSE API
+// ============================================================
+
+export const appRoleApi = {
+  get: () => req<any>("/api/app-role"),
+  botLicenseInfo: () => req<any>("/api/bot-license-info"),
+};
+
+// ============================================================
+// ADMIN BOT MANAGEMENT API (cần admin role)
+// ============================================================
+
+export const adminBots = {
+  dashboard: () => req<any>("/admin/dashboard"),
+  list: () => req<any>("/admin/bots"),
+  create: (data: any) =>
+    req<any>("/admin/bots", { method: "POST", body: JSON.stringify(data) }),
+  get: (id: number) => req<any>(`/admin/bots/${id}`),
+  update: (id: number, data: any) =>
+    req<any>(`/admin/bots/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  delete: (id: number) =>
+    req<any>(`/admin/bots/${id}`, { method: "DELETE" }),
+  activate: (id: number) =>
+    req<any>(`/admin/bots/${id}/activate`, { method: "POST" }),
+  disable: (id: number) =>
+    req<any>(`/admin/bots/${id}/disable`, { method: "POST" }),
+  extendLicense: (id: number, newExpiresAt: string) =>
+    req<any>(`/admin/bots/${id}/extend-license`, {
+      method: "POST", body: JSON.stringify({ new_expires_at: newExpiresAt }),
+    }),
+  overrideDbUrl: (id: number, newUrl: string) =>
+    req<any>(`/admin/bots/${id}/override-db-url`, {
+      method: "POST", body: JSON.stringify({ new_database_url: newUrl }),
+    }),
+  rotateSecret: (id: number) =>
+    req<any>(`/admin/bots/${id}/rotate-secret`, { method: "POST" }),
+  heartbeats: (id: number, limit = 50) =>
+    req<any>(`/admin/bots/${id}/heartbeats?limit=${limit}`),
+  auditLogs: (id: number, limit = 50) =>
+    req<any>(`/admin/bots/${id}/audit-logs?limit=${limit}`),
+};
+
+// ============================================================
+// EXISTING APIs — GIỮA NGUYÊN 100%
+// ============================================================
 
 export const signals = {
   list: (p: Record<string, any> = {}) => req<any>(`/api/signals${qs(p)}`),

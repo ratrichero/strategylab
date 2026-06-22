@@ -1,11 +1,9 @@
-import os
 import requests
+from app.core.config import get_groq_api_key, get_gemini_api_key
 
 # =========================
-# ENV KEYS
+# API KEYS
 # =========================
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # =========================
 # ENDPOINTS (2026)
@@ -20,8 +18,9 @@ TIMEOUT_SECONDS = 12
 # GROQ CALL
 # =========================
 def ask_groq(prompt: str):
+    api_key = get_groq_api_key()
 
-    if not GROQ_API_KEY:
+    if not api_key:
         print("Groq API key missing")
         return None
 
@@ -29,7 +28,7 @@ def ask_groq(prompt: str):
         response = requests.post(
             GROQ_URL,
             headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
+                "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             },
             json={
@@ -60,14 +59,15 @@ def ask_groq(prompt: str):
 # GEMINI CALL
 # =========================
 def ask_gemini(prompt: str):
+    api_key = get_gemini_api_key()
 
-    if not GEMINI_API_KEY:
+    if not api_key:
         print("Gemini API key missing")
         return None
 
     try:
         response = requests.post(
-            f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+            f"{GEMINI_URL}?key={api_key}",
             headers={"Content-Type": "application/json"},
             json={
                 "contents": [

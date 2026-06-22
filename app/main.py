@@ -6,7 +6,7 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,8 +27,19 @@ from app.services.volatility_alert_service import register_volatility_alerts
 from app.services.binance_user_stream_service import (
     start_user_stream, stop_user_stream
 )
-from app.services.config_service import get_runtime_config, get_connection_value
+from app.services.config_service import get_runtime_config
+from app.core.config import get_telegram_token
 from app.api.account import router as account_router
+
+# ── Auth ──────────────────────────────────────────────────────
+from app.core.app_role import get_app_role, is_admin, is_bot
+from app.auth.routes import router as auth_router
+from app.auth.migration import run_auth_migration
+from app.auth.middleware import is_public_path, require_auth_from_cookie
+
+# ── Control Plane Routes ─────────────────────────────────────
+from app.control.admin_routes import router as admin_routes_router
+from app.control.bot_api import router as bot_api_router
 
 # ── Routers ───────────────────────────────────────────────────
 from app.api.health import router as health_router
@@ -190,6 +201,18 @@ async def scheduler_loop():
             await asyncio.sleep(5)
             continue
 
+        # ← CHANGED: Bot runtime gate check
+        # Nếu bot monitor_only → không enqueue scan
+        if is_bot():
+            try:
+                from app.bot_runtime.runtime_gate import get_runtime_gate
+                gate = get_runtime_gate()
+                if gate.is_monitor_only():
+                    await asyncio.sleep(5)
+                    continue
+            except ImportError:
+                pass
+
         now = utc_now()
 
         # LIVE scheduler pause gate:
@@ -288,7 +311,48 @@ async def lifespan(app: FastAPI):
     
     clear_shutdown()
 
-    # 1. FAIL-FAST: Kiểm tra schema trước tiên
+    # Database lifecycle:
+    # ADMIN binds DATABASE_URL immediately, then runs auth + control migrations.
+    # BOT must activate/cache-bootstrap first to obtain its own DB URL, then
+    # bind the runtime DB and run bot-local auth/schema checks.
+    _bot_runtime_ref = None
+    if is_admin():
+        from app.db.session import configure_database
+        admin_database_url = os.getenv("DATABASE_URL", "").strip()
+        configure_database(admin_database_url)
+
+        run_auth_migration()
+        try:
+            from app.control.migration import run_control_plane_migration
+            run_control_plane_migration()
+        except ImportError:
+            pass
+        except Exception as e:
+            print(f"[CONTROL MIGRATION] {e}")
+
+    elif is_bot():
+        try:
+            from app.bot_runtime.runtime import get_bot_runtime
+            from app.bot_runtime.runtime_gate import get_runtime_gate
+
+            bot_runtime = get_bot_runtime()
+            bot_runtime.startup()
+            _bot_runtime_ref = bot_runtime
+
+            # Auth migration must run after bot DB has been bound.
+            run_auth_migration()
+
+            gate = get_runtime_gate()
+            gate.update(
+                status=bot_runtime.state.license_status,
+                license_expires_at=bot_runtime.state.license_expires_at,
+                monitor_only=bot_runtime.is_monitor_only(),
+            )
+        except Exception as e:
+            print(f"[BOT RUNTIME] Startup failed: {e}")
+            raise e
+
+    # FAIL-FAST: check schema after the correct DB has been bound.
     from app.services.schema_guard import assert_schema_ok
     try:
         print("🔍 Checking Database Schema...")
@@ -302,6 +366,7 @@ async def lifespan(app: FastAPI):
 
     print("=" * 60)
     print("🚀 STRATEGY LAB RESEARCH v5.0")
+    print(f"   APP_ROLE: {get_app_role()}")
     print("=" * 60)
 
     mode = get_current_mode()
@@ -352,6 +417,18 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(report_scheduler_loop(), name="report"),
     ]
 
+    # ← CHANGED: Bot heartbeat task (chỉ khi BOT mode)
+    if is_bot() and _bot_runtime_ref and _bot_runtime_ref.license_client:
+        from app.bot_runtime.heartbeat_task import bot_heartbeat_loop
+        tasks.append(asyncio.create_task(
+            bot_heartbeat_loop(
+                license_client=_bot_runtime_ref.license_client,
+                interval_sec=_bot_runtime_ref.state.heartbeat_interval_sec,
+            ),
+            name="bot_heartbeat"
+        ))
+        print("  💓 Bot heartbeat task registered")
+
     if mode != TradingMode.PAPER:
         start_user_stream()
         from app.services.live.runtime import (
@@ -369,10 +446,7 @@ async def lifespan(app: FastAPI):
     # Telegram bot — resolve token/runtime config here
     def start_bot():
         try:
-            token = (
-                get_connection_value("TELEGRAM_BOT_TOKEN", "")
-                or get_connection_value("TELEGRAM_TOKEN", "")
-            )
+            token = get_telegram_token()
 
             if not token:
                 print("🤖 Bot disabled: no telegram token configured")
@@ -421,14 +495,63 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+_cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
+_cors_origins = [
+    origin.strip()
+    for origin in _cors_origins_raw.split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
 )
 
+
+# ── Auth middleware (global) ──────────────────────────────────
+# ← CHANGED: thêm auth check cho mọi request,
+# trừ whitelist (login, setup, health, bot machine auth, static)
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Whitelist: không cần auth
+    if is_public_path(path):
+        return await call_next(request)
+
+    # Check auth từ cookie
+    try:
+        require_auth_from_cookie(request)
+    except HTTPException as e:
+        # Nếu là API call → trả JSON 401
+        if path.startswith("/api/") or path.startswith("/admin/") or path.startswith("/scan"):
+            return JSONResponse(
+                status_code=e.status_code,
+                content={"detail": e.detail}
+            )
+        # Nếu là page navigation → redirect login
+        return RedirectResponse(url="/login", status_code=302)
+
+    return await call_next(request)
+
+
+# ── Mount routers ─────────────────────────────────────────────
+
+# Auth routes (public — không cần auth, đã whitelist)
+app.include_router(auth_router)
+
+# Control plane routes
+# (admin_routes cần require_admin dependency bên trong)
+# (bot_api cần bot machine auth bên trong)
+if is_admin():
+    app.include_router(admin_routes_router)
+    app.include_router(bot_api_router)
+
+# Trading/Dashboard routes (protected by auth middleware)
 for r in [
     health_router, scan_router, ml_router, performance_router,
     assistant_router, report_router, report_history_router,
@@ -436,7 +559,8 @@ for r in [
     retrain_router, signal_analysis_router, system_router,
     dash_signals_router, dash_research_router, dash_analysis_router,
     dash_edge_router, dash_config_router, dash_perf_router,
-    dash_pending_router, price_feed_status_router, account_router, backtest_replay_router,live_settings_router,
+    dash_pending_router, price_feed_status_router, account_router,
+    backtest_replay_router, live_settings_router,
 ]:
     app.include_router(r)
 

@@ -388,24 +388,23 @@ async def update_position_size(payload: dict):
 
 
 # ============================================================
-# CONNECTION OVERRIDE
+# CONNECTION SETTINGS
 # ============================================================
 
 @router.get("/api/system/connections")
 async def get_connections():
     import os as _os
     from app.services.config_service import (
-        CONNECTION_KEYS, is_connection_override_enabled,
+        CONNECTION_KEYS,
         get_connection_value, get_app_config_value, mask_secret,
     )
 
-    override = is_connection_override_enabled()
     fields = {}
 
     for key in CONNECTION_KEYS:
         app_val = get_app_config_value(key, "")
         eff_val = get_connection_value(key, "")
-        source = "app_config" if (override and app_val) else "env"
+        source = "app_config" if app_val else "env"
         fields[key] = {
             "has_value": bool(eff_val),
             "masked": mask_secret(eff_val),
@@ -413,7 +412,7 @@ async def get_connections():
         }
 
     return {
-        "override_enabled": override,
+        "override_enabled": True,
         "database_url": {
             "editable": False,
             "source": "env_only",
@@ -427,16 +426,15 @@ async def get_connections():
 async def update_connections(payload: dict):
     from app.services.config_service import update_runtime_config, CONNECTION_KEYS
 
-    override = bool(payload.get("override_enabled", False))
     values = payload.get("values", {}) or {}
 
-    data = {"CONNECTION_OVERRIDE": "true" if override else "false"}
+    data = {}
     for key in CONNECTION_KEYS:
         if key in values:
             data[key] = "" if values[key] is None else str(values[key])
 
     update_runtime_config(data)
-    return {"status": "updated", "override_enabled": override}
+    return {"status": "updated", "override_enabled": True}
 
 @router.get("/api/binance/account")
 async def binance_account(target: str = "live"):

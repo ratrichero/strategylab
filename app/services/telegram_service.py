@@ -1,11 +1,17 @@
-import requests
-from app.core.config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+﻿import requests
+from app.core.config import get_telegram_chat_id, get_telegram_token
 
 
 def send_telegram(message):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠ Telegram not configured")
+    token = get_telegram_token()
+    chat_id = get_telegram_chat_id()
+    if not token or not chat_id:
+        print("Telegram not configured")
         return
 
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID,"parse_mode": "HTML", "text": message})
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    requests.post(
+        url,
+        json={"chat_id": chat_id, "parse_mode": "HTML", "text": message},
+        timeout=10,
+    )

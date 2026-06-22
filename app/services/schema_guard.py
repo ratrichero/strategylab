@@ -1,7 +1,8 @@
 from sqlalchemy import text
-from app.db.session import engine
+from app.db.session import get_engine
 
 def assert_schema_ok():
+    engine = get_engine()
     with engine.begin() as conn:
         row = conn.execute(text("""
             select count(*)

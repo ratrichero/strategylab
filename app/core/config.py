@@ -19,16 +19,8 @@ BINANCE_BASE = os.getenv("BINANCE_BASE", "https://fapi.binance.com")
 # ── Getter functions ─────────────────────────────────────────
 
 def get_telegram_token() -> str:
-    """
-    Runtime getter:
-    Có thể dùng DB override qua config_service nếu cần.
-    Không nên gọi ở import-time của module nền tảng.
-    """
-    from app.services.config_service import get_connection_value
-    return (
-        get_connection_value("TELEGRAM_BOT_TOKEN", "")
-        or os.getenv("TELEGRAM_TOKEN", "")
-    )
+    """Telegram bot is env-only because polling starts with the server."""
+    return os.getenv("TELEGRAM_TOKEN", "")
 
 
 def get_telegram_chat_id() -> str:
