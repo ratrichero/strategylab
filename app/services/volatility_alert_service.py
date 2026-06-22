@@ -347,21 +347,28 @@ class VolatilityAlertService:
         self._table_ready = True
 
 
-_service = VolatilityAlertService()
+_service: Optional[VolatilityAlertService] = None
+
+
+def get_volatility_alert_service() -> VolatilityAlertService:
+    global _service
+    if _service is None:
+        _service = VolatilityAlertService()
+    return _service
 
 
 def register_volatility_alerts():
     from app.services.price_feed import add_price_callback
 
-    add_price_callback(_service.callback)
+    add_price_callback(get_volatility_alert_service().callback)
 
 
 def get_recent_volatility_alerts(limit: int = 10) -> List[dict]:
-    return _service.get_recent_alerts(limit)
+    return get_volatility_alert_service().get_recent_alerts(limit)
 
 
 def ensure_market_alert_table():
-    _service._ensure_table()
+    get_volatility_alert_service()._ensure_table()
 
 
 def get_recent_persisted_alerts(limit: int = 10, hours: int = 24) -> List[dict]:

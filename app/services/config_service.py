@@ -1,4 +1,5 @@
 import json
+import traceback
 from app.db.session import SessionLocal
 from sqlalchemy import text
 from app.core.time_utils import utc_now
@@ -160,6 +161,37 @@ DEFAULTS = {
             "threshold": 8.0
         }
     }),
+    "VOL_ALERT_CONFIG": json.dumps({
+        "enabled": True,
+        "cycle_seconds": 3,
+        "symbols_limit": 1200,
+        "history_seconds": 600,
+        "btc": {
+            "threshold_1m_pct": 2.0,
+            "threshold_5m_pct": 3.5,
+            "cooldown_minutes": 20
+        },
+        "major": {
+            "threshold_1m_pct": 5.0,
+            "threshold_5m_pct": 8.0,
+            "cooldown_minutes": 30,
+            "symbols": ["ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT"]
+        },
+        "watchlist": {
+            "threshold_1m_pct": 6.0,
+            "threshold_5m_pct": 10.0,
+            "cooldown_minutes": 25,
+            "symbols": []
+        },
+        "coin": {
+            "threshold_1m_pct": 10.0,
+            "threshold_5m_pct": 15.0,
+            "cooldown_minutes": 40
+        },
+        "unusual_ratio": 3.0,
+        "priority_symbols": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"],
+        "exclude_tokens": ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"]
+    }),
 }
 
 _runtime_cache = None
@@ -169,7 +201,13 @@ def get_runtime_config(force_reload=False):
     global _runtime_cache
     if _runtime_cache and not force_reload:
         return _runtime_cache
-    db = SessionLocal()
+    try:
+        db = SessionLocal()
+    except RuntimeError as e:
+        if "Database is not configured" in str(e):
+            print("[CONFIG] get_runtime_config called before database is configured")
+            traceback.print_stack(limit=12)
+        raise
     rows = db.execute(text("SELECT key, value FROM app_config")).fetchall()
     db.close()
     config = {k: v for k, v in rows}
@@ -203,7 +241,8 @@ def get_runtime_config(force_reload=False):
         "MAX_OPEN_TRADES":          int(config.get("MAX_OPEN_TRADES", DEFAULTS["MAX_OPEN_TRADES"])),
         "LIMIT_ORDER_CONFIG":       parse_json("LIMIT_ORDER_CONFIG"),
         "POSITION_SIZE_CONFIG":     parse_json("POSITION_SIZE_CONFIG"),
-        "STRATEGY_CONFIG":          parse_json("STRATEGY_CONFIG"),  # ← nguồn duy nhất cho threshold
+        "STRATEGY_CONFIG":          parse_json("STRATEGY_CONFIG"),
+        "VOL_ALERT_CONFIG":         parse_json("VOL_ALERT_CONFIG"),
         "PROFIT_LOCK_CONFIG":       parse_json("PROFIT_LOCK_CONFIG"),
         "PROTECTION_LEVELS_CONFIG": parse_json("PROTECTION_LEVELS_CONFIG"),
         "RETRY_POLICY_CONFIG":      parse_json("RETRY_POLICY_CONFIG"),
@@ -219,7 +258,8 @@ def update_runtime_config(data: dict):
                  "OPEN_TRADE_FILTER", "PREFILL_CONFIG",
                  # ← REMOVED: "STRATEGY_THRESHOLDS" đã gộp vào STRATEGY_CONFIG
                  "LIMIT_ORDER_CONFIG", "POSITION_SIZE_CONFIG",
-                 "STRATEGY_CONFIG",  # ← nguồn duy nhất
+                 "STRATEGY_CONFIG",
+                 "VOL_ALERT_CONFIG",
                  "PROFIT_LOCK_CONFIG", "PROTECTION_LEVELS_CONFIG",
                  "RETRY_POLICY_CONFIG"]:
             try: json.loads(v)

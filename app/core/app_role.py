@@ -9,6 +9,8 @@ Mặc định: ADMIN (backward compatible với codebase hiện tại)
 """
 
 import os
+import re
+from urllib.parse import urlparse
 
 # ── Constants ─────────────────────────────────────────────
 ROLE_ADMIN = "ADMIN"
@@ -81,14 +83,27 @@ def get_bot_env():
         )
 
     # ── Parse endpoints ────────────────────────────────────
-    admin_endpoints = [
-        ep.strip() for ep in admin_endpoints_raw.split(",")
-        if ep.strip()
-    ]
+    def _normalize_endpoint(raw: str) -> str:
+        raw = raw.strip()
+        match = re.match(r"^\[[^\]]+\]\((https?://[^)]+)\)$", raw)
+        if match:
+            raw = match.group(1)
+        raw = raw.rstrip("/")
+        parsed = urlparse(raw)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return ""
+        return raw
+
+    admin_endpoints = []
+    for ep in admin_endpoints_raw.split(","):
+        normalized = _normalize_endpoint(ep)
+        if normalized:
+            admin_endpoints.append(normalized)
 
     if not admin_endpoints:
         raise EnvironmentError(
-            "[BOT MODE] ADMIN_ENDPOINTS is set but contains no valid URLs"
+            "[BOT MODE] ADMIN_ENDPOINTS is set but contains no valid URLs. "
+            "Use plain URLs like ADMIN_ENDPOINTS=http://host:8002"
         )
 
     return {
