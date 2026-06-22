@@ -125,36 +125,19 @@ def _check_profit_lock(price_map: dict):
 
         print("🎯 [PROFIT LOCK] Executing profit lock...")
 
-        from app.services.live.command_service import request_kill_switch_all
-        result = request_kill_switch_all()
+        from app.services.live.command_service import request_profit_lock_all
+        result = request_profit_lock_all(price_map)
         mark_triggered()
-
-        try:
-            with SessionLocal() as db:
-                recent_cmds = db.query(ExecutionCommand).filter(
-                    ExecutionCommand.command_type == "KILL_SWITCH",
-                    ExecutionCommand.created_at >= utc_now() - timedelta(seconds=10),
-                ).all()
-
-                for cmd in recent_cmds:
-                    cmd.command_type = CMD_PROFIT_LOCK
-                    if cmd.request_payload:
-                        payload = dict(cmd.request_payload)
-                        payload["reason"] = "PROFIT_LOCK"
-                        cmd.request_payload = payload
-
-                db.commit()
-        except Exception as e:
-            print(f"[PROFIT LOCK] Re-tag error: {e}")
 
         print(f"🎯 [PROFIT LOCK] Result: {result}")
 
         try:
             from app.services.telegram_service import send_telegram
             send_telegram(
-                f"🎯 <b>PROFIT LOCK TRIGGERED</b>\n\n"
-                f"Tổng PnL đạt ngưỡng chốt lãi.\n"
-                f"Đã đóng tất cả vị thế."
+                f"<b>PROFIT LOCK TRIGGERED</b>\n\n"
+                f"Total PnL reached the configured lock threshold.\n"
+                f"Closed profitable positions only: {result.get('closed_count', 0)}.\n"
+                f"Skipped non-profitable positions: {result.get('skipped_count', 0)}."
             )
         except Exception:
             pass

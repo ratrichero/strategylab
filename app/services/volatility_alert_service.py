@@ -198,7 +198,7 @@ class VolatilityAlertService:
 
         for alert in alerts:
             symbol = alert["symbol"]
-            sign = "🔺" if alert["direction"] == "UP" else "🔻"
+            sign = "🟢🔺" if alert["direction"] == "UP" else "🔴🔻"
             lines.append(
                 f"{sign} <b>{symbol}</b>: {alert['reason']} | 1m {alert['delta_1m']:.2f}% | 5m {alert['delta_5m']:.2f}%"
             )

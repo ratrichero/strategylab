@@ -517,32 +517,126 @@ def request_protection_replace(signal_id: int, new_sl_price: float, level_key: O
             "deduped": False,
         }
     
-def request_profit_lock_all() -> Dict[str, Any]:
-    """
-    Profit Lock: close all positions + cancel all pending NEW.
-    Giống kill-switch nhưng trigger bởi PnL dương.
-    """
-    from app.services.live.profit_lock_service import mark_profit_lock_triggered
+def _pnl_pct(trade: Signal, current_price: float) -> Optional[float]:
+    try:
+        entry = float(trade.entry_price or 0)
+        current = float(current_price or 0)
+        if entry <= 0 or current <= 0:
+            return None
+        if trade.direction == "LONG":
+            return ((current - entry) / entry) * 100
+        return ((entry - current) / entry) * 100
+    except Exception:
+        return None
 
-    result = request_kill_switch_all()
 
-    # Override command type cho audit trail
+def request_profit_lock_all(price_map: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+    """
+    Profit Lock closes only currently profitable OPEN signals.
+
+    It intentionally does not reuse kill switch:
+    - no bulk pending cancel
+    - no close of losing positions
+    - command reason stays PROFIT_LOCK end to end
+    """
+    price_map = price_map or {}
+
     with SessionLocal() as db:
-        recent_cmds = db.query(ExecutionCommand).filter(
-            ExecutionCommand.command_type == CMD_KILL_SWITCH,
-            ExecutionCommand.created_at >= utc_now() - __import__('datetime').timedelta(seconds=10),
-        ).all()
+        open_trades = db.query(Signal).filter(Signal.status == "OPEN").all()
 
-        for cmd in recent_cmds:
-            cmd.command_type = CMD_PROFIT_LOCK
-            if cmd.request_payload:
-                payload = dict(cmd.request_payload)
-                payload["reason"] = "PROFIT_LOCK"
-                cmd.request_payload = payload
+        candidates = []
+        skipped = []
+        for trade in open_trades:
+            current = price_map.get(trade.symbol) or _get_price_hint(trade.symbol)
+            pnl = _pnl_pct(trade, current) if current is not None else None
+            if pnl is not None and pnl > 0:
+                candidates.append((trade.id, trade.symbol, float(current), float(pnl)))
+            else:
+                skipped.append({
+                    "signal_id": trade.id,
+                    "symbol": trade.symbol,
+                    "pnl_pct": pnl,
+                })
 
-        db.commit()
+    result = {
+        "success": True,
+        "trigger": "PROFIT_LOCK",
+        "closed": [],
+        "skipped": skipped,
+        "errors": [],
+    }
 
-    mark_profit_lock_triggered()
+    for signal_id, symbol, price_hint, pnl in candidates:
+        with SessionLocal() as db:
+            trade = db.query(Signal).get(signal_id)
+            if not trade or trade.status != "OPEN":
+                continue
 
-    result["trigger"] = "PROFIT_LOCK"
+            pending = db.query(PendingSignal).filter(
+                PendingSignal.signal_id == trade.id
+            ).order_by(PendingSignal.created_at.desc()).first()
+
+            cmd = _create_command(
+                db,
+                symbol=trade.symbol,
+                command_type=CMD_PROFIT_LOCK,
+                pending_id=pending.id if pending else None,
+                signal_id=trade.id,
+                request_payload={
+                    "reason": "PROFIT_LOCK",
+                    "price_hint": price_hint,
+                    "pnl_pct": pnl,
+                },
+            )
+            db.commit()
+            db.refresh(cmd)
+
+            try:
+                close_result = exec_close_position(trade, "PROFIT_LOCK")
+                actual_exit = (
+                    close_result.actual_entry
+                    if (close_result.actual_entry and close_result.actual_entry > 0)
+                    else None
+                )
+
+                cmd.status = COMMAND_SENT if close_result.success else COMMAND_FAILED
+                cmd.sent_at = utc_now()
+                cmd.result_payload = {
+                    "success": close_result.success,
+                    "order_id": close_result.order_id,
+                    "actual_exit_price": actual_exit,
+                    "price_hint": price_hint,
+                    "pnl_pct": pnl,
+                    "fee": close_result.fee,
+                    "mode": close_result.mode,
+                }
+                cmd.error_message = close_result.error
+                db.commit()
+
+                result["closed"].append({
+                    "signal_id": trade.id,
+                    "symbol": trade.symbol,
+                    "command_id": cmd.id,
+                    "status": cmd.status,
+                    "pnl_pct": pnl,
+                    "error": close_result.error,
+                })
+                if not close_result.success:
+                    result["success"] = False
+                    result["errors"].append(f"{trade.symbol}: {close_result.error}")
+
+            except Exception as e:
+                db.rollback()
+                with SessionLocal() as db2:
+                    fresh = db2.query(ExecutionCommand).get(cmd.id)
+                    if fresh:
+                        fresh.status = COMMAND_FAILED
+                        fresh.error_message = f"{type(e).__name__}: {e}"
+                        db2.commit()
+
+                result["success"] = False
+                result["errors"].append(f"{symbol}: {type(e).__name__}: {e}")
+
+    result["closed_count"] = len(result["closed"])
+    result["skipped_count"] = len(result["skipped"])
     return result

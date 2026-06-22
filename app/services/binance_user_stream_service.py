@@ -50,6 +50,7 @@ class BinanceUserStreamService:
         self._last_error_at: Optional[float] = None
         self._reconnect_count = 0
         self._events_saved = 0
+        self._pending_updates = 0
 
     def start(self):
         if self._running:
@@ -109,6 +110,7 @@ class BinanceUserStreamService:
                 "last_error_ago_s": age(self._last_error_at),
                 "reconnect_count": self._reconnect_count,
                 "events_saved": self._events_saved,
+                "pending_updates": self._pending_updates,
             }
 
     def _run_loop(self):
@@ -190,6 +192,8 @@ class BinanceUserStreamService:
 
         if event_type in {"ORDER_TRADE_UPDATE", "ACCOUNT_UPDATE", "listenKeyExpired"}:
             self._save_event(event)
+            if event_type == "ORDER_TRADE_UPDATE":
+                self._apply_entry_order_update(event)
 
         if event_type == "listenKeyExpired":
             raise RuntimeError("listenKey expired")
@@ -310,6 +314,76 @@ class BinanceUserStreamService:
 
         with self._lock:
             self._events_saved += 1
+
+    def _apply_entry_order_update(self, event: Dict):
+        """
+        Update pending exchange tracking from QRL_ENTRY_<pending_id> events.
+
+        This deliberately does not set PendingSignal.status. Reconciler remains
+        the lifecycle owner and will create/update signals from these fields.
+        """
+        order = event.get("o") or {}
+        client_order_id = _safe_str(order.get("c")) or ""
+        if not client_order_id.startswith("QRL_ENTRY_"):
+            return
+
+        raw_id = client_order_id.replace("QRL_ENTRY_", "", 1).split("_", 1)[0]
+        try:
+            pending_id = int(raw_id)
+        except Exception:
+            return
+
+        order_id = _safe_str(order.get("i"))
+        order_status = _safe_str(order.get("X"))
+        orig_qty = _safe_float(order.get("q"))
+        executed_qty = _safe_float(order.get("z"))
+        avg_price = _safe_float(order.get("ap"))
+
+        try:
+            with SessionLocal() as db:
+                result = db.execute(text("""
+                    UPDATE pending_signals
+                    SET
+                        exchange_order_id = COALESCE(:order_id, exchange_order_id),
+                        exchange_status = COALESCE(:order_status, exchange_status),
+                        placed_at = COALESCE(placed_at, NOW()),
+                        order_quantity = CASE
+                            WHEN :orig_qty IS NOT NULL AND :orig_qty > 0 THEN :orig_qty
+                            ELSE order_quantity
+                        END,
+                        executed_qty = CASE
+                            WHEN :executed_qty IS NOT NULL THEN GREATEST(COALESCE(executed_qty, 0), :executed_qty)
+                            ELSE executed_qty
+                        END,
+                        avg_fill_price = CASE
+                            WHEN :avg_price IS NOT NULL AND :avg_price > 0 THEN :avg_price
+                            ELSE avg_fill_price
+                        END,
+                        last_exchange_sync_at = NOW(),
+                        next_retry_at = NULL,
+                        last_place_error = NULL
+                    WHERE id = :pending_id
+                      AND status = 'WAIT'
+                """), {
+                    "pending_id": pending_id,
+                    "order_id": order_id,
+                    "order_status": order_status,
+                    "orig_qty": orig_qty,
+                    "executed_qty": executed_qty,
+                    "avg_price": avg_price,
+                })
+                db.commit()
+
+            if result.rowcount:
+                with self._lock:
+                    self._pending_updates += 1
+                print(
+                    f"[USER STREAM] pending update id={pending_id} "
+                    f"status={order_status} executed={executed_qty} avg={avg_price}"
+                )
+        except Exception as e:
+            self._set_error(f"pending update error: {type(e).__name__}: {e}")
+            print(f"[USER STREAM] pending update error pending={pending_id}: {e}")
 
     def _ensure_table(self):
         with SessionLocal() as db:

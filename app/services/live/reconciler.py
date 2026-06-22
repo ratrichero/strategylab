@@ -40,6 +40,7 @@ from app.services.live.command_service import (
     CMD_MANUAL_CLOSE,
     CMD_MANUAL_CANCEL_PENDING,
     CMD_KILL_SWITCH,
+    CMD_PROFIT_LOCK,
     CMD_EMERGENCY_CLOSE,
     CMD_PROTECTION_REPLACE,
     COMMAND_REQUESTED,
@@ -801,11 +802,115 @@ def _manual_command_reason(commands) -> Optional[Tuple[str, Optional[float]]]:
                 raw_price = float(close_raw.get("avgPrice", 0) or 0) or None
             return "KILL_SWITCH", raw_price or final_price
 
+        if cmd.command_type == CMD_PROFIT_LOCK:
+            return "PROFIT_LOCK", final_price
+
         if cmd.command_type == CMD_EMERGENCY_CLOSE:
             return f"EMERGENCY_CLOSE::{req.get('reason', 'UNKNOWN')}", final_price
 
         if cmd.command_type == CMD_PROTECTION_REPLACE:
             return f"PROTECTION_REPLACE_FAILED::{req.get('reason', 'UNKNOWN')}", final_price
+
+    return None
+
+
+def _positive_float(*values) -> Optional[float]:
+    for value in values:
+        try:
+            v = float(value)
+            if v > 0:
+                return v
+        except Exception:
+            continue
+    return None
+
+
+def _dt_to_ms(value) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(ensure_utc(value).timestamp() * 1000)
+    except Exception:
+        return None
+
+
+def _close_reason_from_user_stream(signal: Signal) -> Optional[Tuple[str, float]]:
+    """
+    Read-only close evidence from Binance ORDER_TRADE_UPDATE events.
+    Missing table/events must never block live close finalization.
+    """
+    start_ms = (
+        _dt_to_ms(signal.created_at)
+        or _dt_to_ms(signal.candle_time)
+        or int((_time.time() - 6 * 3600) * 1000)
+    )
+
+    try:
+        with SessionLocal() as db:
+            rows = db.execute(text("""
+                SELECT client_order_id, order_type, avg_price, last_filled_price, raw, event_time_ms
+                FROM exchange_order_events
+                WHERE symbol = :symbol
+                  AND event_type = 'ORDER_TRADE_UPDATE'
+                  AND order_status = 'FILLED'
+                  AND execution_type = 'TRADE'
+                  AND event_time_ms >= :start_ms
+                  AND (
+                    close_position IS TRUE
+                    OR reduce_only IS TRUE
+                    OR order_type IN ('STOP_MARKET', 'TAKE_PROFIT_MARKET')
+                  )
+                ORDER BY event_time_ms DESC
+                LIMIT 20
+            """), {
+                "symbol": signal.symbol,
+                "start_ms": start_ms,
+            }).mappings().all()
+    except Exception as e:
+        err = str(e)
+        if "exchange_order_events" not in err and "UndefinedTable" not in err:
+            print(f"[USER STREAM CLOSE EVIDENCE] unavailable {signal.symbol}: {type(e).__name__}: {e}")
+        return None
+
+    for row in rows:
+        raw = row.get("raw") or {}
+        order = raw.get("o") if isinstance(raw, dict) else {}
+        client_order_id = str(row.get("client_order_id") or (order or {}).get("c") or "").upper()
+        order_type = str(
+            row.get("order_type")
+            or (order or {}).get("o")
+            or (order or {}).get("ot")
+            or ""
+        ).upper()
+
+        reason = None
+        fallback_price = None
+        if client_order_id.startswith("QRL_TP_") or "TAKE_PROFIT" in order_type:
+            reason = "TP"
+            fallback_price = signal.take_profit
+        elif client_order_id.startswith("QRL_SL_") or "STOP" in order_type:
+            reason = "SL"
+            fallback_price = signal.stop_loss
+
+        if not reason:
+            continue
+
+        price = _positive_float(
+            row.get("avg_price"),
+            row.get("last_filled_price"),
+            (order or {}).get("ap"),
+            (order or {}).get("L"),
+            fallback_price,
+        )
+        if not price:
+            price = _get_best_exit_price(signal.symbol, fallback=float(signal.entry_price or 0))
+
+        print(
+            f"[USER STREAM CLOSE EVIDENCE] {signal.symbol} reason={reason} "
+            f"client_order_id={client_order_id} order_type={order_type} "
+            f"event_time_ms={row.get('event_time_ms')}"
+        )
+        return reason, float(price)
 
     return None
 
@@ -826,6 +931,10 @@ def _derive_close_reason(
         # Không fallback về entry price nữa.
         # Ưu tiên current market/mark price.
         return reason, _get_best_exit_price(signal.symbol, fallback=float(signal.entry_price or 0))
+
+    stream_reason = _close_reason_from_user_stream(signal)
+    if stream_reason:
+        return stream_reason
 
     if _is_algo_triggered(snapshot.tp_algo):
         price = (
@@ -1018,7 +1127,7 @@ def _finalize_signal_close(db, signal: Signal, pending: Optional[PendingSignal],
     confirm_commands_for_symbol(
         db,
         signal.symbol,
-        [CMD_MANUAL_CLOSE, CMD_KILL_SWITCH, CMD_EMERGENCY_CLOSE, CMD_PROTECTION_REPLACE],
+        [CMD_MANUAL_CLOSE, CMD_KILL_SWITCH, CMD_PROFIT_LOCK, CMD_EMERGENCY_CLOSE, CMD_PROTECTION_REPLACE],
         result_payload={
             "signal_status": signal.status,
             "exit_reason": signal.exit_reason,
@@ -1247,4 +1356,3 @@ def _enforce_live_hard_cap():
             f"remaining_overflow={remaining} "
             f"| likely because some symbols were locked / already changed state"
         )
-        
