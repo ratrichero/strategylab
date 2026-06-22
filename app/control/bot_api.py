@@ -23,6 +23,27 @@ from app.core.encryption import encrypt_for_transport
 router = APIRouter(prefix="/bot", tags=["bot-machine"])
 
 
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _db_now() -> datetime:
+    return _utc_now().replace(tzinfo=None)
+
+
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _is_expired(dt: Optional[datetime]) -> bool:
+    expires_at = _as_utc(dt)
+    return bool(expires_at and _utc_now() > expires_at)
+
+
 def _parse_bot_uuid(bot_id: str):
     try:
         return uuid.UUID(str(bot_id))
@@ -78,12 +99,11 @@ async def bot_activate(req: ActivateRequest, request: Request):
 
         # Check license expiry
         license_expired = False
-        if bot.license_expires_at:
-            if datetime.now(timezone.utc) > bot.license_expires_at:
-                license_expired = True
-                if bot.status == "active":
-                    bot.status = "expired"
-                    db.commit()
+        if _is_expired(bot.license_expires_at):
+            license_expired = True
+            if bot.status == "active":
+                bot.status = "expired"
+                db.commit()
 
         # Decrypt DB URL + re-encrypt cho transport
         from app.core.encryption import decrypt_at_rest
@@ -101,7 +121,7 @@ async def bot_activate(req: ActivateRequest, request: Request):
         # Update last seen
         bot.last_seen_ip = request.client.host if request.client else None
         bot.last_seen_version = req.app_version
-        bot.last_heartbeat_at = datetime.now(timezone.utc)
+        bot.last_heartbeat_at = _db_now()
         bot.is_online = True
         db.commit()
 
@@ -140,20 +160,19 @@ async def bot_heartbeat(req: HeartbeatRequest, request: Request):
             raise HTTPException(status_code=401, detail="Bot not found")
 
         # Check license expiry
-        if bot.license_expires_at:
-            if datetime.now(timezone.utc) > bot.license_expires_at:
-                if bot.status == "active":
-                    bot.status = "expired"
+        if _is_expired(bot.license_expires_at):
+            if bot.status == "active":
+                bot.status = "expired"
 
         # Check db_url changed
         db_url_changed = False
         if bot.db_url_updated_at and bot.last_heartbeat_at:
-            if bot.db_url_updated_at > bot.last_heartbeat_at:
+            if _as_utc(bot.db_url_updated_at) > _as_utc(bot.last_heartbeat_at):
                 db_url_changed = True
 
         # Update heartbeat
         client_ip = request.client.host if request.client else None
-        bot.last_heartbeat_at = datetime.now(timezone.utc)
+        bot.last_heartbeat_at = _db_now()
         bot.last_seen_ip = client_ip
         bot.last_seen_version = req.app_version
         bot.is_online = True

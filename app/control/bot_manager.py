@@ -23,6 +23,15 @@ def generate_bot_secret() -> str:
     return secrets.token_urlsafe(32)
 
 
+def normalize_db_datetime(dt: Optional[datetime]) -> Optional[datetime]:
+    """Store UTC-naive values because control-plane columns are DateTime without timezone."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 # ============================================================
 # CREATE
 # ============================================================
@@ -79,8 +88,8 @@ def create_bot(
         description=description,
         database_url_encrypted=db_url_encrypted,
         status="active",
-        license_started_at=datetime.now(timezone.utc),
-        license_expires_at=license_expires_at,
+        license_started_at=normalize_db_datetime(datetime.now(timezone.utc)),
+        license_expires_at=normalize_db_datetime(license_expires_at),
         dashboard_username=dashboard_username,
         notes=notes,
     )
@@ -219,6 +228,7 @@ def extend_license(
         raise ValueError("Bot not found")
 
     old_expires = str(bot.license_expires_at) if bot.license_expires_at else None
+    new_expires_at = normalize_db_datetime(new_expires_at)
     bot.license_expires_at = new_expires_at
 
     # Nếu đang expired mà gia hạn → auto activate
@@ -263,7 +273,7 @@ def override_db_url(
         raise ValueError("Cannot connect to new database URL")
 
     bot.database_url_encrypted = encrypt_at_rest(new_database_url)
-    bot.db_url_updated_at = datetime.now(timezone.utc)
+    bot.db_url_updated_at = normalize_db_datetime(datetime.now(timezone.utc))
 
     audit = BotAuditLog(
         admin_user_id=admin_user_id,
@@ -299,7 +309,7 @@ def rotate_secret(
     db.query(BotCredential).filter(
         BotCredential.bot_id == bot.id,
         BotCredential.is_active == True
-    ).update({"is_active": False, "rotated_at": datetime.now(timezone.utc)})
+    ).update({"is_active": False, "rotated_at": normalize_db_datetime(datetime.now(timezone.utc))})
 
     # Create new
     new_secret = generate_bot_secret()
