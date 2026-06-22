@@ -9,6 +9,7 @@ import requests
 from sqlalchemy import text
 
 import app.core.env_bootstrap
+from app.core.time_utils import vn_now_str
 from app.core.trading_mode import TradingMode, get_current_mode, get_trading_mode
 from app.db.session import SessionLocal
 
@@ -67,7 +68,7 @@ class BinanceUserStreamService:
             name="BinanceUserStream",
         )
         self._thread.start()
-        print(f"[USER STREAM] starting mode={mode.value}")
+        print(f"[USER STREAM] starting mode={mode.value} [{vn_now_str()}]")
 
     def stop(self):
         self._running = False
@@ -79,7 +80,7 @@ class BinanceUserStreamService:
                 self._close_listen_key(listen_key)
             except Exception as e:
                 self._set_error(f"close listenKey error: {type(e).__name__}: {e}")
-        print("[USER STREAM] stopped")
+        print(f"[USER STREAM] stopped [{vn_now_str()}]")
 
     def restart(self):
         self.stop()
@@ -120,7 +121,7 @@ class BinanceUserStreamService:
             self._loop.run_until_complete(self._main())
         except Exception as e:
             self._set_error(f"loop error: {type(e).__name__}: {e}")
-            print(f"[USER STREAM] loop error: {e}")
+            print(f"[USER STREAM] loop error: {e} [{vn_now_str()}]")
         finally:
             self._loop.close()
 
@@ -146,7 +147,7 @@ class BinanceUserStreamService:
                 self._connected = False
                 self._reconnect_count += 1
                 self._set_error(f"stream error: {type(e).__name__}: {e}")
-                print(f"[USER STREAM] stream error: {type(e).__name__}: {e}")
+                print(f"[USER STREAM] stream error: {type(e).__name__}: {e} [{vn_now_str()}]")
                 if self._running:
                     await asyncio.sleep(min(RECONNECT_DELAY * self._reconnect_count, 60))
 
@@ -169,7 +170,7 @@ class BinanceUserStreamService:
             self._connected_at = time.time()
             self._mode = "ws_private"
             self._reconnect_count = 0
-            print("[USER STREAM] connected")
+            print(f"[USER STREAM] connected [{vn_now_str()}]")
 
             while self._running:
                 try:
@@ -381,11 +382,11 @@ class BinanceUserStreamService:
                     self._pending_updates += 1
                 print(
                     f"[USER STREAM] pending update id={pending_id} "
-                    f"status={order_status} executed={executed_qty} avg={avg_price}"
+                    f"status={order_status} executed={executed_qty} avg={avg_price} [{vn_now_str()}]"
                 )
         except Exception as e:
             self._set_error(f"pending update error: {type(e).__name__}: {e}")
-            print(f"[USER STREAM] pending update error pending={pending_id}: {e}")
+            print(f"[USER STREAM] pending update error pending={pending_id}: {e} [{vn_now_str()}]")
 
     def _ensure_table(self):
         with SessionLocal() as db:

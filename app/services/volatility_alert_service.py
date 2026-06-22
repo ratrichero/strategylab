@@ -6,6 +6,7 @@ from statistics import mean
 from typing import Deque, Dict, List, Optional, Tuple
 
 from app.core.bg_runner import start_daemon_job
+from app.services.config_service import get_runtime_config
 from app.services.telegram_service import send_telegram
 
 
@@ -64,39 +65,55 @@ class VolatilityAlertService:
         self._states: Dict[str, _SymbolState] = {}
         self._last_cycle = 0.0
         self._recent_alerts: Deque[dict] = deque(maxlen=50)
-        self._cycle_delay = float(os.getenv("VOL_ALERT_CYCLE_SECONDS", "3"))
-        self._symbols_limit = int(os.getenv("VOL_ALERT_SYMBOL_LIMIT", "1200"))
-        self._btc_threshold_1m = float(os.getenv("VOL_ALERT_BTC_1M_PCT", "2.0"))
-        self._btc_threshold_5m = float(os.getenv("VOL_ALERT_BTC_5M_PCT", "3.5"))
-        self._btc_cooldown = float(os.getenv("VOL_ALERT_BTC_COOLDOWN_MINUTES", "20")) * 60
-        self._major_threshold_1m = float(os.getenv("VOL_ALERT_MAJOR_1M_PCT", "5.0"))
-        self._major_threshold_5m = float(os.getenv("VOL_ALERT_MAJOR_5M_PCT", "8.0"))
-        self._major_cooldown = float(os.getenv("VOL_ALERT_MAJOR_COOLDOWN_MINUTES", "30")) * 60
-        self._watch_threshold_1m = float(os.getenv("VOL_ALERT_WATCHLIST_1M_PCT", "6.0"))
-        self._watch_threshold_5m = float(os.getenv("VOL_ALERT_WATCHLIST_5M_PCT", "10.0"))
-        self._watch_cooldown = float(os.getenv("VOL_ALERT_WATCHLIST_COOLDOWN_MINUTES", "25")) * 60
-        self._coin_threshold_1m = float(os.getenv("VOL_ALERT_COIN_1M_PCT", "10.0"))
-        self._coin_threshold_5m = float(os.getenv("VOL_ALERT_COIN_5M_PCT", "15.0"))
-        self._coin_cooldown = float(os.getenv("VOL_ALERT_COIN_COOLDOWN_MINUTES", "40")) * 60
-        self._unusual_ratio = float(os.getenv("VOL_ALERT_UNUSUAL_RATIO", "3.0"))
-        self._enabled = os.getenv("ENABLE_VOL_ALERTS", "true").lower() in ["1", "true", "yes", "on"]
-        self._exclude_tokens = ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"]
-        self._priority_symbols = [
-            s.strip().upper()
-            for s in os.getenv("VOL_ALERT_PRIORITY_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT").split(",")
-            if s.strip()
-        ]
+        self._table_ready = False
+        self._load_config()
+
+    def _load_config(self):
+        """Load config from VOL_ALERT_CONFIG with env fallback."""
+        cfg = get_runtime_config()
+        vol_cfg = cfg.get("VOL_ALERT_CONFIG") or {}
+
+        self._enabled = vol_cfg.get("enabled", os.getenv("ENABLE_VOL_ALERTS", "true").lower() in ["1", "true", "yes", "on"])
+        self._cycle_delay = float(vol_cfg.get("cycle_seconds", os.getenv("VOL_ALERT_CYCLE_SECONDS", "3")))
+        self._symbols_limit = int(vol_cfg.get("symbols_limit", os.getenv("VOL_ALERT_SYMBOL_LIMIT", "1200")))
+
+        btc_cfg = vol_cfg.get("btc", {})
+        self._btc_threshold_1m = float(btc_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_BTC_1M_PCT", "2.0")))
+        self._btc_threshold_5m = float(btc_cfg.get("threshold_5m_pct", os.getenv("VOL_ALERT_BTC_5M_PCT", "3.5")))
+        self._btc_cooldown = float(btc_cfg.get("cooldown_minutes", os.getenv("VOL_ALERT_BTC_COOLDOWN_MINUTES", "20"))) * 60
+
+        major_cfg = vol_cfg.get("major", {})
+        self._major_threshold_1m = float(major_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_MAJOR_1M_PCT", "5.0")))
+        self._major_threshold_5m = float(major_cfg.get("threshold_5m_pct", os.getenv("VOL_ALERT_MAJOR_5M_PCT", "8.0")))
+        self._major_cooldown = float(major_cfg.get("cooldown_minutes", os.getenv("VOL_ALERT_MAJOR_COOLDOWN_MINUTES", "30"))) * 60
         self._major_symbols = {
             s.strip().upper()
-            for s in os.getenv("VOL_ALERT_MAJOR_SYMBOLS", "ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT").split(",")
-            if s.strip()
+            for s in major_cfg.get("symbols", os.getenv("VOL_ALERT_MAJOR_SYMBOLS", "ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT"))
+            if isinstance(s, str) and s.strip()
         }
+
+        watch_cfg = vol_cfg.get("watchlist", {})
+        self._watch_threshold_1m = float(watch_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_WATCHLIST_1M_PCT", "6.0")))
+        self._watch_threshold_5m = float(watch_cfg.get("threshold_5m_pct", os.getenv("VOL_ALERT_WATCHLIST_5M_PCT", "10.0")))
+        self._watch_cooldown = float(watch_cfg.get("cooldown_minutes", os.getenv("VOL_ALERT_WATCHLIST_COOLDOWN_MINUTES", "25"))) * 60
         self._watchlist_symbols = {
             s.strip().upper()
-            for s in os.getenv("VOL_ALERT_WATCHLIST_SYMBOLS", "").split(",")
-            if s.strip()
+            for s in watch_cfg.get("symbols", os.getenv("VOL_ALERT_WATCHLIST_SYMBOLS", ""))
+            if isinstance(s, str) and s.strip()
         }
-        self._table_ready = False
+
+        coin_cfg = vol_cfg.get("coin", {})
+        self._coin_threshold_1m = float(coin_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_COIN_1M_PCT", "10.0")))
+        self._coin_threshold_5m = float(coin_cfg.get("threshold_5m_pct", os.getenv("VOL_ALERT_COIN_5M_PCT", "15.0")))
+        self._coin_cooldown = float(coin_cfg.get("cooldown_minutes", os.getenv("VOL_ALERT_COIN_COOLDOWN_MINUTES", "40"))) * 60
+
+        self._unusual_ratio = float(vol_cfg.get("unusual_ratio", os.getenv("VOL_ALERT_UNUSUAL_RATIO", "3.0")))
+        self._exclude_tokens = vol_cfg.get("exclude_tokens", ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"])
+        self._priority_symbols = [
+            s.strip().upper()
+            for s in vol_cfg.get("priority_symbols", os.getenv("VOL_ALERT_PRIORITY_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"))
+            if isinstance(s, str) and s.strip()
+        ]
 
     def callback(self, price_map: dict):
         if not self._enabled:

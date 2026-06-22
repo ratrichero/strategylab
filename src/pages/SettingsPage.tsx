@@ -9,6 +9,7 @@ import {
   Settings as SettingsIcon, Save, RotateCcw, Loader2,
   CheckCircle, AlertCircle, Radar, ShieldCheck, Server,
   Layers, Filter, Crosshair, Activity, Plug, KeyRound, Palette,
+  ChevronDown, ChevronRight, Bell,
 } from "lucide-react";
 import {
   config, tradingMode as tmApi, strategies as stratsApi,
@@ -48,6 +49,7 @@ const TABS = [
   { id:"prefill", label:"Pre-Fill", icon:ShieldCheck },
   { id:"strats", label:"Strategies", icon:Layers },
   { id:"live", label:"Live Trading", icon:Activity },
+  { id:"alerts", label:"Alerts", icon:Bell },
   { id:"system", label:"System", icon:Server },
   { id:"conn", label:"Connection", icon:Plug },
   { id:"apikey", label:"API Keys", icon:KeyRound },
@@ -70,6 +72,32 @@ export function SettingsPage() {
   const [pfConfig,setPfConfig]=useState(null); const [sPf,setSPf]=useState(false); const [svPf,setSvPf]=useState(false);
   const [wlInput,setWlInput]=useState(""); const [wlLoading,setWlLoading]=useState(false);
   const [stratsList,setStratsList]=useState([]); const [sSt,setSSt]=useState(false); const [svSt,setSvSt]=useState(false);
+  // ← CHANGED: thêm state cho STRATEGY_CONFIG (threshold per-strategy/per-pattern)
+  const [stratConfig,setStratConfig]=useState({});
+  const [expandedStrat,setExpandedStrat]=useState(null);
+  // ← CHANGED: thêm state cho VOL_ALERT_CONFIG
+  const [volAlertEnabled,setVolAlertEnabled]=useState(true);
+  const [volCycleSeconds,setVolCycleSeconds]=useState("3");
+  const [volSymbolsLimit,setVolSymbolsLimit]=useState("1200");
+  const [volHistorySeconds,setVolHistorySeconds]=useState("600");
+  const [volBtc1m,setVolBtc1m]=useState("2.0");
+  const [volBtc5m,setVolBtc5m]=useState("3.5");
+  const [volBtcCooldown,setVolBtcCooldown]=useState("20");
+  const [volMajor1m,setVolMajor1m]=useState("5.0");
+  const [volMajor5m,setVolMajor5m]=useState("8.0");
+  const [volMajorCooldown,setVolMajorCooldown]=useState("30");
+  const [volMajorSymbols,setVolMajorSymbols]=useState("ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT");
+  const [volWatch1m,setVolWatch1m]=useState("6.0");
+  const [volWatch5m,setVolWatch5m]=useState("10.0");
+  const [volWatchCooldown,setVolWatchCooldown]=useState("25");
+  const [volWatchSymbols,setVolWatchSymbols]=useState("");
+  const [volCoin1m,setVolCoin1m]=useState("10.0");
+  const [volCoin5m,setVolCoin5m]=useState("15.0");
+  const [volCoinCooldown,setVolCoinCooldown]=useState("40");
+  const [volUnusualRatio,setVolUnusualRatio]=useState("3.0");
+  const [volPrioritySymbols,setVolPrioritySymbols]=useState("BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT");
+  const [volExcludeTokens,setVolExcludeTokens]=useState("UP,DOWN,BULL,BEAR,SHORT,LONG");
+  const [sVol,setSVol]=useState(false); const [svVol,setSvVol]=useState(false);
   const [limitEnabled,setLimitEnabled]=useState(true);
   const [limitRp15m,setLimitRp15m]=useState(""); const [limitRp1h,setLimitRp1h]=useState(""); const [limitRp4h,setLimitRp4h]=useState("");
   const [posSizeMode,setPosSizeMode]=useState("fixed_usdt");
@@ -104,6 +132,10 @@ export function SettingsPage() {
     setEngVer(c["ENGINE_VERSION"]||""); setTopLimit(c["TOP_LIMIT"]||""); setTimeframe(c["TIMEFRAME"]||"15m"); setScheduler(c["ENABLE_SCHEDULER"]?.toLowerCase()==="true"); setMonitor(c["ENABLE_MONITOR"]?.toLowerCase()==="true"); setMaxOpenTrades(c["MAX_OPEN_TRADES"]||"50");
     try{const pl=JSON.parse(c["PROFIT_LOCK_CONFIG"]||"{}");setPlEnabled(pl.enabled===true);setPlThreshold(String(pl.threshold_pct??"20"));setPlMinTrades(String(pl.min_open_trades??"3"));setPlCooldown(String(pl.cooldown_minutes??"60"));}catch{}
     try{const pr=JSON.parse(c["PROTECTION_LEVELS_CONFIG"]||"{}");setProtEnabled(pr.enabled!==false);if(pr.timeframes)setProtLevels(pr.timeframes);}catch{}
+    // ← CHANGED: parse STRATEGY_CONFIG vào state
+    try{const sc=JSON.parse(c["STRATEGY_CONFIG"]||"{}");setStratConfig(sc);}catch{setStratConfig({});}
+    // ← CHANGED: parse VOL_ALERT_CONFIG vào state
+    try{const vc=JSON.parse(c["VOL_ALERT_CONFIG"]||"{}");setVolAlertEnabled(vc.enabled!==false);setVolCycleSeconds(String(vc.cycle_seconds||3));setVolSymbolsLimit(String(vc.symbols_limit||1200));setVolHistorySeconds(String(vc.history_seconds||600));if(vc.btc){setVolBtc1m(String(vc.btc.threshold_1m_pct||2.0));setVolBtc5m(String(vc.btc.threshold_5m_pct||3.5));setVolBtcCooldown(String(vc.btc.cooldown_minutes||20));}if(vc.major){setVolMajor1m(String(vc.major.threshold_1m_pct||5.0));setVolMajor5m(String(vc.major.threshold_5m_pct||8.0));setVolMajorCooldown(String(vc.major.cooldown_minutes||30));setVolMajorSymbols(Array.isArray(vc.major.symbols)?vc.major.symbols.join(","):vc.major.symbols||"");}if(vc.watchlist){setVolWatch1m(String(vc.watchlist.threshold_1m_pct||6.0));setVolWatch5m(String(vc.watchlist.threshold_5m_pct||10.0));setVolWatchCooldown(String(vc.watchlist.cooldown_minutes||25));setVolWatchSymbols(Array.isArray(vc.watchlist.symbols)?vc.watchlist.symbols.join(","):vc.watchlist.symbols||"");}if(vc.coin){setVolCoin1m(String(vc.coin.threshold_1m_pct||10.0));setVolCoin5m(String(vc.coin.threshold_5m_pct||15.0));setVolCoinCooldown(String(vc.coin.cooldown_minutes||40));}setVolUnusualRatio(String(vc.unusual_ratio||3.0));setVolPrioritySymbols(Array.isArray(vc.priority_symbols)?vc.priority_symbols.join(","):vc.priority_symbols||"");setVolExcludeTokens(Array.isArray(vc.exclude_tokens)?vc.exclude_tokens.join(","):vc.exclude_tokens||"");}catch{setVolAlertEnabled(true);setVolCycleSeconds("3");setVolSymbolsLimit("1200");setVolHistorySeconds("600");setVolBtc1m("2.0");setVolBtc5m("3.5");setVolBtcCooldown("20");setVolMajor1m("5.0");setVolMajor5m("8.0");setVolMajorCooldown("30");setVolMajorSymbols("ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT");setVolWatch1m("6.0");setVolWatch5m("10.0");setVolWatchCooldown("25");setVolWatchSymbols("");setVolCoin1m("10.0");setVolCoin5m("15.0");setVolCoinCooldown("40");setVolUnusualRatio("3.0");setVolPrioritySymbols("BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT");setVolExcludeTokens("UP,DOWN,BULL,BEAR,SHORT,LONG");}
     if(c["THEME"]) setStoreTheme(c["THEME"]);
     setConnOverride(c["CONNECTION_OVERRIDE"]?.toLowerCase()==="true");
     setConnBnKey(c["BINANCE_API_KEY"]||""); setConnBnSecret(c["BINANCE_API_SECRET"]||""); setConnTgToken(c["TELEGRAM_BOT_TOKEN"]||""); setConnGroq(c["GROQ_API_KEY"]||""); setConnGemini(c["GEMINI_API_KEY"]||"");
@@ -115,6 +147,7 @@ export function SettingsPage() {
   const buildPendJson=()=>JSON.stringify({enabled:pendEnabled,atr_entry_multiplier:{"15m":parseFloat(pendAtr15m)||0,"1h":parseFloat(pendAtr1h)||0,"4h":parseFloat(pendAtr4h)||0},expire_hours:{"15m":parseFloat(pendExp15m)||0,"1h":parseFloat(pendExp1h)||0,"4h":parseFloat(pendExp4h)||0}});
   const buildLimitJson=()=>JSON.stringify({enabled:limitEnabled,entry_reprice_pct:{"15m":parseFloat(limitRp15m)||0,"1h":parseFloat(limitRp1h)||0,"4h":parseFloat(limitRp4h)||0}});
   const buildPosSizeJson=()=>JSON.stringify({mode:posSizeMode,fixed_usdt_per_trade:parseFloat(posFixedUsdt)||200,risk_per_trade_pct:parseFloat(posRiskPct)||0.01,default_leverage:parseInt(posLeverage)||3,max_position_usdt:parseFloat(posMaxUsdt)||500});
+  const buildVolAlertJson=()=>JSON.stringify({enabled:volAlertEnabled,cycle_seconds:parseFloat(volCycleSeconds)||3,symbols_limit:parseInt(volSymbolsLimit)||1200,history_seconds:parseInt(volHistorySeconds)||600,btc:{threshold_1m_pct:parseFloat(volBtc1m)||2.0,threshold_5m_pct:parseFloat(volBtc5m)||3.5,cooldown_minutes:parseFloat(volBtcCooldown)||20},major:{threshold_1m_pct:parseFloat(volMajor1m)||5.0,threshold_5m_pct:parseFloat(volMajor5m)||8.0,cooldown_minutes:parseFloat(volMajorCooldown)||30,symbols:volMajorSymbols.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)},watchlist:{threshold_1m_pct:parseFloat(volWatch1m)||6.0,threshold_5m_pct:parseFloat(volWatch5m)||10.0,cooldown_minutes:parseFloat(volWatchCooldown)||25,symbols:volWatchSymbols.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)},coin:{threshold_1m_pct:parseFloat(volCoin1m)||10.0,threshold_5m_pct:parseFloat(volCoin5m)||15.0,cooldown_minutes:parseFloat(volCoinCooldown)||40},unusual_ratio:parseFloat(volUnusualRatio)||3.0,priority_symbols:volPrioritySymbols.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean),exclude_tokens:volExcludeTokens.split(",").map(s=>s.trim().toUpperCase()).filter(Boolean)});
 
   useEffect(()=>{(async()=>{setLoading(true);try{const[cfg,otf,pf,strats,mode,feed,mlEval]=await Promise.all([loadConfig(),otfApi.get().catch(()=>({enabled:false})),prefillApi.get().catch(()=>({enabled:true})),stratsApi.list().catch(()=>null),tmApi.get().catch(()=>null),fetch("/api/price-feed/status").then(r=>r.json()).catch(()=>null),ml.evaluate(30).catch(()=>null)]);
     setOrig(cfg);applyConfig(cfg);setOtfConfig(otf);setPfConfig(pf);
@@ -132,7 +165,42 @@ export function SettingsPage() {
   const updPf=(path,value)=>{setPfConfig(prev=>{if(!prev)return prev;const next=JSON.parse(JSON.stringify(prev));const keys=path.split(".");let obj=next;for(let i=0;i<keys.length-1;i++){if(!obj[keys[i]]||typeof obj[keys[i]]!=="object")obj[keys[i]]={};obj=obj[keys[i]];}obj[keys[keys.length-1]]=value;return next;});};
   const savePf=async()=>{setSPf(true);setSvPf(false);try{const wlSymbols=wlInput.trim().split(/[\s,]+/).map(s=>s.trim().toUpperCase()).filter(s=>s.length>0).map(s=>s.endsWith("USDT")?s:s+"USDT");const configToSave={...pfConfig,whitelist:wlSymbols.length>0?wlSymbols:[]};await prefillApi.save(configToSave);setPfConfig(configToSave);setSvPf(true);setTimeout(()=>setSvPf(false),3000);toast.success("Pre-Fill Config saved");}catch(e){toast.error(e.message);}finally{setSPf(false);}};
   const toggleStrat=(name)=>{setStratsList(prev=>prev.map(s=>s.name===name?{...s,active:!s.active}:s));};
-  const saveStrats=async()=>{setSSt(true);setSvSt(false);try{const active=stratsList.filter(s=>s.active).map(s=>s.name);if(!active.length)active.push("candlestick");await saveConfigKeys({ACTIVE_STRATEGIES:active.join(",")});setSvSt(true);setTimeout(()=>setSvSt(false),3000);toast.success("Strategies saved");}catch(e){toast.error(e.message);}finally{setSSt(false);}};
+
+  // ← CHANGED: helper cập nhật stratConfig (strategy threshold)
+  const updStratThreshold=(stratName,value)=>{
+    setStratConfig(prev=>{
+      const next=JSON.parse(JSON.stringify(prev));
+      if(!next[stratName])next[stratName]={};
+      if(value===""){
+        delete next[stratName].threshold;  // Remove to use fallback
+      }else{
+        next[stratName].threshold=parseFloat(value)||0;
+      }
+      return next;
+    });
+  };
+
+  // ← CHANGED: helper cập nhật stratConfig (pattern threshold)
+  const updPatternThreshold=(stratName,pattern,value)=>{
+    setStratConfig(prev=>{
+      const next=JSON.parse(JSON.stringify(prev));
+      if(!next[stratName])next[stratName]={};
+      if(!next[stratName].patterns)next[stratName].patterns={};
+      if(value===""){
+        delete next[stratName].patterns[pattern];  // Remove to use fallback
+      }else{
+        next[stratName].patterns[pattern]=parseFloat(value)||0;
+      }
+      return next;
+    });
+  };
+
+  // ← CHANGED: save strategies giờ gồm cả ACTIVE_STRATEGIES + STRATEGY_CONFIG
+  const saveStrats=async()=>{setSSt(true);setSvSt(false);try{const active=stratsList.filter(s=>s.active).map(s=>s.name);if(!active.length)active.push("candlestick");await saveConfigKeys({ACTIVE_STRATEGIES:active.join(","),STRATEGY_CONFIG:JSON.stringify(stratConfig)});setSvSt(true);setTimeout(()=>setSvSt(false),3000);toast.success("Strategies saved");}catch(e){toast.error(e.message);}finally{setSSt(false);}};
+
+  // ← CHANGED: save volatility alerts config
+  const saveVolAlerts=async()=>{setSVol(true);setSvVol(false);try{await saveConfigKeys({VOL_ALERT_CONFIG:buildVolAlertJson()});setSvVol(true);setTimeout(()=>setSvVol(false),3000);toast.success("Volatility Alerts saved");}catch(e){toast.error(e.message);}finally{setSVol(false);}};
+
   const buildProfitLockJson=()=>JSON.stringify({enabled:plEnabled,threshold_pct:parseFloat(plThreshold)||20,min_open_trades:parseInt(plMinTrades)||3,cooldown_minutes:parseInt(plCooldown)||60});
   const buildProtLevelsJson=()=>JSON.stringify({enabled:protEnabled,timeframes:protLevels});
   const saveLiveTrading=async()=>{setSLt(true);setSvLt(false);try{await saveConfigKeys({LIMIT_ORDER_CONFIG:buildLimitJson(),POSITION_SIZE_CONFIG:buildPosSizeJson(),MAX_OPEN_TRADES:maxOpenTrades,PROFIT_LOCK_CONFIG:buildProfitLockJson(),PROTECTION_LEVELS_CONFIG:buildProtLevelsJson()});setSvLt(true);setTimeout(()=>setSvLt(false),3000);toast.success("Live Trading config saved");}catch(e){toast.error(e.message);}finally{setSLt(false);}};
@@ -192,7 +260,248 @@ export function SettingsPage() {
         <div className="flex justify-end pt-4"><Button variant="primary" loading={sPf} onClick={savePf}>{svPf?"✅ Saved!":"💾 Save Prefill Config"}</Button></div>
       </Card></div>)}
 
-      {tab==="strats"&&(()=>{const STRAT_DESC={candlestick:"Mô hình nến: Engulfing, Hammer, Star...",breakout:"Phá vỡ swing high/low + volume surge",mean_reversion:"RSI extreme + BB touch → đảo chiều",pullback:"Trend mạnh → giá về EMA50",trend_following:"EMA crossover + volume confirm"};return(<Card><div className="flex items-center justify-between mb-4"><div><h3 className="text-lg font-semibold text-white">Strategy Management</h3><p className="text-sm text-slate-400">Bật/tắt chiến thuật giao dịch</p></div><Button variant="primary" size="sm" loading={sSt} onClick={saveStrats}>{svSt?"✅ Saved":"Save"}</Button></div><div className="space-y-3">{stratsList.map(s=>(<div key={s.name} className="flex items-center p-4 bg-slate-900/30 rounded-xl border border-slate-700"><Toggle checked={s.active} onChange={()=>toggleStrat(s.name)} /><div className="ml-6 min-w-0"><div className="flex items-center gap-3"><span className="font-medium text-white capitalize">{s.name.replace(/_/g," ")}</span><span className={`text-xs flex-shrink-0 ${s.active?"text-emerald-400":"text-slate-500"}`}>{s.active?"● Active":"○ Inactive"}</span></div><div className="text-xs text-slate-500 mt-0.5">{STRAT_DESC[s.name]||""}</div></div></div>))}</div></Card>);})()}
+      {/* ← CHANGED: Tab Strategies — thêm expand/collapse, threshold per-strategy/per-pattern */}
+      {tab==="strats"&&(()=>{
+        const STRAT_DESC={candlestick:"Mô hình nến: Engulfing, Hammer, Star...",breakout:"Phá vỡ swing high/low + volume surge",mean_reversion:"RSI extreme + BB touch → đảo chiều",pullback:"Trend mạnh → giá về EMA50",trend_following:"EMA crossover + volume confirm"};
+        const globalThreshold = parseFloat(scoreThreshold) || 5.0;
+
+        return(
+          <Card>
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <h3 className="text-lg font-semibold text-white">Strategy Management</h3>
+                <p className="text-sm text-slate-400">Bật/tắt chiến thuật & cấu hình score threshold</p>
+              </div>
+              <Button variant="primary" size="sm" loading={sSt} onClick={saveStrats}>{svSt?"✅ Saved":"Save"}</Button>
+            </div>
+
+            {/* Global threshold hint */}
+            <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <span className="text-xs text-blue-300">
+                ℹ️ Global SCORE_THRESHOLD = <span className="font-mono font-bold">{globalThreshold}</span>
+                <span className="text-blue-400/60 ml-1">(fallback nếu strategy/pattern không có threshold riêng)</span>
+              </span>
+            </div>
+
+            <div className="space-y-3">
+              {stratsList.map(s => {
+                const isExpanded = expandedStrat === s.name;
+                const sc = stratConfig[s.name] || {};
+                const stratThreshold = sc.threshold;
+                const patterns = sc.patterns || {};
+                const patternKeys = Object.keys(patterns);
+                const hasPatterns = patternKeys.length > 0;
+
+                return (
+                  <div key={s.name} className="bg-slate-900/30 rounded-xl border border-slate-700 overflow-hidden">
+                    {/* Header row */}
+                    <div className="flex items-center p-4">
+                      <Toggle checked={s.active} onChange={() => toggleStrat(s.name)} />
+                      <div
+                        className="ml-4 flex-1 min-w-0 cursor-pointer select-none"
+                        onClick={() => setExpandedStrat(isExpanded ? null : s.name)}
+                      >
+                        <div className="flex items-center gap-3">
+                          {isExpanded
+                            ? <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                            : <ChevronRight className="w-4 h-4 text-slate-400 flex-shrink-0" />
+                          }
+                          <span className="font-medium text-white capitalize">
+                            {s.name.replace(/_/g, " ")}
+                          </span>
+                          <span className={`text-xs flex-shrink-0 ${s.active ? "text-emerald-400" : "text-slate-500"}`}>
+                            {s.active ? "● Active" : "○ Inactive"}
+                          </span>
+                          {/* Badge hiển thị strategy threshold nhanh */}
+                          {stratThreshold !== undefined && (
+                            <span className={`text-xs px-2 py-0.5 rounded font-mono flex-shrink-0 ${
+                              parseFloat(stratThreshold) >= 99
+                                ? "bg-red-500/20 text-red-400 border border-red-500/30"
+                                : "bg-slate-700 text-slate-300"
+                            }`}>
+                              {parseFloat(stratThreshold) >= 99 ? "DISABLED" : `≥ ${stratThreshold}`}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5 ml-7">
+                          {STRAT_DESC[s.name] || ""}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Expanded detail */}
+                    {isExpanded && (
+                      <div className="px-4 pb-4 border-t border-slate-700/50">
+                        <div className="pt-4 space-y-4">
+                          {/* Strategy-level threshold */}
+                          <div className="flex items-center gap-4">
+                            <label className="text-sm text-slate-300 w-40 flex-shrink-0">Strategy Threshold</label>
+                            <input
+                              type="number"
+                              step="0.1"
+                              min="0"
+                              max="99"
+                              value={stratThreshold ?? ""}
+                              placeholder={String(globalThreshold)}
+                              onChange={e => {
+                                const val = parseFloat(e.target.value);
+                                if (e.target.value === "" || (val >= 0 && val <= 99)) {
+                                  updStratThreshold(s.name, e.target.value);
+                                }
+                              }}
+                              className="w-32 px-3 py-1.5 bg-slate-900 border border-slate-600 rounded-lg text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <span className="text-xs text-slate-500">
+                              {stratThreshold === undefined || stratThreshold === ""
+                                ? `→ dùng global (${globalThreshold})`
+                                : parseFloat(stratThreshold) >= 99
+                                  ? "→ strategy bị tắt hoàn toàn"
+                                  : `→ cần score ≥ ${stratThreshold} để pass`
+                              }
+                            </span>
+                          </div>
+
+                          {/* Pattern-level thresholds */}
+                          {hasPatterns && (
+                            <div>
+                              <h5 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+                                Pattern Thresholds
+                              </h5>
+                              <div className="space-y-2">
+                                {patternKeys.map(pat => {
+                                  const patVal = patterns[pat];
+                                  const isDisabled = parseFloat(patVal) >= 99;
+                                  const effectiveFallback = stratThreshold ?? globalThreshold;
+
+                                  return (
+                                    <div
+                                      key={pat}
+                                      className={`flex items-center gap-3 px-3 py-2 rounded-lg border ${
+                                        isDisabled
+                                          ? "bg-red-500/5 border-red-500/20"
+                                          : "bg-slate-800/50 border-slate-700/50"
+                                      }`}
+                                    >
+                                      <span className={`text-sm w-44 flex-shrink-0 ${
+                                        isDisabled ? "text-red-400/60 line-through" : "text-slate-300"
+                                      }`}>
+                                        {pat}
+                                      </span>
+                                      <input
+                                        type="number"
+                                        step="0.1"
+                                        min="0"
+                                        max="99"
+                                        value={patVal ?? ""}
+                                        placeholder={String(effectiveFallback)}
+                                        onChange={e => {
+                                          const val = parseFloat(e.target.value);
+                                          if (e.target.value === "" || (val >= 0 && val <= 99)) {
+                                            updPatternThreshold(s.name, pat, e.target.value);
+                                          }
+                                        }}
+                                        className={`w-24 px-2 py-1 bg-slate-900 border rounded text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                                          isDisabled
+                                            ? "border-red-500/30 text-red-400"
+                                            : "border-slate-600 text-white"
+                                        }`}
+                                      />
+                                      {isDisabled && (
+                                        <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30 font-medium">
+                                          DISABLED
+                                        </span>
+                                      )}
+                                      {!isDisabled && patVal !== undefined && (
+                                        <span className="text-xs text-slate-500">
+                                          ≥ {patVal}
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Nếu chưa có patterns, hiển thị hint */}
+                          {!hasPatterns && (
+                            <div className="text-xs text-slate-500 italic px-1">
+                              Chưa có pattern threshold riêng — tất cả dùng strategy threshold
+                              {stratThreshold ? ` (${stratThreshold})` : ` hoặc global (${globalThreshold})`}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            <SaveRow saving={sSt} saved={svSt} onSave={saveStrats} onCancel={() => applyConfig(orig)} />
+          </Card>
+        );
+      })()}
+
+      {tab==="alerts"&&(<Card padding="lg"><CardHeader title="Volatility Alerts" subtitle="Cảnh báo biến động giá bất thường" action={<Bell className="w-5 h-5 text-yellow-400"/>}/>
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+            <BoolField label="Enable Volatility Alerts" value={volAlertEnabled} onChange={setVolAlertEnabled} hint="Bật/tắt cảnh báo biến động giá"/>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <NumField label="Cycle Seconds" value={volCycleSeconds} onChange={setVolCycleSeconds} hint="Delay giữa các cycle (s)" step="1"/>
+            <NumField label="Symbols Limit" value={volSymbolsLimit} onChange={setVolSymbolsLimit} hint="Max symbols để scan" step="100"/>
+            <NumField label="History Seconds" value={volHistorySeconds} onChange={setVolHistorySeconds} hint="Lịch sử giá (s)" step="60"/>
+          </div>
+
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
+            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔶 BTC Alerts</h4>
+            <div className="grid grid-cols-3 gap-4">
+              <NumField label="1M Threshold %" value={volBtc1m} onChange={setVolBtc1m} hint="Biến động 1 phút" step="0.1"/>
+              <NumField label="5M Threshold %" value={volBtc5m} onChange={setVolBtc5m} hint="Biến động 5 phút" step="0.1"/>
+              <NumField label="Cooldown (min)" value={volBtcCooldown} onChange={setVolBtcCooldown} hint="Thời gian chờ" step="5"/>
+            </div>
+          </div>
+
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
+            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔷 Major Coins Alerts</h4>
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <NumField label="1M Threshold %" value={volMajor1m} onChange={setVolMajor1m} hint="Biến động 1 phút" step="0.1"/>
+              <NumField label="5M Threshold %" value={volMajor5m} onChange={setVolMajor5m} hint="Biến động 5 phút" step="0.1"/>
+              <NumField label="Cooldown (min)" value={volMajorCooldown} onChange={setVolMajorCooldown} hint="Thời gian chờ" step="5"/>
+            </div>
+            <TextField label="Major Symbols" value={volMajorSymbols} onChange={setVolMajorSymbols} hint="ETHUSDT,BNBUSDT,SOLUSDT..." placeholder="ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT"/>
+          </div>
+
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
+            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔷 Watchlist Alerts</h4>
+            <div className="grid grid-cols-3 gap-4 mb-4">
+              <NumField label="1M Threshold %" value={volWatch1m} onChange={setVolWatch1m} hint="Biến động 1 phút" step="0.1"/>
+              <NumField label="5M Threshold %" value={volWatch5m} onChange={setVolWatch5m} hint="Biến động 5 phút" step="0.1"/>
+              <NumField label="Cooldown (min)" value={volWatchCooldown} onChange={setVolWatchCooldown} hint="Thời gian chờ" step="5"/>
+            </div>
+            <TextField label="Watchlist Symbols" value={volWatchSymbols} onChange={setVolWatchSymbols} hint="Danh sách coin theo dõi (trống = tắt)" placeholder=""/>
+          </div>
+
+          <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50">
+            <h4 className="text-sm font-semibold text-slate-300 mb-4">🔸 Generic Coin Alerts</h4>
+            <div className="grid grid-cols-3 gap-4">
+              <NumField label="1M Threshold %" value={volCoin1m} onChange={setVolCoin1m} hint="Biến động 1 phút" step="0.1"/>
+              <NumField label="5M Threshold %" value={volCoin5m} onChange={setVolCoin5m} hint="Biến động 5 phút" step="0.1"/>
+              <NumField label="Cooldown (min)" value={volCoinCooldown} onChange={setVolCoinCooldown} hint="Thời gian chờ" step="5"/>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <NumField label="Unusual Ratio" value={volUnusualRatio} onChange={setVolUnusualRatio} hint="Tỷ lệ biến động bất thường" step="0.1"/>
+            <TextField label="Priority Symbols" value={volPrioritySymbols} onChange={setVolPrioritySymbols} hint="Coin ưu tiên scan" placeholder="BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"/>
+          </div>
+
+          <TextField label="Exclude Tokens" value={volExcludeTokens} onChange={setVolExcludeTokens} hint="Token loại bỏ (UP,DOWN,BULL,BEAR...)" placeholder="UP,DOWN,BULL,BEAR,SHORT,LONG"/>
+        </div>
+        <SaveRow saving={sVol} saved={svVol} onSave={saveVolAlerts} onCancel={()=>applyConfig(orig)}/>
+      </Card>)}
 
       {tab==="live"&&(<Card padding="lg"><CardHeader title="Live Trading Config" subtitle="Connection, position sizing & limit order execution" action={<Activity className="w-5 h-5 text-green-400"/>}/>
         <div className="p-4 bg-slate-900/30 rounded-lg border border-slate-700/50 mb-6"><div className="flex items-center justify-between mb-4"><div><h4 className="text-sm font-semibold text-slate-300">Binance Connection</h4><p className="text-xs text-slate-500 mt-0.5">Test kết nối</p></div><div className="flex gap-2"><Button variant="secondary" size="sm" loading={bnConnecting} onClick={()=>testBnConn("testnet")}>🧪 Test Testnet</Button><Button variant="primary" size="sm" loading={bnConnecting} onClick={()=>testBnConn("live")}>💰 Test Live</Button></div></div>

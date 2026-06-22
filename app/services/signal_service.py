@@ -22,7 +22,7 @@ from app.services.derivatives_service import compute_derivative_bias
 from app.services.block_service import check_htf_atr_block,check_funding_block,HTF_BLOCK_CONFIG
 from app.services.config_service import get_runtime_config
 
-from app.strategies.registry import get_active_strategies
+from app.strategies.registry import get_active_strategies, verify_strategy_config, evaluate_candidates  # ← CHANGED: thêm import helpers
 from app.services.open_trade_filter import get_open_trade_filter
 from app.core.trading_mode import get_current_mode, TradingMode
 from app.services.live.capacity_service import get_capacity_snapshot, should_pause_scan
@@ -546,6 +546,9 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     db.commit()   # ✅ FIX CHÍNH Ở ĐÂY
     db.refresh(scan_run)
 
+    # ← CHANGED: verify STRATEGY_CONFIG một lần đầu scan, chỉ warning không chặn
+    verify_strategy_config(runtime_cfg)
+
     symbols         = get_top_symbols(runtime_cfg["TOP_LIMIT"])
     SCORE_THRESHOLD = runtime_cfg["SCORE_THRESHOLD"]
     BATCH_SIZE      = 100
@@ -660,7 +663,6 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 active_strats = get_active_strategies(runtime_cfg)
 
                 signal_candidates = []
-            
 
                 for strat in active_strats:
                     try:
@@ -679,45 +681,44 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 if not signal_candidates:
                     continue
 
-                best = max(signal_candidates, key=lambda s: s.final_score)
-                pattern       = best.pattern
-                strategy_name = best.strategy_name
-                direction     = best.direction
-                components    = best.components
-
                 scan_stats["pattern_detected"] += 1
 
-                # ================= SCORE =================
-                
-                score = best.final_score
+                # ================= EVALUATE CANDIDATES (Phương án 2) =================
+                # ← CHANGED: thay thế toàn bộ block chọn best + score + derivative cũ
+                # Evaluate từng candidate riêng: pre-filter → derivative → threshold riêng
+                # Chọn candidate pass tốt nhất; nếu không có thì lấy best để ghi debug
 
-                # ================= derivative buff score =================
-                technical_score = score
-
-                technical_floor = SCORE_THRESHOLD - pre_buffer
-
-                if technical_score < technical_floor:
-                    scan_stats["score_reject"] += 1
+                try:
+                    best_eval, eval_results = evaluate_candidates(
+                        signal_candidates=signal_candidates,
+                        runtime_cfg=runtime_cfg,
+                        derivative_bias_fn=compute_derivative_bias,
+                        bias_scale_map=bias_scale_map,
+                        pre_buffer=pre_buffer,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                    )
+                except Exception as e:
+                    print(f"[EVAL ERROR] evaluate_candidates failed for {symbol}/{timeframe}: {e}")
                     continue
 
-                raw_bias = compute_derivative_bias(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    direction=direction
-                )
+                if best_eval is None:
+                    continue
 
-                bias_scale = bias_scale_map.get(timeframe, 0.6)
-
-                derivative_bias = raw_bias * bias_scale
-                # Final Score đã được buff các chỉ số liên quan đến Funding, OL...
-                score = round(
-                    max(0, min(10, technical_score + derivative_bias)),
-                    2
-                )
+                # Unpack best candidate
+                best           = best_eval["sig"]
+                pattern        = best.pattern
+                strategy_name  = best.strategy_name
+                direction      = best.direction
+                components     = best.components
+                score          = best_eval["final_score"]
+                derivative_bias = best_eval["derivative_bias"]
+                effective_threshold = best_eval["effective_threshold"]
+                candidate_passed    = best_eval["passed"]
 
                 # ================= INDICATOR SNAPSHOT =================
 
-                indicators_snapshot = build_indicator_snapshot(df,engine_version)
+                indicators_snapshot = build_indicator_snapshot(df, engine_version)
 
                 # ================= CREATE DEBUG (DB) =================
                 debug = ScanDebug(
@@ -733,7 +734,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     mtf_score=float(components.get("mtf_score", 0)),
                     penalty=float(components.get("penalty_norm", 0)),
                     total_score=float(score),
-                    passed_score=score >= SCORE_THRESHOLD,
+                    # ← CHANGED: passed_score dùng effective_threshold thay vì global SCORE_THRESHOLD
+                    passed_score=candidate_passed,
                     derivative_bias=float(derivative_bias),
                     block_reason=None,
                     regime=regime,
@@ -758,7 +760,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     "mtf": components.get("mtf_score"),
                     "penalty": components.get("penalty_norm"),
                     "total_score": score,
-                    "passed_score": score >= SCORE_THRESHOLD,
+                    # ← CHANGED: passed_score dùng effective_threshold
+                    "passed_score": candidate_passed,
                     "block_reason": None,
                     "candle_time": last["time"].to_pydatetime(),
                     "ml_prob": None,
@@ -767,9 +770,13 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 })
 
                 # ================= FILTER =================
-                if score < SCORE_THRESHOLD:
-                    debug.block_reason = "score_threshold"
-                    debug_rows[-1]["block_reason"] = "score_threshold"
+                # ← CHANGED: dùng candidate_passed (đã tính theo effective_threshold)
+                # thay vì so sánh với global SCORE_THRESHOLD
+                if not candidate_passed:
+                    # block_reason có context đầy đủ: strategy::pattern::threshold
+                    block_reason = best_eval.get("reject_reason") or "score_threshold"
+                    debug.block_reason = block_reason
+                    debug_rows[-1]["block_reason"] = block_reason
                     scan_stats["score_reject"] += 1
                     continue
 
@@ -1074,6 +1081,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         total        = row.get("total_score")
         bar          = score_bar(total)
         reason_raw   = row.get("block_reason")
+        # ← CHANGED: block_reason giờ có thể dạng "score_threshold::candlestick::Hammer::8.5"
+        # BLOCK_EMOJI chỉ match exact key, nếu không match thì hiển thị nguyên
         reason_label = BLOCK_EMOJI.get(reason_raw, str(reason_raw))
 
         print(

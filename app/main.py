@@ -392,7 +392,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
-    print("\n🛑 Shutting down...")
+    print(f"\n🛑 Shutting down... [{vn_now_str()}]")
     mark_shutdown()
 
     _main_loop = None
@@ -410,7 +410,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-    print("✅ Shutdown complete")
+    print(f"✅ Shutdown complete [{vn_now_str()}]")
 
 
 # ── App ───────────────────────────────────────────────────────

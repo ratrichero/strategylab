@@ -29,10 +29,7 @@ DEFAULTS = {
     }),
     "OPEN_TRADE_FILTER": json.dumps({"enabled": True}),
     "PREFILL_CONFIG": json.dumps({"enabled": True}),
-    "STRATEGY_THRESHOLDS": json.dumps({
-        "candlestick": 5.0, "breakout": 6.0,
-        "mean_reversion": 5.5, "pullback": 5.5, "trend_following": 5.5
-    }),
+    # ← REMOVED: STRATEGY_THRESHOLDS đã được gộp vào STRATEGY_CONFIG
     "LIMIT_ORDER_CONFIG": json.dumps({
         "enabled": True,
         "entry_reprice_pct": {
@@ -49,10 +46,10 @@ DEFAULTS = {
         "max_position_usdt": 500,
     }),
     "PROFIT_LOCK_CONFIG": json.dumps({
-    "enabled": False,
-    "threshold_pct": 20,
-    "min_open_trades": 3,
-    "cooldown_minutes": 60
+        "enabled": False,
+        "threshold_pct": 20,
+        "min_open_trades": 3,
+        "cooldown_minutes": 60
     }),
     "PROTECTION_LEVELS_CONFIG": json.dumps({
         "enabled": True,
@@ -125,6 +122,8 @@ DEFAULTS = {
         }
     }),
     "CONNECTION_OVERRIDE": "false",
+    # ← CHANGED: STRATEGY_CONFIG là nguồn duy nhất cho threshold per-strategy/per-pattern
+    # Thay thế hoàn toàn STRATEGY_THRESHOLDS (đã bị xóa)
     "STRATEGY_CONFIG": json.dumps({
         "candlestick": {
             "threshold": 7.5,
@@ -162,6 +161,37 @@ DEFAULTS = {
             "threshold": 8.0
         }
     }),
+    "VOL_ALERT_CONFIG": json.dumps({
+        "enabled": True,
+        "cycle_seconds": 3,
+        "symbols_limit": 1200,
+        "history_seconds": 600,
+        "btc": {
+            "threshold_1m_pct": 2.0,
+            "threshold_5m_pct": 3.5,
+            "cooldown_minutes": 20
+        },
+        "major": {
+            "threshold_1m_pct": 5.0,
+            "threshold_5m_pct": 8.0,
+            "cooldown_minutes": 30,
+            "symbols": ["ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT"]
+        },
+        "watchlist": {
+            "threshold_1m_pct": 6.0,
+            "threshold_5m_pct": 10.0,
+            "cooldown_minutes": 25,
+            "symbols": []
+        },
+        "coin": {
+            "threshold_1m_pct": 10.0,
+            "threshold_5m_pct": 15.0,
+            "cooldown_minutes": 40
+        },
+        "unusual_ratio": 3.0,
+        "priority_symbols": ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT"],
+        "exclude_tokens": ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"]
+    }),
 }
 
 _runtime_cache = None
@@ -182,35 +212,35 @@ def get_runtime_config(force_reload=False):
         except: return json.loads(DEFAULTS[key])
 
     _runtime_cache = {
-        "TIMEFRAME":             config.get("TIMEFRAME",             DEFAULTS["TIMEFRAME"]),
-        "SCORE_THRESHOLD":       float(config.get("SCORE_THRESHOLD", DEFAULTS["SCORE_THRESHOLD"])),
-        "BODY_RATIO_THRESHOLD":  float(config.get("BODY_RATIO_THRESHOLD", DEFAULTS["BODY_RATIO_THRESHOLD"])),
-        "VOLUME_MULTIPLIER":     float(config.get("VOLUME_MULTIPLIER",    DEFAULTS["VOLUME_MULTIPLIER"])),
-        "ATR_RATIO_MIN":         float(config.get("ATR_RATIO_MIN",        DEFAULTS["ATR_RATIO_MIN"])),
-        "COOLDOWN_HOURS":        int(config.get("COOLDOWN_HOURS",         DEFAULTS["COOLDOWN_HOURS"])),
-        "AI_THRESHOLD":          float(config.get("AI_THRESHOLD",         DEFAULTS["AI_THRESHOLD"])),
-        "TOP_LIMIT":             int(config.get("TOP_LIMIT",              DEFAULTS["TOP_LIMIT"])),
-        "MTF_ENABLED":           config.get("MTF_ENABLED", "true").lower() == "true",
-        "ENABLE_SCHEDULER":      config.get("ENABLE_SCHEDULER", "true").lower() == "true",
-        "ENABLE_MONITOR":        config.get("ENABLE_MONITOR",  "true").lower() == "true",
-        "ENGINE_VERSION":        float(config.get("ENGINE_VERSION",       DEFAULTS["ENGINE_VERSION"])),
-        "ACTIVE_STRATEGIES":     config.get("ACTIVE_STRATEGIES",          DEFAULTS["ACTIVE_STRATEGIES"]),
-        "TRADING_MODE":          config.get("TRADING_MODE",               DEFAULTS["TRADING_MODE"]),
-        "RISK_CONFIG":           parse_json("RISK_CONFIG"),
-        "DERIVATIVE_CONFIG":     parse_json("DERIVATIVE_CONFIG"),
-        "PENDING_CONFIG":        parse_json("PENDING_CONFIG"),
-        "OPEN_TRADE_FILTER":     parse_json("OPEN_TRADE_FILTER"),
-        "PREFILL_CONFIG":        parse_json("PREFILL_CONFIG"),
-        "STRATEGY_THRESHOLDS":   parse_json("STRATEGY_THRESHOLDS"),
-        "MAX_OPEN_TRADES":       int(config.get("MAX_OPEN_TRADES", DEFAULTS["MAX_OPEN_TRADES"])),
-        "LIMIT_ORDER_CONFIG":    parse_json("LIMIT_ORDER_CONFIG"),
-        "POSITION_SIZE_CONFIG":  parse_json("POSITION_SIZE_CONFIG"),
-        "CONNECTION_OVERRIDE":   config.get("CONNECTION_OVERRIDE", DEFAULTS["CONNECTION_OVERRIDE"]),
-        "STRATEGY_CONFIG":       parse_json("STRATEGY_CONFIG"),
+        "TIMEFRAME":                config.get("TIMEFRAME",             DEFAULTS["TIMEFRAME"]),
+        "SCORE_THRESHOLD":          float(config.get("SCORE_THRESHOLD", DEFAULTS["SCORE_THRESHOLD"])),
+        "BODY_RATIO_THRESHOLD":     float(config.get("BODY_RATIO_THRESHOLD", DEFAULTS["BODY_RATIO_THRESHOLD"])),
+        "VOLUME_MULTIPLIER":        float(config.get("VOLUME_MULTIPLIER",    DEFAULTS["VOLUME_MULTIPLIER"])),
+        "ATR_RATIO_MIN":            float(config.get("ATR_RATIO_MIN",        DEFAULTS["ATR_RATIO_MIN"])),
+        "COOLDOWN_HOURS":           int(config.get("COOLDOWN_HOURS",         DEFAULTS["COOLDOWN_HOURS"])),
+        "AI_THRESHOLD":             float(config.get("AI_THRESHOLD",         DEFAULTS["AI_THRESHOLD"])),
+        "TOP_LIMIT":                int(config.get("TOP_LIMIT",              DEFAULTS["TOP_LIMIT"])),
+        "MTF_ENABLED":              config.get("MTF_ENABLED", "true").lower() == "true",
+        "ENABLE_SCHEDULER":         config.get("ENABLE_SCHEDULER", "true").lower() == "true",
+        "ENABLE_MONITOR":           config.get("ENABLE_MONITOR",  "true").lower() == "true",
+        "ENGINE_VERSION":           float(config.get("ENGINE_VERSION",       DEFAULTS["ENGINE_VERSION"])),
+        "ACTIVE_STRATEGIES":        config.get("ACTIVE_STRATEGIES",          DEFAULTS["ACTIVE_STRATEGIES"]),
+        "TRADING_MODE":             config.get("TRADING_MODE",               DEFAULTS["TRADING_MODE"]),
+        "RISK_CONFIG":              parse_json("RISK_CONFIG"),
+        "DERIVATIVE_CONFIG":        parse_json("DERIVATIVE_CONFIG"),
+        "PENDING_CONFIG":           parse_json("PENDING_CONFIG"),
+        "OPEN_TRADE_FILTER":        parse_json("OPEN_TRADE_FILTER"),
+        "PREFILL_CONFIG":           parse_json("PREFILL_CONFIG"),
+        # ← REMOVED: STRATEGY_THRESHOLDS đã gộp vào STRATEGY_CONFIG
+        "MAX_OPEN_TRADES":          int(config.get("MAX_OPEN_TRADES", DEFAULTS["MAX_OPEN_TRADES"])),
+        "LIMIT_ORDER_CONFIG":       parse_json("LIMIT_ORDER_CONFIG"),
+        "POSITION_SIZE_CONFIG":     parse_json("POSITION_SIZE_CONFIG"),
+        "CONNECTION_OVERRIDE":      config.get("CONNECTION_OVERRIDE", DEFAULTS["CONNECTION_OVERRIDE"]),
+        "STRATEGY_CONFIG":          parse_json("STRATEGY_CONFIG"),  # ← nguồn duy nhất cho threshold
+        "VOL_ALERT_CONFIG":         parse_json("VOL_ALERT_CONFIG"),
         "PROFIT_LOCK_CONFIG":       parse_json("PROFIT_LOCK_CONFIG"),
         "PROTECTION_LEVELS_CONFIG": parse_json("PROTECTION_LEVELS_CONFIG"),
-        "RETRY_POLICY_CONFIG":     parse_json("RETRY_POLICY_CONFIG"),
-        
+        "RETRY_POLICY_CONFIG":      parse_json("RETRY_POLICY_CONFIG"),
     }
     return _runtime_cache
 
@@ -219,9 +249,14 @@ def update_runtime_config(data: dict):
     global _runtime_cache
     db = SessionLocal()
     for k, v in data.items():
-        if k in ["RISK_CONFIG","DERIVATIVE_CONFIG","PENDING_CONFIG",
-                 "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS",
-                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG","STRATEGY_CONFIG","PROFIT_LOCK_CONFIG","PROTECTION_LEVELS_CONFIG","RETRY_POLICY_CONFIG"]:
+        if k in ["RISK_CONFIG", "DERIVATIVE_CONFIG", "PENDING_CONFIG",
+                 "OPEN_TRADE_FILTER", "PREFILL_CONFIG",
+                 # ← REMOVED: "STRATEGY_THRESHOLDS" đã gộp vào STRATEGY_CONFIG
+                 "LIMIT_ORDER_CONFIG", "POSITION_SIZE_CONFIG",
+                 "STRATEGY_CONFIG",  # ← nguồn duy nhất
+                 "VOL_ALERT_CONFIG",
+                 "PROFIT_LOCK_CONFIG", "PROTECTION_LEVELS_CONFIG",
+                 "RETRY_POLICY_CONFIG"]:
             try: json.loads(v)
             except: db.close(); raise ValueError(f"{k} is invalid JSON")
         db.execute(text("""
@@ -231,7 +266,6 @@ def update_runtime_config(data: dict):
         """), {"k": k, "v": str(v)})
     db.commit(); db.close()
     _runtime_cache = None
-
 
 
 CONNECTION_KEYS = [
