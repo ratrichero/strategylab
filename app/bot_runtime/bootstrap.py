@@ -81,6 +81,21 @@ class BootstrapCache:
         self._cache_path = cache_path
         self._bot_secret = bot_secret
 
+    def verify_parent_writable(self) -> bool:
+        """Check that the configured cache directory can actually be written."""
+        cache_dir = os.path.dirname(self._cache_path) or "."
+        test_path = os.path.join(cache_dir, f".bootstrap_write_test_{os.getpid()}")
+        try:
+            os.makedirs(cache_dir, mode=0o700, exist_ok=True)
+            with open(test_path, "w") as f:
+                f.write("ok")
+            os.remove(test_path)
+            print(f"[BOOTSTRAP] Cache directory writable: {cache_dir}")
+            return True
+        except Exception as e:
+            print(f"[BOOTSTRAP] Cache directory is not writable: {cache_dir}: {e}")
+            return False
+
     def load(self) -> Optional[BootstrapData]:
         """
         Đọc cache từ file.
@@ -130,7 +145,12 @@ class BootstrapCache:
             except OSError:
                 pass  # Windows không support chmod
 
-            print(f"[BOOTSTRAP] Cache saved: {self._cache_path}")
+            if not os.path.exists(self._cache_path):
+                print(f"[BOOTSTRAP] Cache save reported success but file is missing: {self._cache_path}")
+                return False
+
+            size = os.path.getsize(self._cache_path)
+            print(f"[BOOTSTRAP] Cache saved: {self._cache_path} ({size} bytes)")
             return True
 
         except Exception as e:

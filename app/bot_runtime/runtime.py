@@ -76,6 +76,7 @@ class BotRuntime:
 
         # ── Step 2: Init cache + license client ────────────────
         self._cache = BootstrapCache(cache_path, bot_secret)
+        self._cache.verify_parent_writable()
         self._license_client = LicenseClient(
             bot_id=bot_id,
             bot_secret=bot_secret,
