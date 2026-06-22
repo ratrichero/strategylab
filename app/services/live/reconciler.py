@@ -12,6 +12,8 @@ from app.services.execution_service import (
     place_algo_stop_market_close_position,
     place_algo_take_profit_market_close_position,
     get_executor,
+    list_open_orders,
+    list_open_positions,
 )
 from app.services.execution_service import get_open_algo_orders
 from app.services.live.protection_service import (
@@ -83,6 +85,43 @@ def reconcile_all_active_symbols():
     # Sau khi reconcile xong toàn bộ active symbols,
     # nếu số active live symbols vẫn vượt cap,
     # chủ động hủy bớt resting zero-fill entries.
+    _enforce_live_hard_cap()
+
+
+def reconcile_all_exchange_symbols():
+    symbols = set()
+
+    with SessionLocal() as db:
+        symbols |= set(_get_active_symbols(db))
+
+    try:
+        for pos in list_open_positions() or []:
+            symbol = pos.get("symbol")
+            if symbol:
+                symbols.add(symbol)
+    except Exception as e:
+        print(f"[LIVE RECONCILE] list_open_positions failed: {type(e).__name__}: {e}")
+
+    try:
+        for order in list_open_orders() or []:
+            symbol = order.get("symbol")
+            if symbol:
+                symbols.add(symbol)
+    except Exception as e:
+        print(f"[LIVE RECONCILE] list_open_orders failed: {type(e).__name__}: {e}")
+
+    try:
+        for algo in get_open_algo_orders(None) or []:
+            symbol = algo.get("symbol")
+            if symbol:
+                symbols.add(symbol)
+    except Exception as e:
+        print(f"[LIVE RECONCILE] get_open_algo_orders failed: {type(e).__name__}: {e}")
+
+    print(f"[LIVE RECONCILE] startup exchange-wide symbols={len(symbols)}")
+    for symbol in sorted(s for s in symbols if s):
+        reconcile_symbol(symbol, allow_orphan_exchange_check=True)
+
     _enforce_live_hard_cap()
 
 
@@ -398,7 +437,7 @@ def _notify_breakeven_applied(signal: Signal, new_sl_price: float):
     except Exception as e:
         print(f"[BREAKEVEN NOTIFY] {e}")
 
-def reconcile_symbol(symbol: str):
+def reconcile_symbol(symbol: str, allow_orphan_exchange_check: bool = False):
     with live_symbol_lock(symbol, blocking=False) as acquired:
         if not acquired:
             return
@@ -407,6 +446,22 @@ def reconcile_symbol(symbol: str):
             pending, signal, commands = _load_aggregate(db, symbol)
 
             if not pending and not signal and not commands:
+                if allow_orphan_exchange_check:
+                    snapshot = build_symbol_snapshot(symbol, pending=None, need_algo_detail=True)
+                    if not snapshot.ok:
+                        print(f"[LIVE RECONCILE] orphan snapshot fail {symbol}: {snapshot.error}")
+                        return
+                    if (
+                        snapshot.position.exists
+                        or snapshot.open_normal_orders
+                        or snapshot.open_algo_orders
+                    ):
+                        print(
+                            f"[LIVE RECONCILE][ORPHAN_EXCHANGE_ACTIVITY] {symbol} "
+                            f"position={snapshot.position.exists} "
+                            f"normal_orders={len(snapshot.open_normal_orders)} "
+                            f"algo_orders={len(snapshot.open_algo_orders)}"
+                        )
                 return
 
             # ── Throttle check cho resting symbols ───────

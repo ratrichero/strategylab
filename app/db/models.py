@@ -289,6 +289,7 @@ class PendingSignal(Base):
     regime           = Column(String)
 
     # ── live/testnet execution tracking params ───────────
+    client_order_id       = Column(String, nullable=True)
     exchange_order_id     = Column(String, nullable=True)
     exchange_status       = Column(String, nullable=True)
     placed_at             = _dt(nullable=True)

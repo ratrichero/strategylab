@@ -52,11 +52,23 @@ async def user_stream_status():
     return get_user_stream().get_stats()
 
 
+@router.get("/api/live/health")
+async def live_health():
+    from app.services.live_health_service import get_live_health
+    return await asyncio.to_thread(get_live_health)
+
+
 @router.post("/api/user-stream/restart")
 async def user_stream_restart():
     from app.services.binance_user_stream_service import restart_user_stream
     restart_user_stream()
     return {"ok": True, "message": "User stream restart requested"}
+
+
+@router.post("/api/admin/backfill-exchange-close-unknown")
+async def backfill_exchange_close_unknown(limit: int = 500, dry_run: bool = True):
+    from app.services.exchange_close_backfill import backfill_exchange_close_unknown as run_backfill
+    return await asyncio.to_thread(run_backfill, limit=limit, dry_run=dry_run)
 
 
 @router.put("/api/trading-mode")

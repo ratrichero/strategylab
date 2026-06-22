@@ -124,6 +124,7 @@ class OrderResult:
     leverage:        int             = 1
     sl_order_id:     Optional[str]   = None
     tp_order_id:     Optional[str]   = None
+    client_order_id: Optional[str]   = None
 
 
 # ============================================================
@@ -647,6 +648,21 @@ class BinanceExecutor:
             print(f"[EXEC] Get open orders error {symbol}: {e}")
             return []
 
+    def list_open_orders(self) -> List[Dict]:
+        if not self.ready:
+            return []
+
+        def _do():
+            return self._client.get_orders(
+                **self._signed_params()
+            )
+
+        try:
+            return self._call_signed_with_retry(_do) or []
+        except Exception as e:
+            print(f"[EXEC] List open orders error: {e}")
+            return []
+
     def get_open_orders_checked(self, symbol: str) -> List[Dict]:
         if not self.ready:
             raise ExchangeQueryError("Executor not ready")
@@ -1006,7 +1022,8 @@ def place_limit_entry_order(pending) -> OrderResult:
             actual_entry=float(price),
             actual_quantity=float(quantity),
             leverage=leverage,
-            mode=mode.get_mode().value
+            mode=mode.get_mode().value,
+            client_order_id=client_order_id,
         )
 
     except Exception as e:
@@ -1518,6 +1535,18 @@ def list_open_positions() -> List[Dict]:
         return []
 
     return executor.list_open_positions()
+
+
+def list_open_orders() -> List[Dict]:
+    mode = get_trading_mode()
+    if mode.is_paper:
+        return []
+
+    executor = get_executor()
+    if not executor or not executor.ready:
+        return []
+
+    return executor.list_open_orders()
 
 
 def check_position_closed(trade) -> bool:

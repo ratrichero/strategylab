@@ -271,6 +271,8 @@ def request_emergency_close(symbol: str, signal_id: Optional[int], pending_id: O
         trade = None
         if signal_id:
             trade = db.query(Signal).get(signal_id)
+            if not trade:
+                signal_id = None
 
         price_hint = _get_price_hint(symbol)
 

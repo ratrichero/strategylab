@@ -1,4 +1,5 @@
 import os
+import json
 import time
 from collections import deque
 from statistics import mean
@@ -62,26 +63,40 @@ class VolatilityAlertService:
     def __init__(self):
         self._states: Dict[str, _SymbolState] = {}
         self._last_cycle = 0.0
-        # Khoảng thời gian giữa các lần duyệt cảnh báo để không chạy quá tải price feed.
+        self._recent_alerts: Deque[dict] = deque(maxlen=50)
         self._cycle_delay = float(os.getenv("VOL_ALERT_CYCLE_SECONDS", "3"))
-        # Giới hạn số symbol được xử lý mỗi lần để giữ hiệu năng.
         self._symbols_limit = int(os.getenv("VOL_ALERT_SYMBOL_LIMIT", "1200"))
-        # Ngưỡng cảnh báo cho BTC.
         self._btc_threshold_1m = float(os.getenv("VOL_ALERT_BTC_1M_PCT", "2.0"))
         self._btc_threshold_5m = float(os.getenv("VOL_ALERT_BTC_5M_PCT", "3.5"))
-        # Thời gian chờ giữa 2 cảnh báo BTC cùng loại, tránh spam.
         self._btc_cooldown = float(os.getenv("VOL_ALERT_BTC_COOLDOWN_MINUTES", "20")) * 60
-        # Coin khác: 1 phút > 10%, 5 phút > 15% mới cảnh báo.
+        self._major_threshold_1m = float(os.getenv("VOL_ALERT_MAJOR_1M_PCT", "5.0"))
+        self._major_threshold_5m = float(os.getenv("VOL_ALERT_MAJOR_5M_PCT", "8.0"))
+        self._major_cooldown = float(os.getenv("VOL_ALERT_MAJOR_COOLDOWN_MINUTES", "30")) * 60
+        self._watch_threshold_1m = float(os.getenv("VOL_ALERT_WATCHLIST_1M_PCT", "6.0"))
+        self._watch_threshold_5m = float(os.getenv("VOL_ALERT_WATCHLIST_5M_PCT", "10.0"))
+        self._watch_cooldown = float(os.getenv("VOL_ALERT_WATCHLIST_COOLDOWN_MINUTES", "25")) * 60
         self._coin_threshold_1m = float(os.getenv("VOL_ALERT_COIN_1M_PCT", "10.0"))
         self._coin_threshold_5m = float(os.getenv("VOL_ALERT_COIN_5M_PCT", "15.0"))
-        # Thời gian chờ giữa 2 cảnh báo cùng symbol coin khác.
         self._coin_cooldown = float(os.getenv("VOL_ALERT_COIN_COOLDOWN_MINUTES", "40")) * 60
-        # Ngưỡng phát hiện sớm: biến động 1m lớn bất thường so với trung bình và tối thiểu 5%.
         self._unusual_ratio = float(os.getenv("VOL_ALERT_UNUSUAL_RATIO", "3.0"))
-        # Bật/tắt toàn bộ cơ chế cảnh báo.
         self._enabled = os.getenv("ENABLE_VOL_ALERTS", "true").lower() in ["1", "true", "yes", "on"]
-        # Loại trừ các symbol dạng token đòn bẩy, hướng tăng giảm, vì chỉ cần USDT spot.
         self._exclude_tokens = ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"]
+        self._priority_symbols = [
+            s.strip().upper()
+            for s in os.getenv("VOL_ALERT_PRIORITY_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT").split(",")
+            if s.strip()
+        ]
+        self._major_symbols = {
+            s.strip().upper()
+            for s in os.getenv("VOL_ALERT_MAJOR_SYMBOLS", "ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT").split(",")
+            if s.strip()
+        }
+        self._watchlist_symbols = {
+            s.strip().upper()
+            for s in os.getenv("VOL_ALERT_WATCHLIST_SYMBOLS", "").split(",")
+            if s.strip()
+        }
+        self._table_ready = False
 
     def callback(self, price_map: dict):
         if not self._enabled:
@@ -98,7 +113,7 @@ class VolatilityAlertService:
         alerts = []
         symbols_checked = 0
 
-        for symbol, price in price_map.items():
+        for symbol, price in self._iter_symbols(price_map):
             if symbols_checked >= self._symbols_limit:
                 break
             if not self._is_valid_symbol(symbol):
@@ -118,8 +133,20 @@ class VolatilityAlertService:
             return
 
         alerts.sort(key=lambda x: (x["priority"], -x["magnitude"]))
-        alerts = alerts[:6]
-        self._emit_message(alerts)
+        selected = alerts[:6]
+        self._persist_alerts(selected)
+        self._emit_message(selected)
+
+    def _iter_symbols(self, price_map: dict):
+        seen = set()
+        for symbol in self._priority_symbols:
+            if symbol in price_map:
+                seen.add(symbol)
+                yield symbol, price_map.get(symbol)
+        for symbol, price in price_map.items():
+            if symbol in seen:
+                continue
+            yield symbol, price
 
     def _is_valid_symbol(self, symbol: str) -> bool:
         if not symbol.endswith("USDT"):
@@ -140,42 +167,44 @@ class VolatilityAlertService:
             return None
 
         current = state.last_price
-        direction = "UP" if (price_1m and current > price_1m[0]) or (price_5m and current > price_5m[0]) else "DOWN"
         delta_1m = ((current - price_1m[0]) / price_1m[0] * 100) if price_1m else 0.0
         delta_5m = ((current - price_5m[0]) / price_5m[0] * 100) if price_5m else 0.0
         abs_1m = abs(delta_1m)
         abs_5m = abs(delta_5m)
 
-        btc = symbol == "BTCUSDT"
-        threshold_1m = self._btc_threshold_1m if btc else self._coin_threshold_1m
-        threshold_5m = self._btc_threshold_5m if btc else self._coin_threshold_5m
-        cooldown = self._btc_cooldown if btc else self._coin_cooldown
+        group, threshold_1m, threshold_5m, cooldown = self._thresholds_for(symbol)
         age_since_alert = now - state.last_alert_at
 
-        # Chỉ gửi cảnh báo với mỗi symbol sau khi cooldown hết hạn.
         if age_since_alert < cooldown:
             return None
 
-        # Tính biến động ngắn hạn, dùng để phát hiện cú tăng/giảm bất thường sớm.
         avg_move = state.avg_short_move(now)
-        unusual_move = avg_move and abs_1m >= max(1.2, avg_move * self._unusual_ratio) and abs_1m >= 5.0
+        unusual_move = bool(avg_move and abs_1m >= max(1.2, avg_move * self._unusual_ratio) and abs_1m >= 5.0)
 
+        trigger_tf = None
         alert_type = None
-        if btc and abs_1m >= threshold_1m:
+        if group == "btc" and abs_1m >= threshold_1m:
+            trigger_tf = "1m"
             alert_type = "BTC 1m"
-        elif btc and abs_5m >= threshold_5m:
+        elif group == "btc" and abs_5m >= threshold_5m:
+            trigger_tf = "5m"
             alert_type = "BTC 5m"
-        elif not btc and abs_1m >= threshold_1m:
-            alert_type = "Lướt ngắn"
-        elif not btc and abs_5m >= threshold_5m:
-            alert_type = "Tăng/giảm lớn"
+        elif group != "btc" and abs_1m >= threshold_1m:
+            trigger_tf = "1m"
+            alert_type = "Short-term spike"
+        elif group != "btc" and abs_5m >= threshold_5m:
+            trigger_tf = "5m"
+            alert_type = "Large move"
         elif unusual_move:
-            alert_type = "Bất thường sớm"
+            trigger_tf = "1m"
+            alert_type = "Early abnormal move"
 
         if not alert_type:
             return None
 
-        level = f"{direction}:{alert_type}" 
+        trigger_delta = delta_1m if trigger_tf == "1m" else delta_5m
+        direction = "UP" if trigger_delta > 0 else "DOWN"
+        level = f"{direction}:{alert_type}"
         if state.last_alert_key == level and age_since_alert < cooldown * 2:
             return None
 
@@ -187,24 +216,117 @@ class VolatilityAlertService:
             "direction": direction,
             "delta_1m": abs_1m,
             "delta_5m": abs_5m,
+            "signed_delta_1m": delta_1m,
+            "signed_delta_5m": delta_5m,
             "reason": alert_type,
+            "trigger_tf": trigger_tf,
+            "group": group,
             "magnitude": max(abs_1m, abs_5m),
-            "priority": 0 if btc else 1,
+            "priority": {"btc": 0, "watchlist": 1, "major": 2}.get(group, 3),
+            "ts": now,
         }
 
+    def _thresholds_for(self, symbol: str):
+        if symbol == "BTCUSDT":
+            return "btc", self._btc_threshold_1m, self._btc_threshold_5m, self._btc_cooldown
+        if symbol in self._watchlist_symbols:
+            return "watchlist", self._watch_threshold_1m, self._watch_threshold_5m, self._watch_cooldown
+        if symbol in self._major_symbols:
+            return "major", self._major_threshold_1m, self._major_threshold_5m, self._major_cooldown
+        return "alt", self._coin_threshold_1m, self._coin_threshold_5m, self._coin_cooldown
+
     def _emit_message(self, alerts: List[dict]):
-        lines = ["<b>⚠️ Volatility Alert</b>"]
-        lines.append("Giảm/ tăng bất thường theo giá realtime. Chỉ gửi khi thay đổi đủ lớn.")
+        lines = ["<b>VOLATILITY ALERT</b>"]
+        lines.append("Realtime price move detected. Cooldown is applied per symbol.")
 
         for alert in alerts:
-            symbol = alert["symbol"]
-            sign = "🟢🔺" if alert["direction"] == "UP" else "🔴🔻"
+            direction = "UP" if alert["direction"] == "UP" else "DOWN"
+            self._recent_alerts.appendleft(dict(alert))
             lines.append(
-                f"{sign} <b>{symbol}</b>: {alert['reason']} | 1m {alert['delta_1m']:.2f}% | 5m {alert['delta_5m']:.2f}%"
+                f"[{direction}] <b>{alert['symbol']}</b>: {alert['reason']} "
+                f"| 1m {alert['signed_delta_1m']:+.2f}% "
+                f"| 5m {alert['signed_delta_5m']:+.2f}%"
             )
 
-        lines.append("\nKích hoạt cảnh báo sớm cho BTC và coin biến động bất thường.")
+        lines.append("\nUse this as early warning only; trade execution rules are unchanged.")
         send_telegram("\n".join(lines))
+
+    def get_recent_alerts(self, limit: int = 10) -> List[dict]:
+        limit = max(0, int(limit))
+        memory = list(self._recent_alerts)[:limit]
+        if len(memory) >= limit:
+            return memory
+
+        rows = get_recent_persisted_alerts(limit=limit - len(memory))
+        return memory + rows
+
+    def _persist_alerts(self, alerts: List[dict]):
+        if not alerts:
+            return
+        try:
+            self._ensure_table()
+            from sqlalchemy import text
+            from app.db.session import SessionLocal
+
+            with SessionLocal() as db:
+                for alert in alerts:
+                    db.execute(text("""
+                        INSERT INTO market_alert_events (
+                            symbol, alert_group, direction, reason, trigger_tf,
+                            delta_1m, delta_5m, magnitude, event_ts, raw
+                        )
+                        VALUES (
+                            :symbol, :alert_group, :direction, :reason, :trigger_tf,
+                            :delta_1m, :delta_5m, :magnitude, to_timestamp(:event_ts), CAST(:raw AS jsonb)
+                        )
+                    """), {
+                        "symbol": alert.get("symbol"),
+                        "alert_group": alert.get("group"),
+                        "direction": alert.get("direction"),
+                        "reason": alert.get("reason"),
+                        "trigger_tf": alert.get("trigger_tf"),
+                        "delta_1m": alert.get("signed_delta_1m"),
+                        "delta_5m": alert.get("signed_delta_5m"),
+                        "magnitude": alert.get("magnitude"),
+                        "event_ts": alert.get("ts") or time.time(),
+                        "raw": json.dumps(alert, default=str),
+                    })
+                db.commit()
+        except Exception as e:
+            print(f"[VOL ALERT] persist error: {type(e).__name__}: {e}")
+
+    def _ensure_table(self):
+        if self._table_ready:
+            return
+        from sqlalchemy import text
+        from app.db.session import engine
+
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS market_alert_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    alert_group TEXT,
+                    direction TEXT,
+                    reason TEXT,
+                    trigger_tf TEXT,
+                    delta_1m DOUBLE PRECISION,
+                    delta_5m DOUBLE PRECISION,
+                    magnitude DOUBLE PRECISION,
+                    event_ts TIMESTAMPTZ,
+                    raw JSONB,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_market_alert_events_created
+                ON market_alert_events (created_at DESC)
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_market_alert_events_symbol_created
+                ON market_alert_events (symbol, created_at DESC)
+            """))
+        self._table_ready = True
 
 
 _service = VolatilityAlertService()
@@ -214,3 +336,32 @@ def register_volatility_alerts():
     from app.services.price_feed import add_price_callback
 
     add_price_callback(_service.callback)
+
+
+def get_recent_volatility_alerts(limit: int = 10) -> List[dict]:
+    return _service.get_recent_alerts(limit)
+
+
+def ensure_market_alert_table():
+    _service._ensure_table()
+
+
+def get_recent_persisted_alerts(limit: int = 10, hours: int = 24) -> List[dict]:
+    try:
+        ensure_market_alert_table()
+        from sqlalchemy import text
+        from app.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            rows = db.execute(text("""
+                SELECT symbol, alert_group, direction, reason, trigger_tf,
+                       delta_1m, delta_5m, magnitude, event_ts, created_at
+                FROM market_alert_events
+                WHERE created_at >= NOW() - (:hours || ' hours')::interval
+                ORDER BY created_at DESC
+                LIMIT :limit
+            """), {"hours": int(hours), "limit": int(limit)}).mappings().all()
+        return [dict(row) for row in rows]
+    except Exception as e:
+        print(f"[VOL ALERT] recent query error: {type(e).__name__}: {e}")
+        return []

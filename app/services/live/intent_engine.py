@@ -128,7 +128,8 @@ def _entry_client_order_id(pending_id: int) -> str:
 
 
 def _relink_existing_entry_order(db, p: PendingSignal, now) -> bool:
-    order = get_entry_order_by_client_id(p.symbol, _entry_client_order_id(p.id))
+    client_order_id = p.client_order_id or _entry_client_order_id(p.id)
+    order = get_entry_order_by_client_id(p.symbol, client_order_id)
     if not order:
         return False
 
@@ -137,6 +138,7 @@ def _relink_existing_entry_order(db, p: PendingSignal, now) -> bool:
         return False
 
     p.exchange_order_id = str(order_id)
+    p.client_order_id = client_order_id
     p.exchange_status = str(order.get("status") or "UNKNOWN")
     p.placed_at = p.placed_at or now
     p.order_quantity = float(order.get("origQty", 0) or p.order_quantity or 0)
@@ -397,6 +399,7 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             return
 
         p.exchange_order_id = exec_result.order_id
+        p.client_order_id = exec_result.client_order_id or _entry_client_order_id(p.id)
         p.exchange_status = "NEW"
         p.placed_at = now
         p.order_quantity = exec_result.actual_quantity

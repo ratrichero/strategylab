@@ -362,7 +362,7 @@ export function AccountPage() {
         </div>)}
       </TabContent>
 
-      {!accountInfo && (<Card className="border-yellow-500/30"><div className="flex items-center gap-3 p-2"><ShieldAlert className="w-5 h-5 text-yellow-400 flex-shrink-0" /><div><p className="text-sm text-yellow-300 font-medium">Account API not configured</p><p className="text-xs text-slate-400 mt-0.5">Backend cáº§n expose cÃ¡c endpoint: /api/account/info, /api/account/positions, /api/account/open-orders, /api/account/trades, /api/account/income.</p></div></div></Card>)}
+      {!accountInfo && (<Card className="border-yellow-500/30"><div className="flex items-center gap-3 p-2"><ShieldAlert className="w-5 h-5 text-yellow-400 flex-shrink-0" /><div><p className="text-sm text-yellow-300 font-medium">Account API not configured</p><p className="text-xs text-slate-400 mt-0.5">Backend cần expose các endpoint: /api/account/info, /api/account/positions, /api/account/open-orders, /api/account/trades, /api/account/income.</p></div></div></Card>)}
     </div>
   );
 }

@@ -646,6 +646,7 @@ def _process_single_live(db, p, price_map, now):
             return
 
         p.exchange_order_id = exec_result.order_id
+        p.client_order_id = exec_result.client_order_id or f"QRL_ENTRY_{p.id}"[:36]
         p.exchange_status = "NEW"
         p.placed_at = now
         p.order_quantity = exec_result.actual_quantity

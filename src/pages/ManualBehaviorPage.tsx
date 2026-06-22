@@ -230,7 +230,7 @@ export function ManualBehaviorPage() {
               return [
                 ['Total', std.length], ['Wins', w], ['Win Rate', `${wr.toFixed(1)}%`],
                 ['Avg PnL', `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`],
-                ['Profit Factor', pf === Infinity ? 'âˆž' : pf.toFixed(2)],
+                ['Profit Factor', pf === Infinity ? '∞' : pf.toFixed(2)],
               ].map(([l, v]) => (
                 <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
                   <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
@@ -254,7 +254,7 @@ export function ManualBehaviorPage() {
               return [
                 ['Total', man.length], ['Derived Wins', w], ['Derived WR', `${wr.toFixed(1)}%`],
                 ['Avg Actual PnL', `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`],
-                ['Profit Factor', pf === Infinity ? 'âˆž' : pf.toFixed(2)],
+                ['Profit Factor', pf === Infinity ? '∞' : pf.toFixed(2)],
               ].map(([l, v]) => (
                 <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
                   <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
@@ -267,7 +267,7 @@ export function ManualBehaviorPage() {
 
       {/* Table */}
       <Card>
-        <CardHeader title="Signal Details" subtitle={`${filtered.length} signals â€” Derived = WIN/LOSS based on entry/exit/direction`} />
+        <CardHeader title="Signal Details" subtitle={`${filtered.length} signals — Derived = WIN/LOSS based on entry/exit/direction`} />
         <DataTable columns={columns} data={[...filtered].sort((a, b) => parseUtcMs(b.exit_time) - parseUtcMs(a.exit_time))} pageSize={20} emptyMessage="No signals found" />
       </Card>
     </div>

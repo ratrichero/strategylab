@@ -165,11 +165,11 @@ def report_handler(update: Update, context: CallbackContext):
 
 def agent_report_handler(update: Update, context: CallbackContext):
     args = context.args; rtype = args[0].lower() if args else "daily"
-    if rtype not in ["daily","weekly","monthly"]:
-        update.message.reply_text("Usage: /agent daily|weekly|monthly"); return
-    update.message.reply_text(f"🤖 Generating agent {rtype} report...")
-    from app.services.trading_agent_service import send_agent_daily, send_agent_weekly, send_agent_monthly
-    {"daily":send_agent_daily,"weekly":send_agent_weekly,"monthly":send_agent_monthly}[rtype]()
+    if rtype not in ["live","daily","weekly","monthly"]:
+        update.message.reply_text("Usage: /agent live|daily|weekly|monthly"); return
+    update.message.reply_text(f"Generating agent {rtype} report...")
+    from app.services.trading_agent_service import send_agent_daily, send_agent_weekly, send_agent_monthly, send_agent_live
+    {"live":send_agent_live,"daily":send_agent_daily,"weekly":send_agent_weekly,"monthly":send_agent_monthly}[rtype]()
 
 
 def ml_status_handler(update: Update, context: CallbackContext):
@@ -245,22 +245,22 @@ def _close_all_trades(query):
                 close_trade(db, trade, current, "MANUAL")
                 count += 1
         db.commit()
-    query.edit_message_text(f"🛑 Đã đóng {count} lệnh.")
+    query.edit_message_text(f"?? ?? ??ng {count} l?nh.")
 
 
 def _close_single_trade(query, trade_id):
     with SessionLocal() as db:
         trade = db.query(Signal).get(trade_id)
         if not trade or trade.status != "OPEN":
-            query.edit_message_text("❌ Lệnh không tồn tại hoặc đã đóng."); return
+            query.edit_message_text("? L?nh kh?ng t?n t?i ho?c ?? ??ng."); return
         prices = get_all_current_prices()
         current = prices.get(trade.symbol)
         if not current:
-            query.edit_message_text("❌ Không lấy được giá."); return
+            query.edit_message_text("? Kh?ng l?y ???c gi?."); return
         from app.services.trade_close_service import close_trade
         close_trade(db, trade, current, "MANUAL")
         db.commit()
-    query.edit_message_text(f"✅ Đã đóng {trade.symbol} {trade.direction} @ {current:.4f}")
+    query.edit_message_text(f"? ?? ??ng {trade.symbol} {trade.direction} @ {current:.4f}")
 
 
 # ── Menus ────────────────────────────────────────────────

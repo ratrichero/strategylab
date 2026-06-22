@@ -44,7 +44,7 @@ def run_bot(token: str):
         BotCommand("cancel_pending","🚫 Cancel all pending"),
         BotCommand("retrain",       "🤖 Retrain ML"),
         BotCommand("report",        "📊 /report daily|weekly|monthly"),
-        BotCommand("agent",         "🤖 /agent daily|weekly|monthly"),
+        BotCommand("agent",         "/agent live|daily|weekly|monthly"),
         BotCommand("ml",            "🤖 ML status"),
     ])
 

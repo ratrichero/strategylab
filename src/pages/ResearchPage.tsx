@@ -44,7 +44,7 @@ function ChartTip({ active, payload, label }) {
   );
 }
 function bucketize(val, ranges) {
-  for (const [lo, hi] of ranges) { if (val >= lo && val < hi) return hi === Infinity ? `Ã¢â€°Â¥${lo}` : `${lo}-${hi}`; }
+  for (const [lo, hi] of ranges) { if (val >= lo && val < hi) return hi === Infinity ? `>=${lo}` : `${lo}-${hi}`; }
   return 'other';
 }
 const DEFAULTS = {
@@ -71,7 +71,7 @@ function DebugPanel({ trades }) {
   const copyStreak = () => {
     const streak = trades.map(t => {
       const s = t.sim_status || '';
-      return s === 'WIN' ? 'W' : s === 'LOSS' ? 'L' : s === 'NOT_COUNT' ? 'N' : '?';
+      return s === 'WIN' ? 'W' : s === 'LOSS' ? 'L' : s === 'NOT_COUNT' ? 'N' : '-';
     }).join(' ');
     navigator.clipboard.writeText(streak);
     alert(`Copied ${trades.length} simulated results to clipboard`);
@@ -101,15 +101,15 @@ function DebugPanel({ trades }) {
     <Card>
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="font-semibold text-white flex items-center gap-2">Ã°Å¸â€Â RR Debug Panel</h3>
+          <h3 className="font-semibold text-white flex items-center gap-2">🔍 RR Debug Panel</h3>
           <p className="text-xs text-slate-500 mt-0.5">MAE/MFE = recalculated from Binance 1m klines for this simulation.</p>
         </div>
         <div className="flex gap-2 items-center">
           <button onClick={() => { setShowOnlyNotCount(!showOnlyNotCount); setPage(1); }} className={`px-2 py-1 rounded text-xs ${showOnlyNotCount ? 'bg-orange-600 text-white' : 'bg-slate-700 text-slate-300'}`}>
             {showOnlyNotCount ? 'Showing NOT_COUNT' : 'Filter NOT_COUNT'}
           </button>
-          <button onClick={copyStreak} className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-xs">Ã°Å¸â€œâ€¹ Streak Simulation</button>
-          <button onClick={exportCSV} className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs">Ã°Å¸â€œÂ¥ Export CSV</button>
+          <button onClick={copyStreak} className="px-2 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-xs">📋 Streak Simulation</button>
+          <button onClick={exportCSV} className="px-2 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-xs">📥 Export CSV</button>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -122,7 +122,7 @@ function DebugPanel({ trades }) {
               <th className="py-2 px-1.5 text-right text-orange-400">SL% sim</th><th className="py-2 px-1.5 text-right text-cyan-400">TP% sim</th>
               <th className="py-2 px-1.5 text-center">Hit SL</th><th className="py-2 px-1.5 text-center">Hit TP</th>
               <th className="py-2 px-1.5 text-right">Orig%</th><th className="py-2 px-1.5 text-right">Sim%</th>
-              <th className="py-2 px-1.5 text-center">St.Orig</th><th className="py-2 px-1.5 text-center">St.Sim</th><th className="py-2 px-1.5 text-center">Counted?</th>
+              <th className="py-2 px-1.5 text-center">St.Orig</th><th className="py-2 px-1.5 text-center">St.Sim</th><th className="py-2 px-1.5 text-center">Counted-</th>
             </tr>
           </thead>
           <tbody>
@@ -140,8 +140,8 @@ function DebugPanel({ trades }) {
                   <td className="py-1.5 px-1.5 text-right text-slate-500">{Number(t.take_profit || 0).toFixed(4)}</td>
                   <td className="py-1.5 px-1.5 text-right text-orange-400">{t._debug_sl_pct != null ? Number(t._debug_sl_pct).toFixed(4) : '-'}</td>
                   <td className="py-1.5 px-1.5 text-right text-cyan-400">{t._debug_tp_pct != null ? Number(t._debug_tp_pct).toFixed(4) : '-'}</td>
-                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_sl ? 'text-red-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_sl ? 'Ã¢Å“â€œ' : 'Ã¢â‚¬â€œ'}</td>
-                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_tp ? 'text-emerald-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_tp ? 'Ã¢Å“â€œ' : 'Ã¢â‚¬â€œ'}</td>
+                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_sl ? 'text-red-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_sl ? 'Y' : '-'}</td>
+                  <td className={`py-1.5 px-1.5 text-center ${t._debug_hit_tp ? 'text-emerald-400 font-bold' : 'text-slate-600'}`}>{t._debug_hit_tp ? 'Y' : '-'}</td>
                   <td className="py-1.5 px-1.5 text-right">{Number(t._debug_original_result || 0).toFixed(2)}</td>
                   <td className={`py-1.5 px-1.5 text-right font-bold ${t.sim_counted === false ? 'text-slate-500 italic' : (t.sim_result || 0) > 0 ? 'text-emerald-400' : 'text-red-400'}`}>{t.sim_counted === false ? 'Not Count' : Number(t.sim_result || 0).toFixed(2)}</td>
                   <td className={`py-1.5 px-1.5 text-center ${t.status === 'WIN' ? 'text-emerald-500' : 'text-red-500'}`}>{t.status === 'WIN' ? 'W' : 'L'}</td>
@@ -155,11 +155,11 @@ function DebugPanel({ trades }) {
       </div>
       {totalPages > 1 && (
         <div className="flex items-center justify-between mt-3 px-2">
-          <span className="text-xs text-slate-500">{filteredTrades.length} trades Ã¢â‚¬Â¢ Page {page}/{totalPages}</span>
+          <span className="text-xs text-slate-500">{filteredTrades.length} trades • Page {page}/{totalPages}</span>
           <div className="flex gap-1">
             <button onClick={() => setPage(1)} disabled={page === 1} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">First</button>
-            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Ã¢â‚¬Â¹</button>
-            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Ã¢â‚¬Âº</button>
+            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Prev</button>
+            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Next</button>
             <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2 py-1 text-xs bg-slate-700 rounded disabled:opacity-30">Last</button>
           </div>
         </div>
@@ -186,7 +186,7 @@ export function Research() {
       try {
         const [vers, sigs] = await Promise.all([
           fetch(`${API}/engine/versions`).then(r => r.json()).catch(() => []),
-          fetch(`${API}/signals?limit=10000`).then(r => r.json()).catch(() => ({ data: [] })),
+          fetch(`${API}/signals-limit=10000`).then(r => r.json()).catch(() => ({ data: [] })),
         ]);
         setEngineVersions(vers.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
         const s = sigs.data || [];
@@ -246,7 +246,7 @@ export function Research() {
       return true;
     });
 
-    // Ã¢â€â‚¬Ã¢â€â‚¬ Check if simulation needed Ã¢â€â‚¬Ã¢â€â‚¬
+    // Check if simulation needed
     const rrVal = parseFloat(c.rrOverride);
     const slVal = parseFloat(c.slPct);
     const tpVal = parseFloat(c.tpPct);
@@ -285,7 +285,7 @@ export function Research() {
       // No simulation: clear any previous sim_* fields, use original status/result
       validTrades = validTrades.map(t => ({
         ...t,
-        sim_result: Number(t.result_percent ?? 0),
+        sim_result: Number(t.result_percent || 0),
         sim_status: t.status,
         sim_counted: true,
         sim_sl: t.stop_loss,
@@ -390,7 +390,7 @@ export function Research() {
   const tradeColumns = [
     { key: '__idx', header: '#', width: '40px', render: (_, row) => <span className="text-xs text-slate-500 whitespace-nowrap">{row.__idx}</span> },
     { key: 'symbol', header: 'Symbol', width: '90px', sortable: true, render: v => <span className="whitespace-nowrap text-xs">{v}</span> },
-    { key: 'direction', header: 'Dir', width: '76px', sortable: true, render: v => (<span className={`inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-2 py-1 rounded-md ${v === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}><span>{v === 'LONG' ? 'Ã¢â€“Â²' : 'Ã¢â€“Â¼'}</span><span>{v}</span></span>) },
+    { key: 'direction', header: 'Dir', width: '76px', sortable: true, render: v => (<span className={`inline-flex items-center gap-1 whitespace-nowrap text-[11px] font-semibold px-2 py-1 rounded-md ${v === 'LONG' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-red-500/15 text-red-400'}`}><span>{v === 'LONG' ? '▲' : '▼'}</span><span>{v}</span></span>) },
     { key: 'timeframe', header: 'TF', width: '54px', sortable: true, render: v => <span className="whitespace-nowrap text-xs">{v}</span> },
     { key: 'pattern', header: 'Pattern', width: '110px', sortable: true, render: v => <span className="text-[11px] whitespace-nowrap">{v}</span> },
     { key: 'entry_price', header: 'Entry', width: '90px', render: v => <span className="whitespace-nowrap text-xs">{v?.toFixed(v > 100 ? 2 : 4) || '-'}</span> },
@@ -412,7 +412,7 @@ export function Research() {
     <div className="space-y-6">
       <div className="flex items-center gap-3">
         <Microscope className="w-7 h-7 text-indigo-400" />
-        <div><h2 className="text-2xl font-bold text-white">Strategy Research</h2><p className="text-slate-400 mt-0.5">Real Trade Mode Ã¢â‚¬â€ {trades.length} trades loaded</p></div>
+        <div><h2 className="text-2xl font-bold text-white">Strategy Research</h2><p className="text-slate-400 mt-0.5">Real Trade Mode — {trades.length} trades loaded</p></div>
       </div>
 
       <div className="flex flex-col xl:flex-row gap-6">
@@ -436,15 +436,15 @@ export function Research() {
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">Indicator Index</p><div className="space-y-2">
             <div className="grid grid-cols-2 gap-2"><Input type="number" label="RSI Min" value={cfg.rsiMin} onChange={e => set('rsiMin', e.target.value)} /><Input type="number" label="RSI Max" value={cfg.rsiMax} onChange={e => set('rsiMax', e.target.value)} /></div>
-            <Input type="number" label="Volume Ratio Ã¢â€°Â¥" value={cfg.volumeRatioMin} onChange={e => set('volumeRatioMin', e.target.value)} />
-            <Input type="number" label="ATR Ratio Ã¢â€°Â¥" value={cfg.atrRatioMin} onChange={e => set('atrRatioMin', e.target.value)} />
+            <Input type="number" label="Volume Ratio >=" value={cfg.volumeRatioMin} onChange={e => set('volumeRatioMin', e.target.value)} />
+            <Input type="number" label="ATR Ratio >=" value={cfg.atrRatioMin} onChange={e => set('atrRatioMin', e.target.value)} />
             <div className="grid grid-cols-2 gap-2"><Input type="number" label="EMA Dist Min" value={cfg.emaDistMin} onChange={e => set('emaDistMin', e.target.value)} /><Input type="number" label="EMA Dist Max" value={cfg.emaDistMax} onChange={e => set('emaDistMax', e.target.value)} /></div>
           </div></Card>
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">Score Index</p><div className="space-y-2">
             <div className="grid grid-cols-2 gap-2"><Input type="number" label="Score Min" value={cfg.scoreMin} onChange={e => set('scoreMin', e.target.value)} /><Input type="number" label="Score Max" value={cfg.scoreMax} onChange={e => set('scoreMax', e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Trend Ã¢â€°Â¥" value={cfg.trendScoreMin} onChange={e => set('trendScoreMin', e.target.value)} /><Input type="number" label="Momentum Ã¢â€°Â¥" value={cfg.momentumScoreMin} onChange={e => set('momentumScoreMin', e.target.value)} /></div>
-            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Volume Ã¢â€°Â¥" value={cfg.volumeScoreMin} onChange={e => set('volumeScoreMin', e.target.value)} /><div className="grid grid-cols-2 gap-1"><Input type="number" label="MTFÃ¢â€°Â¥" value={cfg.mtfScoreMin} onChange={e => set('mtfScoreMin', e.target.value)} /><Input type="number" label="MTFÃ¢â€°Â¤" value={cfg.mtfScoreMax} onChange={e => set('mtfScoreMax', e.target.value)} /></div></div>
+            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Trend >=" value={cfg.trendScoreMin} onChange={e => set('trendScoreMin', e.target.value)} /><Input type="number" label="Momentum >=" value={cfg.momentumScoreMin} onChange={e => set('momentumScoreMin', e.target.value)} /></div>
+            <div className="grid grid-cols-2 gap-2"><Input type="number" label="Volume >=" value={cfg.volumeScoreMin} onChange={e => set('volumeScoreMin', e.target.value)} /><div className="grid grid-cols-2 gap-1"><Input type="number" label="MTF>=" value={cfg.mtfScoreMin} onChange={e => set('mtfScoreMin', e.target.value)} /><Input type="number" label="MTF<=" value={cfg.mtfScoreMax} onChange={e => set('mtfScoreMax', e.target.value)} /></div></div>
           </div></Card>
 
           <Card padding="sm"><p className="text-xs font-semibold text-slate-500 uppercase mb-2">RR Simulation</p><div className="space-y-2">
@@ -456,7 +456,7 @@ export function Research() {
                 <div><span className="text-xs text-slate-400">Reverse Direction</span><p className="text-[10px] text-slate-600">LONG/SHORT, replayed on the same 1m candles.</p></div>
                 <button onClick={() => set('reverseDirection', !cfg.reverseDirection)} className={`relative w-12 h-6 rounded-full transition-colors ${cfg.reverseDirection ? 'bg-orange-600' : 'bg-slate-700'}`}><div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full transition-transform shadow ${cfg.reverseDirection ? 'translate-x-6' : 'translate-x-0.5'}`} /></button>
               </div>
-              {cfg.reverseDirection && <p className="text-[10px] text-orange-400 mt-1">Ã¢Å¡Â  Entry is unchanged; SL/TP are recalculated for the reversed side.</p>}
+              {cfg.reverseDirection && <p className="text-[10px] text-orange-400 mt-1">⚠ Entry is unchanged; SL/TP are recalculated for the reversed side.</p>}
             </div>
           </div></Card>
         </div>
@@ -469,7 +469,7 @@ export function Research() {
                 <div className="absolute inset-0 rounded-full border-4 border-indigo-500/20" />
                 <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
               </div>
-              {fetchProgress ? (
+              {fetchProgress >= (
                 <>
                   <p className="text-slate-300 mb-2">
                     Fetching klines from Binance... {fetchProgress.done}/{fetchProgress.total} symbols
@@ -499,7 +499,7 @@ export function Research() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card><CardHeader title="Performance" /><div className="space-y-3">
-                  {[['Total Trades', String(results.counted)], ['Profit Factor', results.pf === Infinity ? 'Ã¢Ë†Å¾' : results.pf.toFixed(2)], ['Expectancy', `${results.exp.toFixed(2)}%`], ['Sharpe', results.sharpe.toFixed(2)], ['Wins / Losses', `${results.wins} / ${results.losses}`], ['Avg P / Avg L', `${results.avgP.toFixed(2)}% / ${results.avgL.toFixed(2)}%`], ['Long / Short WR', `${results.longWR.toFixed(1)}% (${results.longTotal}) / ${results.shortWR.toFixed(1)}% (${results.shortTotal})`]].map(([l, v]) => <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0"><span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span></div>)}
+                  {[['Total Trades', String(results.counted)], ['Profit Factor', results.pf === Infinity ? 'Infinity' : results.pf.toFixed(2)], ['Expectancy', `${results.exp.toFixed(2)}%`], ['Sharpe', results.sharpe.toFixed(2)], ['Wins / Losses', `${results.wins} / ${results.losses}`], ['Avg P / Avg L', `${results.avgP.toFixed(2)}% / ${results.avgL.toFixed(2)}%`], ['Long / Short WR', `${results.longWR.toFixed(1)}% (${results.longTotal}) / ${results.shortWR.toFixed(1)}% (${results.shortTotal})`]].map(([l, v]) => <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0"><span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span></div>)}
                 </div></Card>
                 <Card><CardHeader title="Risk" /><div className="space-y-3">
                   {[['Final Equity', `$${$(results.nav)}`, clr(results.pnl)], ['Total P&L', `${results.pnl >= 0 ? '+' : ''}$${$(results.pnl)}`, clr(results.pnl)], ['Peak NAV', `$${$(results.peakNav)}`, 'text-emerald-400'], ['Trough NAV', `$${$(results.troughNav)}`, 'text-red-400'], ['Max Gain', `${results.maxGain.toFixed(2)}%`, 'text-emerald-400'], ['Max DD', `${results.maxDD.toFixed(2)}%`, 'text-red-400'], ['Max Win / Loss Streak', `${results.maxWinStreak} / ${results.maxLossStreak}`, 'text-white'], ['Avg Duration', results.avgDurStr, 'text-white']].map(([l, v, c]) => <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0"><span className="text-slate-400">{l}</span><span className={`font-bold ${c}`}>{v}</span></div>)}
@@ -510,26 +510,26 @@ export function Research() {
               <Card><CardHeader title="Drawdown" /><ResponsiveContainer width="100%" height={160}><AreaChart data={results.curve}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="time" stroke="#64748b" fontSize={10} interval="preserveStartEnd" /><YAxis stroke="#64748b" fontSize={10} tickFormatter={v => `-${v}%`} reversed /><Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }} formatter={v => [`-${Number(v).toFixed(2)}%`]} /><Area type="monotone" dataKey="dd" name="Drawdown" stroke="#ef4444" fill="#ef4444" fillOpacity={0.2} /></AreaChart></ResponsiveContainer></Card>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <Card><CardHeader title="Regime Breakdown" /><DataTable columns={[{ key: 'regime', header: 'Regime', render: v => <StatusBadge status={v} /> }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Ã¢Ë†Å¾' : v.toFixed(2) }]} data={regimeData} pageSize={5} /></Card>
-                <Card><CardHeader title="Feature: RSI" /><DataTable columns={[{ key: 'range', header: 'RSI Range' }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'pf', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Ã¢Ë†Å¾' : v.toFixed(2) }, { key: 'expectancy', header: 'Exp', sortable: true, align: 'right', render: v => <span className={v >= 0 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(2)}%</span> }]} data={rsiBuckets} pageSize={10} /></Card>
+                <Card><CardHeader title="Regime Breakdown" /><DataTable columns={[{ key: 'regime', header: 'Regime', render: v => <StatusBadge status={v} /> }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Infinity' : v.toFixed(2) }]} data={regimeData} pageSize={5} /></Card>
+                <Card><CardHeader title="Feature: RSI" /><DataTable columns={[{ key: 'range', header: 'RSI Range' }, { key: 'trades', header: 'Trades', sortable: true, align: 'right' }, { key: 'winrate', header: 'WR', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> }, { key: 'pf', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Infinity' : v.toFixed(2) }, { key: 'expectancy', header: 'Exp', sortable: true, align: 'right', render: v => <span className={v >= 0 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(2)}%</span> }]} data={rsiBuckets} pageSize={10} /></Card>
               </div>
 
-              <Card><CardHeader title="Pattern Ãƒâ€” Timeframe Heatmap" />{patternHM.length > 0 ? <Heatmap data={patternHM} xLabel="TF" yLabel="Pattern" valueLabel="WR%" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
-              <Card><CardHeader title="Volume Ratio Ãƒâ€” RSI Heatmap" subtitle="Profit Factor" />{volRsiHM.length > 0 ? <Heatmap data={volRsiHM} xLabel="Volume Ratio" yLabel="RSI" valueLabel="PF" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
+              <Card><CardHeader title="Pattern x Timeframe Heatmap" />{patternHM.length > 0 ? <Heatmap data={patternHM} xLabel="TF" yLabel="Pattern" valueLabel="WR%" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
+              <Card><CardHeader title="Volume Ratio x RSI Heatmap" subtitle="Profit Factor" />{volRsiHM.length > 0 ? <Heatmap data={volRsiHM} xLabel="Volume Ratio" yLabel="RSI" valueLabel="PF" colorScale="green-red" showValues /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
               <Card><CardHeader title="Score Distribution" subtitle="Wins vs Losses by score" />{scoreDist.length > 0 ? <ResponsiveContainer width="100%" height={220}><ReBarChart data={scoreDist}><CartesianGrid strokeDasharray="3 3" stroke="#334155" /><XAxis dataKey="range" stroke="#64748b" fontSize={12} /><YAxis stroke="#64748b" fontSize={12} /><Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }} /><Legend /><Bar dataKey="wins" name="Wins" fill="#10b981" radius={[4, 4, 0, 0]} /><Bar dataKey="losses" name="Losses" fill="#ef4444" radius={[4, 4, 0, 0]} /></ReBarChart></ResponsiveContainer> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}</Card>
 
               <Card>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                   <div><h3 className="text-lg font-semibold text-white">Simulated Trades</h3><p className="text-sm text-slate-400">{trades.length} trades{results.notCount > 0 ? ` (${results.notCount} not counted)` : ''}</p></div>
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => { const streak = tradesDesc.map(t => t.sim_status === 'WIN' ? 'W' : t.sim_status === 'LOSS' ? 'L' : t.sim_status === 'NOT_COUNT' ? 'N' : '?').join(' '); navigator.clipboard.writeText(streak); alert(`Copied ${tradesDesc.length} simulated results`); }} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">Ã°Å¸â€œâ€¹ Streak</button>
+                    <button onClick={() => { const streak = tradesDesc.map(t => t.sim_status === 'WIN' ? 'W' : t.sim_status === 'LOSS' ? 'L' : t.sim_status === 'NOT_COUNT' ? 'N' : '-').join(' '); navigator.clipboard.writeText(streak); alert(`Copied ${tradesDesc.length} simulated results`); }} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">📋 Streak</button>
                     <button onClick={() => {
                       const headers = ['#','Symbol','Dir','TF','Pattern','Entry','SL_Sim','TP_Sim','PnL_Sim','Status_Orig','Status_Sim','Score','Regime','Opened','Closed'];
                       const rows = tradesDesc.map((t, i) => [i+1, t.symbol, t.direction, t.timeframe, t.pattern, t.entry_price, t.sim_sl, t.sim_tp, t.sim_result, t.status, t.sim_status, t.score, t.regime, t.entry_time || t.created_at || t.candle_time, t.exit_time].join(','));
                       const csv = [headers.join(','), ...rows].join('\n');
                       const blob = new Blob([csv], { type: 'text/csv' });
                       const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `simulated_trades_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url);
-                    }} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs">Ã°Å¸â€œÂ¥ CSV</button>
+                    }} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs">📥 CSV</button>
                   </div>
                 </div>
                 <DataTable

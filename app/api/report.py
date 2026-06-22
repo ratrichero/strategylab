@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from app.services.report_service import send_daily, send_weekly, send_monthly
 from app.services.trading_agent_service import (
-    send_agent_daily, send_agent_weekly, send_agent_monthly,
+    send_agent_daily, send_agent_weekly, send_agent_monthly, send_agent_live,
 )
 
 router = APIRouter()
@@ -23,3 +23,6 @@ def agent_weekly(): send_agent_weekly(); return {"status": "sent"}
 
 @router.post("/agent-monthly-report")
 def agent_monthly(): send_agent_monthly(); return {"status": "sent"}
+
+@router.post("/agent-live-report")
+def agent_live(): send_agent_live(); return {"status": "sent"}

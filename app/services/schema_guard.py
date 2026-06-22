@@ -2,7 +2,7 @@ from sqlalchemy import text
 from app.db.session import engine
 
 def assert_schema_ok():
-    with engine.connect() as conn:
+    with engine.begin() as conn:
         row = conn.execute(text("""
             select count(*)
             from information_schema.columns
@@ -14,3 +14,12 @@ def assert_schema_ok():
         if row == 0:
             raise RuntimeError(
                 "Schema mismatch: public.pending_signals.engine_version missing")
+
+        conn.execute(text("""
+            ALTER TABLE public.pending_signals
+            ADD COLUMN IF NOT EXISTS client_order_id varchar
+        """))
+        conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_pending_client_order_id
+            ON public.pending_signals (client_order_id)
+        """))

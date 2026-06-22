@@ -120,7 +120,7 @@ export function SimulationPage() {
   const pollRef = useRef(null);
 
   useEffect(() => {
-    fetch(`${API}/signals?limit=10000`).then(r => r.json()).then(d => {
+    fetch(`${API}/signals->limit=10000`).then(r => r.json()).then(d => {
       const s = d.data || [];
       setAllStrategies(Array.from(new Set(s.map(x => x.strategy_name).filter(Boolean))).sort());
       setAllPatterns(Array.from(new Set(s.map(x => x.pattern).filter(Boolean))).sort());
@@ -190,7 +190,7 @@ export function SimulationPage() {
         throw new Error(msg);
       }
 
-      const rowsResp = await fetch(`${API}/backtest/replay/jobs/${id}/rows?page=1&page_size=${limit}`);
+      const rowsResp = await fetch(`${API}/backtest/replay/jobs/${id}/rows->page=1&page_size=${limit}`);
       const rowsRes = await rowsResp.json();
 
       if (!rowsResp.ok) {
@@ -269,9 +269,9 @@ export function SimulationPage() {
       return <span className={`px-2 py-0.5 rounded-full text-[10px] ${win ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>{win ? 'WIN' : 'LOSS'}</span>;
     } },
     { key: 'simulated', header: 'S.Exit', render: v => <span className={`text-xs ${EXIT_COLORS[v?.exit_reason] || ''}`}>{v?.exit_reason || '-'}</span> },
-    { key: 'delta', header: 'ÃŽâ€ RR', sortable: true, align: 'right', render: v => <span className={diffClr(v?.rr_realized_diff)}>{v?.rr_realized_diff >= 0 ? '+' : ''}{$n(v?.rr_realized_diff, 3)}</span> },
-    { key: 'simulated', header: 'L1', align: 'center', render: v => v?.level_1_hit ? <span className="text-emerald-400">Ã¢Å“â€œ</span> : <span className="text-slate-600">Ã¢â‚¬â€œ</span> },
-    { key: 'simulated', header: 'L2', align: 'center', render: v => v?.level_2_hit ? <span className="text-emerald-400">Ã¢Å“â€œ</span> : <span className="text-slate-600">Ã¢â‚¬â€œ</span> },
+    { key: 'delta', header: 'Delta RR', sortable: true, align: 'right', render: v => <span className={diffClr(v?.rr_realized_diff)}>{v?.rr_realized_diff >= 0 ? '+' : ''}{$n(v?.rr_realized_diff, 3)}</span> },
+    { key: 'simulated', header: 'L1', align: 'center', render: v => v?.level_1_hit ? <span className="text-emerald-400">Y</span> : <span className="text-slate-600">-</span> },
+    { key: 'simulated', header: 'L2', align: 'center', render: v => v?.level_2_hit ? <span className="text-emerald-400">Y</span> : <span className="text-slate-600">-</span> },
   ];
 
   // Debug table render
@@ -320,7 +320,7 @@ export function SimulationPage() {
                   <td className="py-1.5 px-1 text-slate-300 font-mono">{row.signal_id}</td>
                   <td className="py-1.5 px-1 text-white">{row.symbol}</td>
                   <td className="py-1.5 px-1 text-center text-slate-400">{row.timeframe}</td>
-                  <td className="py-1.5 px-1 text-center"><span className={row.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{row.direction === 'LONG' ? 'Ã¢â€“Â²' : 'Ã¢â€“Â¼'}</span></td>
+                  <td className="py-1.5 px-1 text-center"><span className={row.direction === 'LONG' ? 'text-emerald-400' : 'text-red-400'}>{row.direction === 'LONG' ? '▲' : '▼'}</span></td>
                   <td className="py-1.5 px-1 text-right text-white font-mono">{fmtPrice(entry)}</td>
                   <td className="py-1.5 px-1 text-right text-red-400 font-mono">{fmtPrice(slOrig)}</td>
                   <td className="py-1.5 px-1 text-right text-emerald-400 font-mono">{fmtPrice(tpOrig)}</td>
@@ -349,7 +349,7 @@ export function SimulationPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3"><FlaskConical className="w-7 h-7 text-purple-400" /><div><h2 className="text-2xl font-bold text-white">Signal Replay Backtest</h2><p className="text-slate-400 mt-0.5">Replay tÃƒÂ­n hiÃ¡Â»â€¡u thÃ¡ÂºÂ­t theo policy % Ã¢â‚¬â€ so sÃƒÂ¡nh Actual vs Simulated</p></div></div>
+      <div className="flex items-center gap-3"><FlaskConical className="w-7 h-7 text-purple-400" /><div><h2 className="text-2xl font-bold text-white">Signal Replay Backtest</h2><p className="text-slate-400 mt-0.5">Replay real signals by policy % - compare Actual vs Simulated</p></div></div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* LEFT: Filters */}
@@ -373,20 +373,20 @@ export function SimulationPage() {
               <button onClick={() => setIncludeManual(!includeManual)} className={`px-3 py-1.5 rounded text-xs font-medium border ${includeManual ? 'bg-orange-600/20 border-orange-500 text-orange-300' : 'bg-slate-700 border-slate-600 text-slate-400'}`}>{includeManual ? 'WL + MANUAL' : 'WL Only'}</button>
               <Button variant="primary" loading={isRunning} icon={isRunning ? undefined : <Play className="w-4 h-4" />} onClick={runBacktest} disabled={isRunning}>{isRunning ? 'Running...' : 'Run Backtest'}</Button>
             </div>
-            <p className="text-[10px] text-slate-600 mt-2">Ã°Å¸â€™Â¡ Symbols: nhÃ¡ÂºÂ­p tÃƒÂªn viÃ¡ÂºÂ¿t tÃ¡ÂºÂ¯t, cÃƒÂ¡ch nhau bÃ¡ÂºÂ±ng dÃ¡ÂºÂ¥u cÃƒÂ¡ch hoÃ¡ÂºÂ·c dÃ¡ÂºÂ¥u phÃ¡ÂºÂ©y.</p>
+            <p className="text-[10px] text-slate-600 mt-2">Symbols: enter tickers separated by spaces or commas.</p>
           </Card>
         </div>
 
         {/* RIGHT: Policy Config */}
         <Card>
-          <CardHeader title="Policy Config (%)" subtitle={uniformMode ? `Uniform Ã‚Â· ${currentTfPolicy.levels?.length || 0} levels` : `${activeTf} Ã‚Â· ${currentTfPolicy.levels?.length || 0} levels`} action={<button onClick={resetPolicy} className="text-xs text-slate-400 hover:text-white flex items-center gap-1"><RotateCcw className="w-3 h-3" />Reset</button>} />
+          <CardHeader title="Policy Config (%)" subtitle={uniformMode ? `Uniform - ${currentTfPolicy.levels?.length || 0} levels` : `${activeTf} - ${currentTfPolicy.levels?.length || 0} levels`} action={<button onClick={resetPolicy} className="text-xs text-slate-400 hover:text-white flex items-center gap-1"><RotateCcw className="w-3 h-3" />Reset</button>} />
           <div className="space-y-4">
             <div className="flex gap-2">
               <button onClick={() => setUniformMode(true)} className={`px-3 py-1.5 rounded text-xs font-medium ${uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Uniform</button>
               <button onClick={() => setUniformMode(false)} className={`px-3 py-1.5 rounded text-xs font-medium ${!uniformMode ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Per Timeframe</button>
             </div>
-            {uniformMode ? <div className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-1.5 rounded">Ã¢â€žÂ¹Ã¯Â¸Â Uniform: cÃƒÂ¹ng 1 bÃ¡Â»â„¢ SL/TP/Levels ÃƒÂ¡p cho tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ timeframe.</div> : (<>
-              <div className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-1.5 rounded">Ã¢Å¡Â Ã¯Â¸Â Per Timeframe: chÃ¡Â»â€°nh riÃƒÂªng cho <b>{activeTf}</b>.</div>
+            {uniformMode ? <div className="text-[10px] text-indigo-400 bg-indigo-500/10 px-2 py-1.5 rounded">Uniform: use one SL/TP/Levels set for all timeframes.</div> : (<>
+              <div className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-1.5 rounded">Per Timeframe: custom settings for <b>{activeTf}</b>.</div>
               <div className="flex gap-1">{TIMEFRAMES.map(tf => <button key={tf} onClick={() => setActiveTf(tf)} className={`px-3 py-1.5 rounded text-xs font-medium ${activeTf === tf ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-400'}`}>{tf}</button>)}</div>
             </>)}
             <div className="grid grid-cols-2 gap-3">
@@ -408,7 +408,7 @@ export function SimulationPage() {
               ))}
               <button onClick={() => addLevel(activeTf)} className="w-full py-2 border border-dashed border-slate-600 rounded-lg text-xs text-slate-400 hover:border-slate-500 hover:text-slate-300 flex items-center justify-center gap-1"><Plus className="w-3 h-3" />Add Level</button>
             </div>
-            <div className="text-[10px] text-slate-600">TÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ giÃƒÂ¡ trÃ¡Â»â€¹ nhÃ¡ÂºÂ­p theo %. Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d</div>
+            <div className="text-[10px] text-slate-600">All values are percentages. Intrabar = Conservative | Horizon: 15m=24h, 1h=72h, 4h=7d</div>
             <div className="p-2 bg-slate-900/70 rounded text-[10px] text-slate-400 font-mono space-y-0.5">
               {uniformMode ? <div><span className="text-indigo-400">ALL TF:</span> SL={currentTfPolicy.sl_pct || 0}% TP={currentTfPolicy.tp_pct || 0}% Levels={currentTfPolicy.levels?.length || 0}</div> : TIMEFRAMES.map(tf => { const p = policy.timeframes[tf] || {}; return <div key={tf}><span className={tf === activeTf ? 'text-indigo-400' : 'text-slate-300'}>{tf}:</span> SL={p.sl_pct || 0}% TP={p.tp_pct || 0}% Levels={p.levels?.length || 0}</div>; })}
             </div>
@@ -423,38 +423,38 @@ export function SimulationPage() {
       {summary && (<div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card><CardHeader title="Actual" subtitle="Real results" /><div className="space-y-2">{[['Win Rate', `${((summary.actual?.winrate || 0) * 100).toFixed(1)}%`, pnlClr(summary.actual?.winrate - 0.5)], ['Avg Return', `${$n(summary.actual?.avg_return_pct)}%`, pnlClr(summary.actual?.avg_return_pct)], ['Avg RR', $n(summary.actual?.avg_rr_realized, 3), pnlClr(summary.actual?.avg_rr_realized)], ['Total RR', $n(summary.actual?.total_rr_realized, 2), pnlClr(summary.actual?.total_rr_realized)]].map(([l, v, c]) => <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${c}`}>{v}</span></div>)}</div></Card>
         <Card><CardHeader title="Simulated" subtitle="Policy replay" /><div className="space-y-2">{[['Win Rate', `${((summary.simulated?.winrate || 0) * 100).toFixed(1)}%`, pnlClr(summary.simulated?.winrate - 0.5)], ['Avg Return', `${$n(summary.simulated?.avg_return_pct)}%`, pnlClr(summary.simulated?.avg_return_pct)], ['Avg RR', $n(summary.simulated?.avg_rr_realized, 3), pnlClr(summary.simulated?.avg_rr_realized)], ['Total RR', $n(summary.simulated?.total_rr_realized, 2), pnlClr(summary.simulated?.total_rr_realized)]].map(([l, v, c]) => <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${c}`}>{v}</span></div>)}</div></Card>
-        <Card><CardHeader title="Delta & Breakdown" subtitle={`${summary.sample_size} trades`} /><div className="space-y-2 mb-4">{[['ÃŽâ€ WR', `${summary.delta?.winrate_diff >= 0 ? '+' : ''}${((summary.delta?.winrate_diff || 0) * 100).toFixed(1)}%`], ['ÃŽâ€ Avg RR', `${summary.delta?.avg_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.avg_rr_realized_diff, 3)}`], ['ÃŽâ€ Total RR', `${summary.delta?.total_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.total_rr_realized_diff, 2)}`]].map(([l, v]) => <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${diffClr(parseFloat(v))}`}>{v}</span></div>)}</div>{summary.sim_exit_breakdown && <div className="space-y-1.5"><p className="text-xs text-slate-500 font-medium uppercase">Exit Breakdown</p>{Object.entries(summary.sim_exit_breakdown).map(([r, c]) => <div key={r} className="flex justify-between"><span className={`text-xs ${EXIT_COLORS[r] || 'text-slate-400'}`}>{r}</span><span className="text-xs text-white font-mono">{c}</span></div>)}{summary.ambiguous_bars > 0 && <div className="flex justify-between pt-1 border-t border-slate-700/50"><span className="text-xs text-orange-400">Ambiguous</span><span className="text-xs text-white font-mono">{summary.ambiguous_bars}</span></div>}</div>}</Card>
+        <Card><CardHeader title="Delta & Breakdown" subtitle={`${summary.sample_size} trades`} /><div className="space-y-2 mb-4">{[['Delta WR', `${summary.delta?.winrate_diff >= 0 ? '+' : ''}${((summary.delta?.winrate_diff || 0) * 100).toFixed(1)}%`], ['Delta Avg RR', `${summary.delta?.avg_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.avg_rr_realized_diff, 3)}`], ['Delta Total RR', `${summary.delta?.total_rr_realized_diff >= 0 ? '+' : ''}${$n(summary.delta?.total_rr_realized_diff, 2)}`]].map(([l, v]) => <div key={l} className="flex justify-between py-1.5 border-b border-slate-700/50 last:border-0"><span className="text-slate-400 text-sm">{l}</span><span className={`font-bold font-mono ${diffClr(parseFloat(v))}`}>{v}</span></div>)}</div>{summary.sim_exit_breakdown && <div className="space-y-1.5"><p className="text-xs text-slate-500 font-medium uppercase">Exit Breakdown</p>{Object.entries(summary.sim_exit_breakdown).map(([r, c]) => <div key={r} className="flex justify-between"><span className={`text-xs ${EXIT_COLORS[r] || 'text-slate-400'}`}>{r}</span><span className="text-xs text-white font-mono">{c}</span></div>)}{summary.ambiguous_bars > 0 && <div className="flex justify-between pt-1 border-t border-slate-700/50"><span className="text-xs text-orange-400">Ambiguous</span><span className="text-xs text-white font-mono">{summary.ambiguous_bars}</span></div>}</div>}</Card>
       </div>)}
 
-      {/* RR Debug Panel Ã¢â‚¬â€ always visible */}
+      {/* RR Debug Panel - always visible */}
       {rows.length > 0 && (
         <Card>
           <div className="mb-3">
             <h3 className="text-sm font-semibold text-white flex items-center gap-2"><Bug className="w-4 h-4 text-slate-400" /> RR Debug Panel</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Chi tiÃ¡ÂºÂ¿t SL/TP/PnL Ã¢â‚¬â€ {rows.length} trades</p>
+            <p className="text-xs text-slate-500 mt-0.5">SL/TP/PnL detail - {rows.length} trades</p>
           </div>
           {renderDebugTable()}
         </Card>
       )}
 
       {/* Trades Table */}
-      {rows.length > 0 && (<Card><CardHeader title="Replay Trades" subtitle={`${totalRows} trades Ã¢â‚¬â€ click for detail`} /><DataTable columns={columns} data={rows} pageSize={20} onRowClick={row => { setSelectedTrade(row); loadDetail(row.signal_id); }} emptyMessage="No trades" /></Card>)}
+      {rows.length > 0 && (<Card><CardHeader title="Replay Trades" subtitle={`${totalRows} trades - click for detail`} /><DataTable columns={columns} data={rows} pageSize={20} onRowClick={row => { setSelectedTrade(row); loadDetail(row.signal_id); }} emptyMessage="No trades" /></Card>)}
 
       {/* Empty state */}
-      {!jobId && !summary && (<Card className="flex items-center justify-center h-64"><div className="text-center"><FlaskConical className="w-12 h-12 text-slate-700 mx-auto mb-3" /><p className="text-slate-500">ChÃ†Â°a cÃƒÂ³ kÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ backtest</p><p className="text-xs text-slate-600 mt-1">CÃ¡ÂºÂ¥u hÃƒÂ¬nh bÃ¡Â»â„¢ lÃ¡Â»Âc vÃƒÂ  policy, nhÃ¡ÂºÂ¥n Run Backtest</p></div></Card>)}
+      {!jobId && !summary && (<Card className="flex items-center justify-center h-64"><div className="text-center"><FlaskConical className="w-12 h-12 text-slate-700 mx-auto mb-3" /><p className="text-slate-500">No backtest result yet</p><p className="text-xs text-slate-600 mt-1">Configure filters and policy, then run backtest</p></div></Card>)}
 
       {/* Detail Modal */}
       {selectedTrade && tradeDetail && (<div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => { setSelectedTrade(null); setTradeDetail(null); }}><div className="bg-slate-800 border border-slate-700 rounded-xl p-6 max-w-3xl w-full max-h-[85vh] overflow-auto shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-6"><div className="flex items-center gap-3"><h3 className="text-lg font-bold text-white">{tradeDetail.symbol}</h3><DirectionBadge direction={tradeDetail.direction} /><span className="text-xs text-slate-400">{tradeDetail.timeframe} Ã‚Â· {tradeDetail.strategy_name}</span>{tradeDetail.pattern && <span className="text-xs text-yellow-400">{tradeDetail.pattern}</span>}</div><button onClick={() => { setSelectedTrade(null); setTradeDetail(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button></div>
+        <div className="flex items-center justify-between mb-6"><div className="flex items-center gap-3"><h3 className="text-lg font-bold text-white">{tradeDetail.symbol}</h3><DirectionBadge direction={tradeDetail.direction} /><span className="text-xs text-slate-400">{tradeDetail.timeframe} - {tradeDetail.strategy_name}</span>{tradeDetail.pattern && <span className="text-xs text-yellow-400">{tradeDetail.pattern}</span>}</div><button onClick={() => { setSelectedTrade(null); setTradeDetail(null); }} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button></div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Trade Info</h4><div className="space-y-2 text-sm">{[['Entry', tradeDetail.entry_price], ['Initial SL', tradeDetail.initial_stop_loss], ['TP', tradeDetail.tp_2r_price], ['R Value', tradeDetail.r_value_abs], ['Sim SL', tradeDetail.sim_initial_stop_loss], ['Sim TP', tradeDetail.sim_tp_price]].map(([l, v]) => <div key={l} className="flex justify-between"><span className="text-slate-400">{l}</span><span className="text-white font-mono">{fmtPrice(v)}</span></div>)}<div className="flex justify-between"><span className="text-slate-400">Entry Time</span><span className="text-slate-300">{utcToVN(tradeDetail.entry_time)}</span></div></div></div>
           <div className="space-y-4">
             <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Actual</h4><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-400">Exit</span><span className={EXIT_COLORS[tradeDetail.actual?.exit_reason] || ''}>{tradeDetail.actual?.exit_reason}</span></div><div className="flex justify-between"><span className="text-slate-400">RR</span><span className={`font-bold ${pnlClr(tradeDetail.actual?.rr_realized)}`}>{$n(tradeDetail.actual?.rr_realized, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">Return</span><span className={pnlClr(tradeDetail.actual?.result_pct)}>{$n(tradeDetail.actual?.result_pct)}%</span></div></div></div>
-            <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Simulated</h4><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-400">Exit</span><span className={EXIT_COLORS[tradeDetail.simulated?.exit_reason] || ''}>{tradeDetail.simulated?.exit_reason}</span></div><div className="flex justify-between"><span className="text-slate-400">RR</span><span className={`font-bold ${pnlClr(tradeDetail.simulated?.rr_realized)}`}>{$n(tradeDetail.simulated?.rr_realized, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">Max RR</span><span className="text-white">{$n(tradeDetail.simulated?.max_rr_seen, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">L1/L2</span><span>{tradeDetail.simulated?.level_1_hit ? 'Ã¢Å“â€¦' : 'Ã¢â‚¬â€'} / {tradeDetail.simulated?.level_2_hit ? 'Ã¢Å“â€¦' : 'Ã¢â‚¬â€'}</span></div>{tradeDetail.simulated?.ambiguous_bar && <div className="text-xs text-orange-400 mt-2">Ã¢Å¡Â Ã¯Â¸Â Ambiguous bar Ã¢â‚¬â€ conservative</div>}</div></div>
+            <div className="p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Simulated</h4><div className="space-y-2 text-sm"><div className="flex justify-between"><span className="text-slate-400">Exit</span><span className={EXIT_COLORS[tradeDetail.simulated?.exit_reason] || ''}>{tradeDetail.simulated?.exit_reason}</span></div><div className="flex justify-between"><span className="text-slate-400">RR</span><span className={`font-bold ${pnlClr(tradeDetail.simulated?.rr_realized)}`}>{$n(tradeDetail.simulated?.rr_realized, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">Max RR</span><span className="text-white">{$n(tradeDetail.simulated?.max_rr_seen, 3)}</span></div><div className="flex justify-between"><span className="text-slate-400">L1/L2</span><span>{tradeDetail.simulated?.level_1_hit ? 'Y' : '-'} / {tradeDetail.simulated?.level_2_hit ? 'Y' : '-'}</span></div>{tradeDetail.simulated?.ambiguous_bar && <div className="text-xs text-orange-400 mt-2">Ambiguous bar - conservative</div>}</div></div>
           </div>
         </div>
-        {tradeDetail.policy_levels?.length > 0 && <div className="mt-6 p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Policy Levels</h4><div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">{tradeDetail.policy_levels.map((lv, i) => <div key={i} className="bg-slate-800/50 rounded-lg p-3 text-center"><p className="text-xs text-slate-400">{lv.name} ({lv.trigger_r}R)</p><p className="text-sm text-white font-mono mt-1">Ã¢â€ â€™ {fmtPrice(lv.trigger_price)}</p><p className="text-xs text-yellow-400 mt-0.5">Stop: {fmtPrice(lv.stop_after_trigger)}</p></div>)}</div></div>}
-        {tradeDetail.timeline?.length > 0 && <div className="mt-6 p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Timeline</h4><div className="space-y-2">{tradeDetail.timeline.filter(e => e.event !== 'BAR').map((ev, i) => <div key={i} className="flex items-center gap-3 text-sm"><span className="text-xs text-slate-500 font-mono w-28">{utcToVN(ev.time)}</span><span className={`text-xs font-medium ${ev.event.includes('EXIT') ? 'text-emerald-400' : ev.event.includes('TRIGGERED') ? 'text-yellow-400' : 'text-slate-400'}`}>{ev.event}</span>{ev.new_stop && <span className="text-xs text-slate-400">Ã¢â€ â€™ Stop: {fmtPrice(ev.new_stop)}</span>}{ev.exit_price && <span className="text-xs text-white">@ {fmtPrice(ev.exit_price)}</span>}</div>)}</div></div>}
+        {tradeDetail.policy_levels?.length > 0 && <div className="mt-6 p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Policy Levels</h4><div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">{tradeDetail.policy_levels.map((lv, i) => <div key={i} className="bg-slate-800/50 rounded-lg p-3 text-center"><p className="text-xs text-slate-400">{lv.name} ({lv.trigger_r}R)</p><p className="text-sm text-white font-mono mt-1">→ {fmtPrice(lv.trigger_price)}</p><p className="text-xs text-yellow-400 mt-0.5">Stop: {fmtPrice(lv.stop_after_trigger)}</p></div>)}</div></div>}
+        {tradeDetail.timeline?.length > 0 && <div className="mt-6 p-4 bg-slate-900/50 rounded-lg"><h4 className="text-sm font-semibold text-slate-300 mb-3">Timeline</h4><div className="space-y-2">{tradeDetail.timeline.filter(e => e.event !== 'BAR').map((ev, i) => <div key={i} className="flex items-center gap-3 text-sm"><span className="text-xs text-slate-500 font-mono w-28">{utcToVN(ev.time)}</span><span className={`text-xs font-medium ${ev.event.includes('EXIT') ? 'text-emerald-400' : ev.event.includes('TRIGGERED') ? 'text-yellow-400' : 'text-slate-400'}`}>{ev.event}</span>{ev.new_stop && <span className="text-xs text-slate-400">→ Stop: {fmtPrice(ev.new_stop)}</span>}{ev.exit_price && <span className="text-xs text-white">@ {fmtPrice(ev.exit_price)}</span>}</div>)}</div></div>}
       </div></div>)}
     </div>
   );

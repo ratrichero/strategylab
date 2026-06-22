@@ -13,7 +13,7 @@ import { parseUtcMs, utcToVN, getTodayVN, normalizeSignalDates } from '../utils/
 const API = '/api';
 const VN_MS = 7 * 3600 * 1000;
 
-/** Convert created_at UTC Ã¢â€ â€™ VN date string "YYYY-MM-DD" */
+/** Convert created_at UTC → VN date string "YYYY-MM-DD" */
 function createdToVNDate(createdAt) {
   if (!createdAt) return '';
   const ms = parseUtcMs(createdAt);
@@ -228,7 +228,7 @@ export function PendingSignalsPage() {
             </div>
           </div>
           <div className="sm:col-span-2">
-            <label className="block text-sm font-medium text-slate-400 mb-1.5">Score {f.scoreMin.toFixed(1)} Ã¢â‚¬â€œ {f.scoreMax.toFixed(1)}</label>
+            <label className="block text-sm font-medium text-slate-400 mb-1.5">Score {f.scoreMin.toFixed(1)} – {f.scoreMax.toFixed(1)}</label>
             <input type="range" min={0} max={10} step={0.5} value={f.scoreMin} onChange={e => set('scoreMin', Number(e.target.value))} className="w-full accent-indigo-500 h-1.5" />
             <input type="range" min={0} max={10} step={0.5} value={f.scoreMax} onChange={e => set('scoreMax', Number(e.target.value))} className="w-full accent-indigo-500 h-1.5" />
           </div>

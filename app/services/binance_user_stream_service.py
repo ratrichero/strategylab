@@ -344,6 +344,7 @@ class BinanceUserStreamService:
                 result = db.execute(text("""
                     UPDATE pending_signals
                     SET
+                        client_order_id = COALESCE(:client_order_id, client_order_id),
                         exchange_order_id = COALESCE(:order_id, exchange_order_id),
                         exchange_status = COALESCE(:order_status, exchange_status),
                         placed_at = COALESCE(placed_at, NOW()),
@@ -366,6 +367,7 @@ class BinanceUserStreamService:
                       AND status = 'WAIT'
                 """), {
                     "pending_id": pending_id,
+                    "client_order_id": client_order_id,
                     "order_id": order_id,
                     "order_status": order_status,
                     "orig_qty": orig_qty,
