@@ -1,14 +1,16 @@
 // @ts-nocheck
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { auth } from "../services/api";
+import { useLocation, useNavigate } from "react-router-dom";
+import { appRoleApi, auth } from "../services/api";
 import { useAppStore } from "../store/appStore";
 import toast from "react-hot-toast";
 import { Loader2, LogIn, UserPlus, AlertCircle } from "lucide-react";
 
 export function LoginPage() {
   const navigate = useNavigate();
-  const { setCurrentUser } = useAppStore();
+  const location = useLocation();
+  const { setAppRole, setCurrentUser, setLicenseInfo } = useAppStore();
+  const from = location.state?.from?.pathname || "/";
 
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -25,7 +27,8 @@ export function LoginPage() {
         const me = await auth.me();
         if (me?.user) {
           setCurrentUser(me.user);
-          navigate("/dashboard", { replace: true });
+          if (me.app_role) setAppRole(me.app_role);
+          navigate(from, { replace: true });
           return;
         }
       } catch {}
@@ -60,7 +63,15 @@ export function LoginPage() {
         setCurrentUser(result.user);
         toast.success(`Welcome, ${result.user.username}`);
       }
-      navigate("/dashboard", { replace: true });
+      const me = await auth.me();
+      if (me?.app_role) {
+        setAppRole(me.app_role);
+        if (me.app_role === "BOT") {
+          const li = await appRoleApi.botLicenseInfo().catch(() => null);
+          if (li?.license) setLicenseInfo(li.license);
+        }
+      }
+      navigate(from, { replace: true });
     } catch (e: any) {
       setError(e.message || "Authentication failed");
     } finally {

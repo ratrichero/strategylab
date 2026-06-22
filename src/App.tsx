@@ -29,6 +29,7 @@ import { Loader2 } from 'lucide-react';
 function AuthGuard({ children }: { children: React.ReactNode }) {
   const { currentUser, setCurrentUser, setAppRole, setLicenseInfo } = useAppStore();
   const [checking, setChecking] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
     (async () => {
@@ -63,7 +64,7 @@ function AuthGuard({ children }: { children: React.ReactNode }) {
   }
 
   if (!currentUser) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   return <>{children}</>;
