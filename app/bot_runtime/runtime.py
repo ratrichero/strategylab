@@ -113,8 +113,8 @@ class BotRuntime:
 
             if not self._boot_from_cache():
                 raise RuntimeError(
-                    "Cannot boot: admin unreachable and no valid bootstrap cache. "
-                    "Bot must connect to admin at least once."
+                    f"Cannot boot: admin activate failed ({result.error}) and no valid bootstrap cache. "
+                    "Bot must connect to admin at least once or keep a persistent BOOTSTRAP_CACHE_PATH."
                 )
 
         # ── Step 4: Connect DB ─────────────────────────────────
