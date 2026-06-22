@@ -6,7 +6,7 @@ import { useAppStore } from "../../store/appStore";
 import { KillSwitch } from "../KillSwitch";
 import {
   LayoutDashboard, Wallet, Clock, Zap, Settings, Menu, X,
-  ShieldOff, TrendingUp, BarChart3, Microscope, Cpu, Ban, FlaskConical, Code2,
+  ShieldOff, TrendingUp, BarChart3, Microscope, Cpu, Ban, FlaskConical, Code2, Bot,
 } from "lucide-react";
 
 const mainTabs = [
@@ -36,14 +36,16 @@ const allPages = [
 
 export function MobileLayout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { tradingMode } = useAppStore();
+  const { tradingMode, appRole, currentUser } = useAppStore();
   const [menuOpen, setMenuOpen] = useState(false);
+  const isAdmin = appRole === "ADMIN" && currentUser?.role === "ADMIN";
+  const visiblePages = isAdmin ? [...allPages, { name: "Bot Management", href: "/admin/bots", icon: Bot }] : allPages;
 
   const mode = tradingMode?.mode || "";
   const modeColor = { PAPER: "text-blue-400", TESTNET: "text-yellow-400", LIVE: "text-red-400" };
   const modeIcon = { PAPER: "📋", TESTNET: "🧪", LIVE: "💰" };
 
-  const pageTitle = allPages.find(
+  const pageTitle = visiblePages.find(
     n => n.href === location.pathname || (n.href !== "/" && location.pathname.startsWith(n.href))
   )?.name || "Dashboard";
 
@@ -120,7 +122,7 @@ export function MobileLayout({ children }: { children: React.ReactNode }) {
               </button>
             </div>
             <div className="space-y-1">
-              {allPages.map(page => {
+              {visiblePages.map(page => {
                 const active = location.pathname === page.href;
                 return (
                   <Link

@@ -4,7 +4,7 @@ import { cn } from "../../utils/cn";
 import { useAppStore } from "../../store/appStore";
 import { StatusBar } from "../StatusBar";
 import { KillSwitch } from "../KillSwitch";
-import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Code2, Settings, Microscope, ChevronLeft, ChevronRight, Bell, Search, Clock, Wallet, UserX } from "lucide-react";
+import { LayoutDashboard, TrendingUp, Zap, BarChart3, Cpu, Ban, FlaskConical, Code2, Settings, Microscope, ChevronLeft, ChevronRight, Bell, Search, Clock, Wallet, UserX, Bot } from "lucide-react";
 
 const nav = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -25,9 +25,11 @@ const nav = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const location = useLocation();
-  const { sidebarCollapsed, toggleSidebar, theme } = useAppStore();
+  const { sidebarCollapsed, toggleSidebar, theme, appRole, currentUser } = useAppStore();
   const [searchOpen, setSearchOpen] = useState(false);
-  const pageTitle = [...nav, { href: "/settings", name: "Settings" }].find(n => n.href === location.pathname || (n.href !== "/" && location.pathname.startsWith(n.href)))?.name || "Dashboard";
+  const isAdmin = appRole === "ADMIN" && currentUser?.role === "ADMIN";
+  const visibleNav = isAdmin ? [...nav, { name: "Bot Management", href: "/admin/bots", icon: Bot }] : nav;
+  const pageTitle = [...visibleNav, { href: "/settings", name: "Settings" }].find(n => n.href === location.pathname || (n.href !== "/" && location.pathname.startsWith(n.href)))?.name || "Dashboard";
   const themeClass = theme === "trading" ? "theme-trading" : theme === "light" ? "theme-light-gold" : "";
 
   return (
@@ -38,7 +40,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <button onClick={toggleSidebar} className="p-1.5 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors ml-auto">{sidebarCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}</button>
         </div>
         <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-          {nav.map((item) => {
+          {visibleNav.map((item) => {
             const active = location.pathname === item.href || (item.href !== "/" && location.pathname.startsWith(item.href));
             return (<Link key={item.href} to={item.href} title={sidebarCollapsed ? item.name : undefined} className={cn("flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors", active ? "bg-indigo-600/20 text-indigo-400 border border-indigo-500/30" : "text-slate-400 hover:bg-slate-700/50 hover:text-white")}><item.icon className="w-5 h-5 flex-shrink-0" />{!sidebarCollapsed && <span className="font-medium">{item.name}</span>}</Link>);
           })}

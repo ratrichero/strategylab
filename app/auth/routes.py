@@ -113,9 +113,10 @@ async def setup_status():
     db = SessionLocal()
     try:
         count = db.query(DashboardUser).count()
+        app_role = get_app_role()
         return {
-            "needs_setup": count == 0,
-            "app_role": get_app_role(),
+            "needs_setup": count == 0 and app_role == ROLE_ADMIN,
+            "app_role": app_role,
         }
     finally:
         db.close()
@@ -130,6 +131,11 @@ async def setup(req: SetupRequest):
     """
     if req.password != req.confirm_password:
         raise HTTPException(status_code=400, detail="Passwords do not match")
+    if get_app_role() != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=403,
+            detail="Bot dashboard users must be created or reset from Admin Control Plane."
+        )
 
     db = SessionLocal()
     try:
