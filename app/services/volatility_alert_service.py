@@ -236,19 +236,20 @@ class VolatilityAlertService:
         return "alt", self._coin_threshold_1m, self._coin_threshold_5m, self._coin_cooldown
 
     def _emit_message(self, alerts: List[dict]):
-        lines = ["<b>VOLATILITY ALERT</b>"]
-        lines.append("Realtime price move detected. Cooldown is applied per symbol.")
+        lines = ["🌊 <b>Cảnh báo biến động giá</b>"]
+        lines.append("Phát hiện biến động realtime. Hệ thống chỉ cảnh báo sớm, không thay đổi rule vào lệnh.")
 
         for alert in alerts:
-            direction = "UP" if alert["direction"] == "UP" else "DOWN"
+            direction = "TĂNG" if alert["direction"] == "UP" else "GIẢM"
+            icon = "🟢" if alert["direction"] == "UP" else "🔴"
             self._recent_alerts.appendleft(dict(alert))
             lines.append(
-                f"[{direction}] <b>{alert['symbol']}</b>: {alert['reason']} "
+                f"{icon} <b>{alert['symbol']}</b> {direction}: {alert['reason']} "
                 f"| 1m {alert['signed_delta_1m']:+.2f}% "
                 f"| 5m {alert['signed_delta_5m']:+.2f}%"
             )
 
-        lines.append("\nUse this as early warning only; trade execution rules are unchanged.")
+        lines.append("\n👀 Dùng như tín hiệu theo dõi sớm; không phải lệnh giao dịch.")
         send_telegram("\n".join(lines))
 
     def get_recent_alerts(self, limit: int = 10) -> List[dict]:

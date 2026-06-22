@@ -427,12 +427,12 @@ def _notify_breakeven_applied(signal: Signal, new_sl_price: float):
         from app.services.telegram_service import send_telegram
 
         send_telegram(
-            f"🛡️ <b>BREAKEVEN APPLIED</b>\n\n"
-            f"<b>Symbol:</b> {signal.symbol}\n"
-            f"<b>Direction:</b> {signal.direction}\n"
-            f"<b>Entry:</b> {float(signal.entry_price):.4f}\n"
-            f"<b>New SL:</b> {float(new_sl_price):.4f}\n"
-            f"<b>Signal ID:</b> {signal.id}"
+            f"🛡️ <b>Đã dời Stop Loss bảo vệ lệnh</b>\n\n"
+            f"🪙 <b>Coin:</b> {signal.symbol}\n"
+            f"📍 <b>Hướng:</b> {signal.direction}\n"
+            f"🎯 <b>Entry:</b> {float(signal.entry_price):.4f}\n"
+            f"🛡 <b>SL mới:</b> {float(new_sl_price):.4f}\n"
+            f"🆔 <b>Signal ID:</b> {signal.id}"
         )
     except Exception as e:
         print(f"[BREAKEVEN NOTIFY] {e}")
@@ -1047,23 +1047,25 @@ def _notify_live_close(signal: Signal):
 
         if status == "MANUAL":
             icon = "🛑"
-            status_text = "MANUAL ⚪"
+            title = "Đã đóng thủ công"
+            status_text = "MANUAL 🔧"
         else:
-            icon = "🎉" if result > 0 else "😢"
+            icon = "🎉" if result > 0 else "📉"
+            title = "Lệnh LIVE đã đóng"
             status_text = "WIN 🟢" if result > 0 else "LOSS 🔴"
 
         msg = (
-            f"{icon} <b>TRADE CLOSED — {status_text}</b>\n\n"
-            f"💰 Mode: LIVE\n"
-            f"<b>Symbol:</b>    {signal.symbol}\n"
-            f"<b>Strategy:</b>  {signal.strategy_name}\n"
-            f"<b>Direction:</b> {signal.direction}\n"
-            f"<b>TF:</b>        {signal.timeframe}\n\n"
-            f"<b>Entry:</b>     {float(signal.entry_price):.4f}\n"
-            f"<b>Exit:</b>      {float(signal.exit_price):.4f}\n"
-            f"<b>Qty:</b>       {float(signal.quantity or 0):.6f}\n"
-            f"<b>Result:</b>    {result:+.2f}%\n"
-            f"<b>Reason:</b>    {signal.exit_reason}"
+            f"{icon} <b>{title} - {status_text}</b>\n\n"
+            f"💰 <b>Chế độ:</b> LIVE\n"
+            f"🪙 <b>Coin:</b> {signal.symbol}\n"
+            f"🧩 <b>Strategy:</b> {signal.strategy_name}\n"
+            f"📍 <b>Hướng:</b> {signal.direction}\n"
+            f"⏱ <b>Khung:</b> {signal.timeframe}\n\n"
+            f"🎯 <b>Entry:</b> {float(signal.entry_price):.4f}\n"
+            f"🏁 <b>Exit:</b> {float(signal.exit_price):.4f}\n"
+            f"📦 <b>Khối lượng:</b> {float(signal.quantity or 0):.6f}\n"
+            f"📊 <b>Kết quả:</b> {result:+.2f}%\n"
+            f"📝 <b>Lý do:</b> {signal.exit_reason}"
         )
         send_telegram(msg)
     except Exception as e:

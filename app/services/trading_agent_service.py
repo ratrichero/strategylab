@@ -223,16 +223,16 @@ def _build_live_context(open_trades: List[Signal], pending_count: int) -> Dict:
 
 
 def _format_live_context(live_context: Dict) -> str:
-    lines = ["<b>LIVE CONTEXT</b>"]
-    lines.append(f"Open unrealized PnL: {live_context.get('open_unrealized_pct')}%")
-    lines.append(f"Pending placed/waiting: {live_context.get('pending_placed_count')}/{live_context.get('pending_count')}")
-    lines.append(f"Price feed connected: {live_context.get('price_feed_connected')} | mode={live_context.get('price_feed_mode')}")
-    lines.append(f"User stream connected: {live_context.get('user_stream_connected')} | events={live_context.get('user_stream_events_saved')}")
+    lines = ["<b>📌 BỐI CẢNH LIVE</b>"]
+    lines.append(f"📊 PnL tạm tính lệnh mở: {live_context.get('open_unrealized_pct')}%")
+    lines.append(f"⏳ Lệnh chờ placed/waiting: {live_context.get('pending_placed_count')}/{live_context.get('pending_count')}")
+    lines.append(f"📡 Price feed: {live_context.get('price_feed_connected')} | mode={live_context.get('price_feed_mode')}")
+    lines.append(f"🔐 User stream: {live_context.get('user_stream_connected')} | events={live_context.get('user_stream_events_saved')}")
 
     reasons = live_context.get("exit_reasons") or {}
     if reasons:
         top = sorted(reasons.items(), key=lambda x: x[1], reverse=True)[:6]
-        lines.append("Recent close reasons: " + ", ".join(f"{k}={v}" for k, v in top))
+        lines.append("📝 Lý do đóng gần đây: " + ", ".join(f"{k}={v}" for k, v in top))
 
     alerts = live_context.get("recent_vol_alerts") or []
     if alerts:
@@ -245,7 +245,7 @@ def _format_live_context(live_context: Dict) -> str:
                 f"1m={_safe_float(delta_1m):+.2f}% "
                 f"5m={_safe_float(delta_5m):+.2f}%"
             )
-        lines.append("Recent vol alerts: " + "; ".join(parts))
+        lines.append("🌊 Cảnh báo biến động gần đây: " + "; ".join(parts))
 
     return "\n".join(lines)
 
@@ -268,33 +268,33 @@ def _compose_base_report(
     report = (
         f"<b>{title}</b>\n"
         f"<i>{periods}</i>\n\n"
-        f"<b>PERIOD PERFORMANCE</b>\n"
-        f"Trades: {m_p['total_trades']}\n"
+        f"<b>📊 HIỆU SUẤT KỲ NÀY</b>\n"
+        f"Lệnh: {m_p['total_trades']}\n"
         f"Winrate: {m_p['winrate_pct']}%\n"
         f"PF: {m_p['profit_factor']}\n"
         f"Sharpe: {m_p['sharpe']}\n"
         f"Max DD: {m_p['max_drawdown']}%\n"
-        f"Expectancy: {m_p['expectancy']}% per trade\n"
+        f"Expectancy: {m_p['expectancy']}% / lệnh\n"
         f"Avg Win: {m_p['avg_win']}% | Avg Loss: {m_p['avg_loss']}%\n\n"
-        f"<b>DIRECTION</b>\n"
-        f"LONG: {len(long_trades)} trades\n"
-        f"SHORT: {len(short_trades)} trades\n"
+        f"<b>🧭 HƯỚNG LỆNH</b>\n"
+        f"🟢 LONG: {len(long_trades)} lệnh\n"
+        f"🔴 SHORT: {len(short_trades)} lệnh\n"
     )
     if strat_lines:
-        report += f"\n<b>STRATEGY</b>\n{strat_lines}"
+        report += f"\n<b>🧩 STRATEGY</b>\n{strat_lines}"
     if best:
-        report += f"\n<b>Best:</b> {best.symbol} {best.direction} {_safe_float(best.result_percent):+.2f}%\n"
+        report += f"\n<b>🏆 Lệnh tốt nhất:</b> {best.symbol} {best.direction} {_safe_float(best.result_percent):+.2f}%\n"
     if worst:
-        report += f"<b>Worst:</b> {worst.symbol} {worst.direction} {_safe_float(worst.result_percent):+.2f}%\n"
+        report += f"<b>📉 Lệnh yếu nhất:</b> {worst.symbol} {worst.direction} {_safe_float(worst.result_percent):+.2f}%\n"
     report += (
-        f"\n<b>STATE</b>\n"
-        f"Open: {open_count}\n"
-        f"Pending: {pending_count}\n"
-        f"Equity curve estimate: ${m_a['final_equity']}\n\n"
+        f"\n<b>📌 TRẠNG THÁI</b>\n"
+        f"🟢 Đang mở: {open_count}\n"
+        f"⏳ Đang chờ: {pending_count}\n"
+        f"💵 Equity ước tính: ${m_a['final_equity']}\n\n"
         f"{_format_live_context(live_context)}\n"
     )
     if anomalies:
-        report += "\n<b>WARNINGS / ANOMALIES</b>\n"
+        report += "\n<b>⚠️ CẢNH BÁO / BẤT THƯỜNG</b>\n"
         for item in anomalies:
             report += f"- {item}\n"
     return report
@@ -384,9 +384,9 @@ def generate_agent_report(report_type: str, days: int, title: str) -> str:
     prompt = _generate_agent_prompt(base_report, anomalies, live_context)
     ai_summary = _ask_agent(prompt)
     if ai_summary:
-        report = f"{base_report}\n\n<b>AI SUMMARY</b>\n{ai_summary}"
+        report = f"{base_report}\n\n<b>🧠 TÓM TẮT AI</b>\n{ai_summary}"
     else:
-        report = f"{base_report}\n\nAI unavailable; sent base report only."
+        report = f"{base_report}\n\n⚠️ AI chưa phản hồi, mình gửi báo cáo nền trước."
 
     try:
         from sqlalchemy import text
@@ -418,26 +418,26 @@ def generate_live_risk_report() -> str:
     alerts = health.get("market_alerts") or []
 
     lines = [
-        "<b>LIVE RISK ANALYST</b>",
-        f"Status: {health.get('status')} | mode={health.get('mode')}",
-        f"Issues: {', '.join(health.get('issues') or []) or 'none'}",
-        f"Warnings: {', '.join(health.get('warnings') or []) or 'none'}",
+        "<b>🧠 LIVE RISK ANALYST</b>",
+        f"📌 Trạng thái: {health.get('status')} | mode={health.get('mode')}",
+        f"⚠️ Vấn đề: {', '.join(health.get('issues') or []) or 'không có'}",
+        f"🔔 Cảnh báo: {', '.join(health.get('warnings') or []) or 'không có'}",
         "",
-        "<b>LIVE STATE</b>",
-        f"Open trades: {db.get('open_count', 0)} | symbols={', '.join(db.get('open_symbols') or []) or 'none'}",
-        f"Pending waiting: {db.get('pending_wait_count', 0)} | placed={db.get('pending_placed_count', 0)}",
-        f"Missing protection: {db.get('missing_protection_count', 0)}",
-        f"Stale pending: {db.get('stale_pending_count', 0)}",
+        "<b>📊 TRẠNG THÁI LIVE</b>",
+        f"📈 Lệnh mở: {db.get('open_count', 0)} | coin={', '.join(db.get('open_symbols') or []) or 'không có'}",
+        f"⏳ Lệnh chờ: {db.get('pending_wait_count', 0)} | placed={db.get('pending_placed_count', 0)}",
+        f"🛡 Thiếu protection: {db.get('missing_protection_count', 0)}",
+        f"⏱ Pending quá lâu: {db.get('stale_pending_count', 0)}",
         f"EXCHANGE_CLOSE_UNKNOWN: {db.get('exchange_close_unknown_count', 0)}",
         "",
-        "<b>INFRA</b>",
-        f"Price feed healthy: {price_feed.get('healthy')} | mode={price_feed.get('mode')} | symbols={price_feed.get('symbols_count')}",
-        f"User stream connected: {user_stream.get('connected')} | events={user_stream.get('events_saved')} | last={user_stream.get('last_event_type')}",
+        "<b>🔧 HẠ TẦNG</b>",
+        f"📡 Price feed: {price_feed.get('healthy')} | mode={price_feed.get('mode')} | symbols={price_feed.get('symbols_count')}",
+        f"🔐 User stream: {user_stream.get('connected')} | events={user_stream.get('events_saved')} | last={user_stream.get('last_event_type')}",
     ]
 
     if alerts:
         lines.append("")
-        lines.append("<b>RECENT VOLATILITY</b>")
+        lines.append("<b>🌊 BIẾN ĐỘNG GẦN ĐÂY</b>")
         for alert in alerts[:5]:
             lines.append(
                 f"- {alert.get('symbol')} {alert.get('direction')} "
@@ -455,7 +455,7 @@ def generate_live_risk_report() -> str:
         f"{base_report}\n\nRAW HEALTH:\n{health}"
     )
     ai_summary = _ask_agent(prompt)
-    report = f"{base_report}\n\n<b>AI RISK SUMMARY</b>\n{ai_summary}" if ai_summary else f"{base_report}\n\nAI unavailable; sent live health summary only."
+    report = f"{base_report}\n\n<b>🧠 TÓM TẮT RỦI RO AI</b>\n{ai_summary}" if ai_summary else f"{base_report}\n\n⚠️ AI chưa phản hồi, mình gửi health summary trước."
 
     try:
         with SessionLocal() as db2:
@@ -475,19 +475,19 @@ def generate_live_risk_report() -> str:
 
 
 def send_agent_daily():
-    report = generate_agent_report("daily", 1, "DAILY AGENT REPORT")
+    report = generate_agent_report("daily", 1, "🧠 BÁO CÁO AGENT NGÀY")
     send_telegram(report)
     return report
 
 
 def send_agent_weekly():
-    report = generate_agent_report("weekly", 7, "WEEKLY AGENT REPORT")
+    report = generate_agent_report("weekly", 7, "🧠 BÁO CÁO AGENT TUẦN")
     send_telegram(report)
     return report
 
 
 def send_agent_monthly():
-    report = generate_agent_report("monthly", 30, "MONTHLY AGENT REPORT")
+    report = generate_agent_report("monthly", 30, "🧠 BÁO CÁO AGENT THÁNG")
     send_telegram(report)
     return report
 

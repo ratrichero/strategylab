@@ -32,7 +32,7 @@ IMPORTANT:
 
 from dataclasses import dataclass
 from typing import Set, List
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 
 from app.db.models import Signal, PendingSignal
 
@@ -159,6 +159,40 @@ def get_capacity_snapshot(db, c_config: int, local_queue_reserve: int = LOCAL_QU
     total_risk = c_open + c_new
     max_risk = int(c_config) + 2
 
+    return CapacitySnapshot(
+        c_config=int(c_config),
+        c_open=c_open,
+        c_new=c_new,
+        c_local=c_local,
+        total_risk=total_risk,
+        max_risk=max_risk,
+        local_queue_reserve=int(local_queue_reserve),
+    )
+
+
+def get_capacity_snapshot_locked(db, c_config: int, local_queue_reserve: int = LOCAL_QUEUE_RESERVE) -> CapacitySnapshot:
+    """
+    Atomic capacity check với PostgreSQL advisory lock.
+    
+    Sử dụng pg_advisory_xact_lock để serialize capacity checks across transactions.
+    Điều này fix race condition trong intent_engine nơi capacity được check 2 lần với time gap 300-500ms.
+    
+    Advisory lock key: 12345 (fixed key cho capacity placement serialization)
+    """
+    # Acquire advisory lock để serialize capacity checks
+    db.execute(text("SELECT pg_advisory_xact_lock(12345)"))
+    
+    # Sau khi lock, query counts (không cần FOR UPDATE nữa vì advisory lock đã serialize)
+    open_symbols = get_open_signal_symbols(db)
+    new_symbols = get_new_zero_fill_symbols(db)
+    local_symbols = get_local_queue_symbols(db)
+    
+    c_open = len(open_symbols)
+    c_new = len(new_symbols)
+    c_local = len(local_symbols)
+    total_risk = c_open + c_new
+    max_risk = int(c_config) + 2
+    
     return CapacitySnapshot(
         c_config=int(c_config),
         c_open=c_open,

@@ -69,6 +69,61 @@ DEFAULTS = {
             ]}
         }
     }),
+    "RETRY_POLICY_CONFIG": json.dumps({
+        "enabled": True,
+        "error_classification": {
+            "deterministic": [
+                "insufficient balance",
+                "margin is insufficient",
+                "leverage failed",
+                "qty too small",
+                "actual notional too small",
+                "order would immediately trigger",
+                "price is outside the price band",
+                "apikey permission",
+                "symbol not trading",
+                "set_leverage_failed",
+            ],
+            "temporary": [
+                "timeout",
+                "network",
+                "connection",
+                "connection reset",
+                "connection refused",
+            ],
+            "rate_limit": [
+                "too many requests",
+                "rate limit",
+                "429",
+            ]
+        },
+        "retry_strategies": {
+            "duplicate_guard": {
+                "max_retries": 0,
+                "backoff": "none"
+            },
+            "deterministic": {
+                "max_retries": 0,
+                "backoff": "none"
+            },
+            "temporary": {
+                "max_retries": 5,
+                "backoff": "exponential",
+                "initial": 10,
+                "max": 300
+            },
+            "rate_limit": {
+                "max_retries": 3,
+                "backoff": "fixed",
+                "seconds": 60
+            }
+        },
+        "circuit_breaker": {
+            "enabled": True,
+            "failure_threshold": 5,
+            "cooldown_seconds": 300
+        }
+    }),
     "CONNECTION_OVERRIDE": "false",
     "STRATEGY_CONFIG": json.dumps({
         "candlestick": {
@@ -154,6 +209,7 @@ def get_runtime_config(force_reload=False):
         "STRATEGY_CONFIG":       parse_json("STRATEGY_CONFIG"),
         "PROFIT_LOCK_CONFIG":       parse_json("PROFIT_LOCK_CONFIG"),
         "PROTECTION_LEVELS_CONFIG": parse_json("PROTECTION_LEVELS_CONFIG"),
+        "RETRY_POLICY_CONFIG":     parse_json("RETRY_POLICY_CONFIG"),
         
     }
     return _runtime_cache
@@ -165,7 +221,7 @@ def update_runtime_config(data: dict):
     for k, v in data.items():
         if k in ["RISK_CONFIG","DERIVATIVE_CONFIG","PENDING_CONFIG",
                  "OPEN_TRADE_FILTER","PREFILL_CONFIG","STRATEGY_THRESHOLDS",
-                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG","STRATEGY_CONFIG","PROFIT_LOCK_CONFIG","PROTECTION_LEVELS_CONFIG"]:
+                 "LIMIT_ORDER_CONFIG","POSITION_SIZE_CONFIG","STRATEGY_CONFIG","PROFIT_LOCK_CONFIG","PROTECTION_LEVELS_CONFIG","RETRY_POLICY_CONFIG"]:
             try: json.loads(v)
             except: db.close(); raise ValueError(f"{k} is invalid JSON")
         db.execute(text("""

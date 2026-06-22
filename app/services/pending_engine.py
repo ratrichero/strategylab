@@ -633,11 +633,11 @@ def _process_single_live(db, p, price_map, now):
                 try:
                     from app.services.telegram_service import send_telegram
                     send_telegram(
-                        f"⚠️ <b>ENTRY REJECTED</b>\n\n"
-                        f"<b>Symbol:</b> {p.symbol}\n"
-                        f"<b>Direction:</b> {p.direction}\n"
-                        f"<b>Reason:</b> {error_msg}\n"
-                        f"<b>Score:</b> {p.signal_score}"
+                        f"⚠️ <b>Lệnh vào bị từ chối</b>\n\n"
+                        f"🪙 <b>Coin:</b> {p.symbol}\n"
+                        f"📍 <b>Hướng:</b> {p.direction}\n"
+                        f"📝 <b>Lý do:</b> {error_msg}\n"
+                        f"⭐ <b>Score:</b> {p.signal_score}"
                     )
                 except Exception:
                     pass
@@ -865,31 +865,31 @@ def _notify_fill(p, signal, exec_result):
 
         entry_display = exec_result.actual_entry or p.trigger_price
         qty_text = (
-            f"\n<b>Quantity:</b> {exec_result.actual_quantity}"
+            f"\n📦 <b>Khối lượng:</b> {exec_result.actual_quantity}"
             if exec_result.actual_quantity else ""
         )
         lev_text = (
-            f"\n<b>Leverage:</b> {exec_result.leverage}x"
+            f"\n⚙️ <b>Đòn bẩy:</b> {exec_result.leverage}x"
             if exec_result.leverage and exec_result.leverage > 1 else ""
         )
 
         msg = (
-            f"🚨 <b>SIGNAL {exec_result.mode}</b>{score_tag}{conf_tag}\n\n"
-            f"{mode_icon} Mode: {exec_result.mode}\n"
-            f"<b>Symbol:</b>    {p.symbol}\n"
-            f"<b>TF:</b>        {p.timeframe} {tf_icon}\n"
-            f"<b>Strategy:</b>  {p.strategy_name}\n"
-            f"<b>Pattern:</b>   {p.pattern}\n"
-            f"<b>Direction:</b> {p.direction}\n"
-            f"<b>Regime:</b>    {p.regime}\n"
-            f"<b>Score:</b>     {p.signal_score}\n\n"
-            f"<b>Trigger:</b>   {float(p.trigger_price):.6f}\n"
-            f"<b>Entry:</b>     {float(entry_display):.6f}\n"
-            f"<b>SL:</b>        {float(p.stop_loss):.6f}\n"
-            f"<b>TP:</b>        {float(p.take_profit):.6f}\n"
-            f"<b>RR:</b>        {rr_text}"
+            f"🚨 <b>Tín hiệu mới {exec_result.mode}</b>{score_tag}{conf_tag}\n\n"
+            f"{mode_icon} <b>Chế độ:</b> {exec_result.mode}\n"
+            f"🪙 <b>Coin:</b> {p.symbol}\n"
+            f"⏱ <b>Khung:</b> {p.timeframe} {tf_icon}\n"
+            f"🧩 <b>Strategy:</b> {p.strategy_name}\n"
+            f"🕯 <b>Pattern:</b> {p.pattern}\n"
+            f"📍 <b>Hướng:</b> {p.direction}\n"
+            f"🌦 <b>Regime:</b> {p.regime}\n"
+            f"⭐ <b>Score:</b> {p.signal_score}\n\n"
+            f"🎯 <b>Trigger:</b> {float(p.trigger_price):.6f}\n"
+            f"✅ <b>Entry:</b> {float(entry_display):.6f}\n"
+            f"🛡 <b>SL:</b> {float(p.stop_loss):.6f}\n"
+            f"🏁 <b>TP:</b> {float(p.take_profit):.6f}\n"
+            f"⚖️ <b>RR:</b> {rr_text}"
             f"{qty_text}{lev_text}\n\n"
-            f"<b>Candle:</b>    {local_time.strftime('%Y-%m-%d %H:%M:%S')} GMT+7"
+            f"🕒 <b>Nến:</b> {local_time.strftime('%Y-%m-%d %H:%M:%S')} GMT+7"
         )
         send_telegram(msg)
 

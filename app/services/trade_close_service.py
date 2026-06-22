@@ -291,33 +291,35 @@ def _notify_close(trade, mode):
     try:
         from app.services.telegram_service import send_telegram
 
-        result = float(trade.result_percent)
+        result = float(trade.result_percent or 0)
         status = trade.status
 
         if status == "MANUAL":
             icon = "🛑"
-            status_text = "MANUAL ⚪"
+            title = "Đã đóng thủ công"
+            status_text = "MANUAL 🔧"
         else:
-            icon = "🎉" if result > 0 else "😢"
+            icon = "🎉" if result > 0 else "📉"
+            title = "Lệnh đã đóng"
             status_text = "WIN 🟢" if result > 0 else "LOSS 🔴"
 
         mode_icon = {
             "PAPER": "📋",
             "TESTNET": "🧪",
-            "LIVE": "💰"
+            "LIVE": "💰",
         }.get(mode.value, "📋")
 
         msg = (
-            f"{icon} <b>TRADE CLOSED — {status_text}</b>\n\n"
-            f"{mode_icon} Mode: {mode.value}\n"
-            f"<b>Symbol:</b>    {trade.symbol}\n"
-            f"<b>Strategy:</b>  {trade.strategy_name}\n"
-            f"<b>Direction:</b> {trade.direction}\n"
-            f"<b>TF:</b>        {trade.timeframe}\n\n"
-            f"<b>Entry:</b>     {float(trade.entry_price):.4f}\n"
-            f"<b>Exit:</b>      {float(trade.exit_price):.4f}\n"
-            f"<b>Result:</b>    {result:+.2f}%\n"
-            f"<b>Reason:</b>    {trade.exit_reason}"
+            f"{icon} <b>{title} - {status_text}</b>\n\n"
+            f"{mode_icon} <b>Chế độ:</b> {mode.value}\n"
+            f"🪙 <b>Coin:</b> {trade.symbol}\n"
+            f"🧩 <b>Strategy:</b> {trade.strategy_name}\n"
+            f"📍 <b>Hướng:</b> {trade.direction}\n"
+            f"⏱ <b>Khung:</b> {trade.timeframe}\n\n"
+            f"🎯 <b>Entry:</b> {float(trade.entry_price):.4f}\n"
+            f"🏁 <b>Exit:</b> {float(trade.exit_price):.4f}\n"
+            f"📊 <b>Kết quả:</b> {result:+.2f}%\n"
+            f"📝 <b>Lý do:</b> {trade.exit_reason}"
         )
         send_telegram(msg)
 

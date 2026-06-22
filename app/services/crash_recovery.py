@@ -217,21 +217,21 @@ def _notify(results):
 
         if mode == "PAPER":
             msg = (
-                f"⚠️ <b>SYSTEM CRASH RECOVERY</b>\n\n"
-                f"<b>Mode:</b> PAPER\n"
-                f"<b>Downtime:</b> {results.get('downtime_seconds', '?')}s\n"
-                f"<b>Pending cancelled:</b> {results.get('pending_cancelled', 0)}\n"
-                f"<b>Signals closed:</b> {results.get('signals_closed', 0)}\n"
+                f"⚠️ <b>Hệ thống vừa khôi phục sau gián đoạn</b>\n\n"
+                f"📋 <b>Chế độ:</b> PAPER\n"
+                f"⏱ <b>Thời gian gián đoạn:</b> {results.get('downtime_seconds', '?')}s\n"
+                f"⏸ <b>Lệnh chờ đã hủy:</b> {results.get('pending_cancelled', 0)}\n"
+                f"🔒 <b>Lệnh đã đóng:</b> {results.get('signals_closed', 0)}\n"
             )
         else:
             msg = (
-                f"⚠️ <b>LIVE STARTUP RECOVERY</b>\n\n"
-                f"<b>Mode:</b> LIVE\n"
-                f"<b>Reconcile OK:</b> {results.get('reconcile_ok', False)}\n"
+                f"⚠️ <b>LIVE vừa khởi động và reconcile</b>\n\n"
+                f"💰 <b>Chế độ:</b> LIVE\n"
+                f"🔄 <b>Reconcile OK:</b> {results.get('reconcile_ok', False)}\n"
             )
 
         if results.get("errors"):
-            msg += f"\n⚠️ Errors: {len(results['errors'])}"
+            msg += f"\n⚠️ <b>Lỗi cần kiểm tra:</b> {len(results['errors'])}"
             for e in results["errors"][:3]:
                 msg += f"\n  - {e}"
 

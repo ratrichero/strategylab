@@ -17,6 +17,7 @@ from typing import Optional, Tuple, Dict, Any
 
 from app.db.models import Signal
 from app.core.time_utils import utc_now, ensure_utc
+from app.services.retry_policy import get_retry_policy_service
 
 
 _DEFAULT_PROTECTION = {
@@ -34,7 +35,7 @@ _DEFAULT_PROTECTION = {
     }
 }
 
-BREAKEVEN_RETRY_BACKOFF_SECONDS = 30
+BREAKEVEN_RETRY_BACKOFF_SECONDS = 30  # DEPRECATED: Use retry_policy service
 PROTECTION_CHANGE_COOLDOWN_SECONDS = 15
 
 
@@ -177,12 +178,27 @@ def check_breakeven_condition(
 # STATE MARKERS
 # ============================================================
 
-def set_breakeven_retry_backoff(trade: Signal, reason: str, seconds: int = BREAKEVEN_RETRY_BACKOFF_SECONDS):
+def set_breakeven_retry_backoff(trade: Signal, reason: str, seconds: Optional[int] = None):
+    """
+    Set retry backoff for breakeven protection.
+    If seconds not provided, use retry policy service.
+    """
+    if seconds is None:
+        # Use retry policy for backoff calculation
+        retry_policy = get_retry_policy_service()
+        decision = retry_policy.should_retry(reason or "PROTECTION_RETRY", 0)
+        if decision.should_retry and decision.next_retry_at:
+            backoff_seconds = (decision.next_retry_at - utc_now()).total_seconds()
+        else:
+            backoff_seconds = BREAKEVEN_RETRY_BACKOFF_SECONDS  # Fallback to default
+    else:
+        backoff_seconds = seconds
+    
     ctx = dict(trade.market_context or {})
     ctx["breakeven_last_error"] = reason
     ctx["breakeven_last_attempt_at"] = utc_now().isoformat()
     ctx["breakeven_next_retry_at"] = (
-        utc_now() + timedelta(seconds=seconds)
+        utc_now() + timedelta(seconds=backoff_seconds)
     ).isoformat()
     trade.market_context = ctx
 

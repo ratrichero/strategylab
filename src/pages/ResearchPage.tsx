@@ -469,7 +469,7 @@ export function Research() {
                 <div className="absolute inset-0 rounded-full border-4 border-indigo-500/20" />
                 <div className="absolute inset-0 rounded-full border-4 border-indigo-500 border-t-transparent animate-spin" />
               </div>
-              {fetchProgress >= (
+              {fetchProgress ? (
                 <>
                   <p className="text-slate-300 mb-2">
                     Fetching klines from Binance... {fetchProgress.done}/{fetchProgress.total} symbols

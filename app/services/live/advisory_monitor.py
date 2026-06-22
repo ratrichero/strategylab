@@ -134,10 +134,10 @@ def _check_profit_lock(price_map: dict):
         try:
             from app.services.telegram_service import send_telegram
             send_telegram(
-                f"<b>PROFIT LOCK TRIGGERED</b>\n\n"
-                f"Total PnL reached the configured lock threshold.\n"
-                f"Closed profitable positions only: {result.get('closed_count', 0)}.\n"
-                f"Skipped non-profitable positions: {result.get('skipped_count', 0)}."
+                f"🎯 <b>Profit Lock đã kích hoạt</b>\n\n"
+                f"Tổng PnL đã chạm ngưỡng khóa lợi nhuận.\n"
+                f"✅ Đã đóng lệnh đang lãi: {result.get('closed_count', 0)}.\n"
+                f"⏸ Bỏ qua lệnh chưa có lãi: {result.get('skipped_count', 0)}."
             )
         except Exception:
             pass

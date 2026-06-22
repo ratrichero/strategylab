@@ -160,24 +160,24 @@ def _notify(result: Dict):
 
         mode = result.get("mode", "UNKNOWN")
         msg = (
-            f"🛑 <b>KILL SWITCH ACTIVATED</b>\n\n"
-            f"<b>Mode:</b> {mode}\n"
+            f"🛑 <b>Kill switch đã kích hoạt</b>\n\n"
+            f"📌 <b>Chế độ:</b> {mode}\n"
         )
 
         if mode == "PAPER":
             msg += (
-                f"<b>Pending cancelled:</b> {result.get('pending_cancelled', 0)}\n"
-                f"<b>Signals closed:</b> {result.get('signals_closed', 0)}\n"
+                f"⏸ <b>Lệnh chờ đã hủy:</b> {result.get('pending_cancelled', 0)}\n"
+                f"🔒 <b>Lệnh đã đóng:</b> {result.get('signals_closed', 0)}\n"
             )
         else:
             msg += (
-                f"<b>Exchange cleanup:</b> {result.get('exchange_cleanup', False)}\n"
-                f"<b>Symbols:</b> {len(result.get('symbols', []))}\n"
-                f"<b>Commands:</b> {len(result.get('commands', []))}\n"
+                f"🧹 <b>Dọn trạng thái sàn:</b> {result.get('exchange_cleanup', False)}\n"
+                f"🪙 <b>Số coin ảnh hưởng:</b> {len(result.get('symbols', []))}\n"
+                f"📨 <b>Lệnh xử lý:</b> {len(result.get('commands', []))}\n"
             )
 
         if result.get("errors"):
-            msg += f"\n⚠️ Errors: {len(result['errors'])}"
+            msg += f"\n⚠️ <b>Lỗi cần kiểm tra:</b> {len(result['errors'])}"
 
         send_telegram(msg)
     except Exception as e:

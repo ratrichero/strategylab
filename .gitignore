@@ -220,5 +220,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-test*
 test.py
+test_pending.py

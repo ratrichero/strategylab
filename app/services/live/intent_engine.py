@@ -37,13 +37,15 @@ from app.services.execution_service import (
 from app.services.live.locks import live_symbol_lock
 from app.services.live.capacity_service import (
     get_capacity_snapshot,
+    get_capacity_snapshot_locked,
     should_block_new_entry,
 )
 from app.services.price_feed import get_all_current_prices
+from app.services.retry_policy import get_retry_policy_service
 
 
-MAX_PLACE_RETRIES = 1
-RETRY_BACKOFF_SECONDS = 10
+MAX_PLACE_RETRIES = 1  # DEPRECATED: Use retry_policy service
+RETRY_BACKOFF_SECONDS = 10  # DEPRECATED: Use retry_policy service
 HARD_CAP_BLOCK_BACKOFF_SECONDS = 60
 ENTRY_BLOCKING_COMMANDS = ("KILL_SWITCH", "PROFIT_LOCK")
 OPEN_COMMAND_STATUSES = ("REQUESTED", "SENT")
@@ -177,35 +179,41 @@ def _reject_place_failure(db, p: PendingSignal, error_msg: str):
 
 
 def _schedule_place_retry_or_reject(db, p: PendingSignal, error_msg: str, now):
+    """Use retry policy service để determine retry behavior."""
+    retry_policy = get_retry_policy_service()
+    
+    # Failed attempt count already recorded for this pending.
+    current_attempt = int(p.place_attempt_count or 0)
+    
+    # Get retry decision from policy service
+    decision = retry_policy.should_retry(error_msg, current_attempt)
+    
     p.last_place_error = error_msg
-
-    if _is_deterministic_error(error_msg):
-        _reject_place_failure(db, p, error_msg)
-        return
-
-    max_total_attempts = 1 + MAX_PLACE_RETRIES
-    attempts = int(p.place_attempt_count or 0)
-
-    if attempts >= max_total_attempts:
+    
+    if not decision.should_retry:
+        # Reject the pending signal
         p.status = "REJECTED"
-        p.rejection_reason = f"ENTRY_FAIL_RETRY_EXHAUSTED::{error_msg}"
+        p.rejection_reason = f"ENTRY_FAIL::{decision.error_type.upper()}::{error_msg}"
         p.next_retry_at = None
         db.commit()
-
+        
         print(
-            f"🚫 LIVE ENTRY RETRY EXHAUSTED: {p.symbol} {p.direction} "
-            f"| pending={p.id} attempts={attempts}/{max_total_attempts} "
+            f"🚫 LIVE ENTRY REJECTED: {p.symbol} {p.direction} "
+            f"| pending={p.id} attempts={decision.retry_count}/{decision.max_retries} "
+            f"| error_type={decision.error_type} reason={decision.reason} "
             f"| error={error_msg}"
         )
         return
-
-    p.next_retry_at = now + timedelta(seconds=RETRY_BACKOFF_SECONDS)
+    
+    # Schedule retry
+    p.next_retry_at = decision.next_retry_at
     db.commit()
-
+    
     print(
-        f"⚠️ LIVE ENTRY TRANSIENT FAIL: {p.symbol} {p.direction} "
-        f"| pending={p.id} attempts={attempts}/{max_total_attempts} "
+        f"⚠️ LIVE ENTRY RETRY SCHEDULED: {p.symbol} {p.direction} "
+        f"| pending={p.id} attempts={decision.retry_count}/{decision.max_retries} "
         f"| retry_at={p.next_retry_at.isoformat()} "
+        f"| error_type={decision.error_type} reason={decision.reason} "
         f"| error={error_msg}"
     )
 
@@ -305,7 +313,8 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             return
 
         max_open = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
-        cap = get_capacity_snapshot(db, max_open)
+        # Serialize capacity placement checks with a PostgreSQL advisory lock.
+        cap = get_capacity_snapshot_locked(db, max_open)
 
         if should_block_new_entry(cap):
             p.last_place_error = "HARD_CAP_BLOCK"
@@ -365,29 +374,33 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             )
             if has_live_entry:
                 p.last_place_error = "DUPLICATE_OPEN_LIMIT_DETECTED"
-                p.next_retry_at = now + timedelta(seconds=RETRY_BACKOFF_SECONDS)
-                db.commit()
-
-                print(
-                    f"⚠️ LIVE ENTRY DUPLICATE GUARD: {p.symbol} {p.direction} "
-                    f"| pending={p.id} retry_at={p.next_retry_at.isoformat()}"
-                )
+                # Increment attempt count for duplicate guard
+                _record_place_attempt(p, now)
+                
+                # Use retry policy for duplicate guard as well
+                retry_policy = get_retry_policy_service()
+                decision = retry_policy.should_retry("DUPLICATE_OPEN_LIMIT_DETECTED", int(p.place_attempt_count or 0))
+                
+                if decision.should_retry:
+                    p.next_retry_at = decision.next_retry_at
+                    db.commit()
+                    print(
+                        f"⚠️ LIVE ENTRY DUPLICATE GUARD: {p.symbol} {p.direction} "
+                        f"| pending={p.id} retry_at={p.next_retry_at.isoformat()}"
+                    )
+                else:
+                    # Reject when retry exhausted
+                    p.status = "REJECTED"
+                    p.rejection_reason = f"DUPLICATE_GUARD_RETRY_EXHAUSTED::attempts={decision.retry_count}"
+                    p.next_retry_at = None
+                    db.commit()
+                    print(
+                        f"🚫 LIVE ENTRY DUPLICATE GUARD REJECTED: {p.symbol} {p.direction} "
+                        f"| pending={p.id} attempts={decision.retry_count}"
+                    )
                 return
 
-        cap = get_capacity_snapshot(db, max_open)
-        if should_block_new_entry(cap):
-            p.last_place_error = "HARD_CAP_BLOCK"
-            p.next_retry_at = now + timedelta(seconds=HARD_CAP_BLOCK_BACKOFF_SECONDS)
-            db.commit()
-
-            """print(
-                f"⛔ LIVE HARD CAP BLOCK BEFORE PLACE: {p.symbol} {p.direction} "
-                f"| pending={p.id} open={cap.c_open} new={cap.c_new} "
-                f"| total={cap.total_risk}/{cap.max_risk} "
-                f"| retry_at={p.next_retry_at.isoformat()}"
-            )"""
-            return
-
+        # Removed duplicate capacity check - now using single atomic check above
         _record_place_attempt(p, now)
         db.flush()
 
@@ -397,6 +410,10 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
             error_msg = exec_result.error or "UNKNOWN_PLACE_ERROR"
             _schedule_place_retry_or_reject(db, p, error_msg, now)
             return
+
+        # Record success for circuit breaker
+        retry_policy = get_retry_policy_service()
+        retry_policy.record_success()
 
         p.exchange_order_id = exec_result.order_id
         p.client_order_id = exec_result.client_order_id or _entry_client_order_id(p.id)
