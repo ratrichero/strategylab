@@ -14,7 +14,7 @@ from app.control.models import (
     BotRegistry, BotCredential, BotAuditLog
 )
 from app.core.encryption import encrypt_at_rest, decrypt_at_rest
-from app.auth.password import hash_password
+from app.auth.password import hash_password, hash_secret
 from app.control.bot_db_init import validate_db_connection, init_bot_database
 
 
@@ -90,7 +90,7 @@ def create_bot(
     # ── Create credential ───────────────────────────────────
     credential = BotCredential(
         bot_id=bot.id,
-        secret_hash=hash_password(bot_secret),
+        secret_hash=hash_secret(bot_secret),
         is_active=True,
     )
     db.add(credential)
@@ -305,7 +305,7 @@ def rotate_secret(
     new_secret = generate_bot_secret()
     credential = BotCredential(
         bot_id=bot.id,
-        secret_hash=hash_password(new_secret),
+        secret_hash=hash_secret(new_secret),
         is_active=True,
     )
     db.add(credential)

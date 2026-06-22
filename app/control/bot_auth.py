@@ -14,7 +14,7 @@ from fastapi import Request, HTTPException
 
 from app.db.session import SessionLocal
 from app.control.models import BotRegistry, BotCredential
-from app.auth.password import verify_password
+from app.auth.password import verify_secret
 
 
 def verify_bot_credentials(bot_id: str, bot_secret: str) -> BotRegistry:
@@ -54,7 +54,7 @@ def verify_bot_credentials(bot_id: str, bot_secret: str) -> BotRegistry:
         if not credential:
             raise HTTPException(status_code=401, detail="No active credential")
 
-        if not verify_password(bot_secret, credential.secret_hash):
+        if not verify_secret(bot_secret, credential.secret_hash):
             raise HTTPException(status_code=401, detail="Invalid bot secret")
 
         return bot
