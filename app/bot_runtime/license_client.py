@@ -122,6 +122,7 @@ class LicenseClient:
         for endpoint in endpoints:
             url = f"{endpoint}/bot/auth/activate"
             try:
+                print(f"  📡 Activating via {url}")
                 with httpx.Client(timeout=httpx.Timeout(
                     connect=CONNECT_TIMEOUT,
                     read=REQUEST_TIMEOUT,
@@ -168,12 +169,15 @@ class LicenseClient:
                     return result
 
                 elif resp.status_code == 401:
+                    detail = resp.json().get("detail", "unauthorized")
+                    print(f"  ❌ Admin activate rejected by {endpoint}: 401 {detail}")
                     return ActivateResult(
                         success=False,
-                        error=f"Authentication failed: {resp.json().get('detail', 'unauthorized')}"
+                        error=f"Authentication failed: {detail}"
                     )
                 else:
                     last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    print(f"  ❌ Admin activate failed via {endpoint}: {last_error}")
 
             except httpx.ConnectError:
                 last_error = f"Cannot connect to {endpoint}"
@@ -214,6 +218,7 @@ class LicenseClient:
         for endpoint in endpoints:
             url = f"{endpoint}/bot/heartbeat"
             try:
+                print(f"  📡 Heartbeat via {url}")
                 with httpx.Client(timeout=httpx.Timeout(
                     connect=CONNECT_TIMEOUT,
                     read=REQUEST_TIMEOUT,
@@ -247,10 +252,12 @@ class LicenseClient:
                     return result
 
                 else:
-                    last_error = f"HTTP {resp.status_code}"
+                    last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    print(f"  ❌ Admin heartbeat failed via {endpoint}: {last_error}")
 
             except Exception as e:
                 last_error = f"{type(e).__name__}: {e}"
+                print(f"  ⚠️ Admin heartbeat error via {endpoint}: {last_error}")
 
         return HeartbeatResult(
             success=False,
