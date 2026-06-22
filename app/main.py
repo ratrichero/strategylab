@@ -489,10 +489,18 @@ async def lifespan(app: FastAPI):
 
 # ── App ───────────────────────────────────────────────────────
 
+_api_docs_exposed = (
+    is_admin()
+    and os.getenv("EXPOSE_API_DOCS", "false").strip().lower() == "true"
+)
+
 app = FastAPI(
     title="Strategy Research Lab v5.0",
     version="5.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    docs_url="/docs" if _api_docs_exposed else None,
+    redoc_url="/redoc" if _api_docs_exposed else None,
+    openapi_url="/openapi.json" if _api_docs_exposed else None,
 )
 
 _cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
@@ -518,6 +526,13 @@ app.add_middleware(
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    if not _api_docs_exposed and (
+        path in {"/docs", "/redoc", "/openapi.json"}
+        or path.startswith("/docs/")
+        or path.startswith("/redoc/")
+    ):
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
 
     # Whitelist: không cần auth
     if is_public_path(path):
@@ -593,3 +608,4 @@ async def global_error(request: Request, exc: Exception):
     e = f"{type(exc).__name__}: {exc}"
     print(f"\n{'='*60}\n🚨 {e}\n{traceback.format_exc()}{'='*60}")
     return JSONResponse(status_code=500, content={"error": e})
+
