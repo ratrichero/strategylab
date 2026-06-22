@@ -63,6 +63,19 @@ class SetupRequest(BaseModel):
         return v
 
 
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str
+
+    @field_validator("current_password", "new_password", "confirm_password")
+    @classmethod
+    def password_not_empty(cls, v):
+        if not v:
+            raise ValueError("password must not be empty")
+        return v
+
 # ── Cookie helpers ────────────────────────────────────────────
 
 def _set_auth_cookie(response: JSONResponse, token: str) -> JSONResponse:
@@ -100,7 +113,10 @@ async def setup_status():
     db = SessionLocal()
     try:
         count = db.query(DashboardUser).count()
-        return {"needs_setup": count == 0}
+        return {
+            "needs_setup": count == 0,
+            "app_role": get_app_role(),
+        }
     finally:
         db.close()
 
@@ -204,6 +220,31 @@ async def logout():
     response = JSONResponse(content={"ok": True})
     return _clear_auth_cookie(response)
 
+
+
+@router.post("/change-password")
+async def change_password(
+    req: ChangePasswordRequest,
+    current_user: DashboardUser = Depends(get_current_user)
+):
+    """Change password for the currently logged-in dashboard user."""
+    if req.new_password != req.confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    db = SessionLocal()
+    try:
+        user = db.query(DashboardUser).filter(DashboardUser.id == current_user.id).first()
+        if not user or not verify_password(req.current_password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Current password is incorrect")
+
+        user.password_hash = hash_password(req.new_password)
+        user.last_login_at = datetime.now(timezone.utc)
+        db.commit()
+        return {"status": "updated"}
+    finally:
+        db.close()
 
 @router.get("/me")
 async def me(current_user: DashboardUser = Depends(get_current_user)):

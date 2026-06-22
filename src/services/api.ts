@@ -71,6 +71,15 @@ export const auth = {
   logout: async () => {
     await fetch(`${BASE}/auth/logout`, { method: "POST", credentials: "include" });
   },
+  changePassword: (currentPassword: string, newPassword: string, confirmPassword: string) =>
+    req<any>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      }),
+    }),
   me: async () => {
     const r = await fetch(`${BASE}/auth/me`, { credentials: "include" });
     if (!r.ok) return null;
@@ -115,6 +124,14 @@ export const adminBots = {
     }),
   rotateSecret: (id: number) =>
     req<any>(`/admin/bots/${id}/rotate-secret`, { method: "POST" }),
+  resetDashboardPassword: (id: number, dashboardUsername: string, newPassword: string) =>
+    req<any>(`/admin/bots/${id}/reset-dashboard-password`, {
+      method: "POST",
+      body: JSON.stringify({
+        dashboard_username: dashboardUsername || null,
+        new_password: newPassword,
+      }),
+    }),
   heartbeats: (id: number, limit = 50) =>
     req<any>(`/admin/bots/${id}/heartbeats?limit=${limit}`),
   auditLogs: (id: number, limit = 50) =>

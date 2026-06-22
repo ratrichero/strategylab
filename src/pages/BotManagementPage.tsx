@@ -242,6 +242,19 @@ export function BotManagementPage() {
                       }}>
                       Rotate Secret
                     </Button>
+                    <Button variant="secondary" size="sm" icon={<Key className="w-3.5 h-3.5" />}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        const username = prompt("Dashboard username:", bot.dashboard_username || "");
+                        if (username === null) return;
+                        const password = prompt("New dashboard password (min 6 chars):");
+                        if (!password) return;
+                        const r = await adminBots.resetDashboardPassword(bot.id, username, password);
+                        loadData();
+                        toast.success(r.user_created ? "Dashboard user created" : "Dashboard password reset");
+                      }}>
+                      Reset Dashboard Password
+                    </Button>
                     <Button variant="danger" size="sm" icon={<Trash2 className="w-3.5 h-3.5" />}
                       onClick={async (e) => {
                         e.stopPropagation();

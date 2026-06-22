@@ -14,6 +14,7 @@ export function LoginPage() {
 
   const [loading, setLoading] = useState(true);
   const [needsSetup, setNeedsSetup] = useState(false);
+  const [setupRole, setSetupRole] = useState("ADMIN");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -36,6 +37,10 @@ export function LoginPage() {
       try {
         const status = await auth.setupStatus();
         setNeedsSetup(status.needs_setup);
+        if (status.app_role) {
+          setSetupRole(status.app_role);
+          setAppRole(status.app_role);
+        }
       } catch {
         setNeedsSetup(false);
       }
@@ -79,6 +84,8 @@ export function LoginPage() {
     }
   };
 
+  const isBotSetup = setupRole === "BOT";
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
@@ -95,7 +102,11 @@ export function LoginPage() {
           <div className="text-4xl mb-2">🤖</div>
           <h1 className="text-2xl font-bold text-white">Strategy Lab</h1>
           <p className="text-slate-400 mt-1">
-            {needsSetup ? "Create your admin account" : "Sign in to dashboard"}
+            {needsSetup
+              ? isBotSetup
+                ? "Create bot dashboard account"
+                : "Create admin account"
+              : "Sign in to dashboard"}
           </p>
         </div>
 
@@ -167,7 +178,7 @@ export function LoginPage() {
               ) : needsSetup ? (
                 <>
                   <UserPlus className="w-5 h-5" />
-                  Create Account
+                  {isBotSetup ? "Create Bot Account" : "Create Admin Account"}
                 </>
               ) : (
                 <>
@@ -180,7 +191,9 @@ export function LoginPage() {
 
           {needsSetup && (
             <p className="text-xs text-slate-500 text-center mt-4">
-              This is a one-time setup. You're creating the first admin account.
+              {isBotSetup
+                ? "This bot database has no dashboard user yet. This creates the first local bot user."
+                : "This is a one-time setup. You're creating the first admin account."}
             </p>
           )}
         </div>

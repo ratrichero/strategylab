@@ -142,6 +142,10 @@ def init_bot_database(
                 result["user_created"] = True
 
             # ── Step 3: Insert default app_config ──────────────
+            user_count = db.query(DashboardUser).count()
+            if user_count <= 0:
+                raise RuntimeError("dashboard_users is still empty after bot DB init")
+
             _ensure_default_app_config(db)
 
             db.commit()

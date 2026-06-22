@@ -134,6 +134,7 @@ export function SettingsPage(){
   const saveApiKey=async()=>{setSKey(true);setSvKey(false);try{await saveConfigKeys({DASHBOARD_API_KEY:dashApiKey});setSvKey(true);setTimeout(()=>setSvKey(false),3000);toast.success("API Key saved");}catch(e){toast.error(e.message);}finally{setSKey(false);}};
   const saveTheme=async t=>{setStoreTheme(t);try{await saveConfigKeys({THEME:t});toast.success(`Theme → ${t}`);}catch(e){toast.error(e.message);}};
   const testBnConn=async target=>{setBnConnecting(true);setBnAccount(null);try{const data=await fetch(`${API}/binance/account?target=${target}`,{credentials:"include"}).then(r=>r.json());setBnAccount(data);data.connected?toast.success(`✅ ${target}: $${data.balance}`):toast.error(data.message);}catch(e){toast.error(e.message);}finally{setBnConnecting(false);}};
+  const handleChangePassword=async()=>{const current=prompt("Current password:");if(!current)return;const next=prompt("New password (min 6 chars):");if(!next)return;const confirm=prompt("Confirm new password:");if(confirm!==next){toast.error("Passwords do not match");return;}try{await auth.changePassword(current,next,confirm);toast.success("Password updated");}catch(e){toast.error(e.message);}};
   const handleLogout=async()=>{try{await auth.logout();clearCurrentUser();navigate("/login");}catch{toast.error("Logout failed");}};
 
   if(loading)return <div className="flex items-center justify-center h-96"><div className="text-center"><Loader2 className="w-8 h-8 animate-spin text-indigo-500 mx-auto mb-4"/><p className="text-slate-400">Loading...</p></div></div>;
@@ -144,7 +145,7 @@ export function SettingsPage(){
   return <div className="space-y-6">
     <div className="flex items-center justify-between">
       <div><h2 className="text-2xl font-bold text-white flex items-center gap-3"><SettingsIcon className="w-7 h-7 text-indigo-400"/> Settings</h2><p className="text-slate-400 mt-1">Runtime configuration from database (app_config)</p></div>
-      <div className="flex items-center gap-3">{currentUser&&<span className="text-sm text-slate-400">{currentUser.username} <span className="text-xs text-slate-600">({currentUser.role||role})</span></span>}<Button variant="ghost" size="sm" icon={<LogOut className="w-4 h-4"/>} onClick={handleLogout}>Logout</Button></div>
+      <div className="flex items-center gap-3">{currentUser&&<span className="text-sm text-slate-400">{currentUser.username} <span className="text-xs text-slate-600">({currentUser.role||role})</span></span>}<Button variant="ghost" size="sm" onClick={handleChangePassword}>Change Password</Button><Button variant="ghost" size="sm" icon={<LogOut className="w-4 h-4"/>} onClick={handleLogout}>Logout</Button></div>
     </div>
     {error&&<div className="flex items-center gap-2 p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm"><AlertCircle className="w-5 h-5 flex-shrink-0"/>{error}</div>}
     <div className="flex gap-1.5 bg-slate-800/50 p-1.5 rounded-xl overflow-x-auto">{TABS.map(t=><button key={t.id} onClick={()=>setTab(t.id)} className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium whitespace-nowrap rounded-lg transition-all ${tab===t.id?"bg-indigo-600 text-white shadow-lg shadow-indigo-500/20":"text-slate-400 hover:text-white hover:bg-slate-700/50"}`}><t.icon className="w-4 h-4"/>{t.label}</button>)}</div>

@@ -8,12 +8,14 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional, List
 
-from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.control.models import (
     BotRegistry, BotCredential, BotAuditLog
 )
 from app.core.encryption import encrypt_at_rest, decrypt_at_rest
+from app.auth.models import DashboardUser
 from app.auth.password import hash_password, hash_secret
 from app.control.bot_db_init import validate_db_connection, init_bot_database
 
@@ -335,6 +337,73 @@ def rotate_secret(
         "message": "Secret rotated. Save the new secret — it won't be shown again.",
     }
 
+
+
+def reset_bot_dashboard_password(
+    db: Session,
+    bot_id: int,
+    dashboard_username: Optional[str],
+    new_password: str,
+    admin_user_id: Optional[int] = None,
+) -> dict:
+    """Reset or create the dashboard user inside the bot database."""
+    if not new_password or len(new_password) < 6:
+        raise ValueError("password must be at least 6 characters")
+
+    bot = db.query(BotRegistry).filter(BotRegistry.id == bot_id).first()
+    if not bot:
+        raise ValueError("Bot not found")
+
+    username = (dashboard_username or bot.dashboard_username or "").strip()
+    if not username or len(username) < 3:
+        raise ValueError("dashboard username must be at least 3 characters")
+
+    database_url = decrypt_at_rest(bot.database_url_encrypted)
+    engine = create_engine(database_url, pool_pre_ping=True)
+    BotSession = sessionmaker(bind=engine)
+    bot_db = BotSession()
+    created = False
+    try:
+        user = bot_db.query(DashboardUser).filter(
+            DashboardUser.username == username
+        ).first()
+        if user:
+            user.password_hash = hash_password(new_password)
+            user.is_active = True
+        else:
+            user = DashboardUser(
+                username=username,
+                password_hash=hash_password(new_password),
+                role="USER",
+                is_active=True,
+            )
+            bot_db.add(user)
+            created = True
+        bot_db.commit()
+    finally:
+        bot_db.close()
+        engine.dispose()
+
+    old_username = bot.dashboard_username
+    bot.dashboard_username = username
+    audit = BotAuditLog(
+        admin_user_id=admin_user_id,
+        bot_id=bot.id,
+        action="reset_bot_dashboard_password",
+        details={
+            "dashboard_username": username,
+            "old_dashboard_username": old_username,
+            "user_created": created,
+        },
+    )
+    db.add(audit)
+    db.commit()
+
+    return {
+        "status": "updated",
+        "dashboard_username": username,
+        "user_created": created,
+    }
 
 # ============================================================
 # DELETE

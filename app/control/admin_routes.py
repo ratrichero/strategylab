@@ -83,6 +83,27 @@ class OverrideDbUrlRequest(BaseModel):
     new_database_url: str
 
 
+class ResetBotDashboardPasswordRequest(BaseModel):
+    new_password: str
+    dashboard_username: Optional[str] = None
+
+    @field_validator("new_password")
+    @classmethod
+    def password_valid(cls, v):
+        if not v or len(v) < 6:
+            raise ValueError("password must be at least 6 characters")
+        return v
+
+    @field_validator("dashboard_username")
+    @classmethod
+    def username_valid(cls, v):
+        if v is None or v == "":
+            return v
+        if len(v.strip()) < 3:
+            raise ValueError("username must be at least 3 characters")
+        return v.strip()
+
+
 # ── Endpoints ─────────────────────────────────────────────────
 
 @router.get("/dashboard")
@@ -258,6 +279,28 @@ async def rotate_secret(bot_id: int, admin: DashboardUser = Depends(require_admi
     db = SessionLocal()
     try:
         return bot_manager.rotate_secret(db, bot_id, admin_user_id=admin.id)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        db.close()
+
+
+@router.post("/bots/{bot_id}/reset-dashboard-password")
+async def reset_bot_dashboard_password(
+    bot_id: int,
+    req: ResetBotDashboardPasswordRequest,
+    admin: DashboardUser = Depends(require_admin)
+):
+    """Reset/create bot dashboard user password inside bot DB."""
+    db = SessionLocal()
+    try:
+        return bot_manager.reset_bot_dashboard_password(
+            db=db,
+            bot_id=bot_id,
+            dashboard_username=req.dashboard_username,
+            new_password=req.new_password,
+            admin_user_id=admin.id,
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
     finally:
