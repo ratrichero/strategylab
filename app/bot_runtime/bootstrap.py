@@ -130,10 +130,11 @@ class BootstrapCache:
             except OSError:
                 pass  # Windows không support chmod
 
+            print(f"[BOOTSTRAP] Cache saved: {self._cache_path}")
             return True
 
         except Exception as e:
-            print(f"[BOOTSTRAP] Cache save error: {e}")
+            print(f"[BOOTSTRAP] Cache save error at {self._cache_path}: {e}")
             return False
 
     def exists(self) -> bool:

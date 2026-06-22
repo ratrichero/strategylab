@@ -67,6 +67,9 @@ def get_bot_env():
         "BOOTSTRAP_CACHE_PATH",
         os.path.expanduser("~/.botcache/bootstrap.enc")
     )
+    cache_path = os.path.abspath(
+        os.path.expandvars(os.path.expanduser(cache_path.strip()))
+    )
 
     # ── Validate bắt buộc ──────────────────────────────────
     missing = []

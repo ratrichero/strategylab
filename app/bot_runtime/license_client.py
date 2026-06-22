@@ -284,7 +284,8 @@ class LicenseClient:
         if result.admin_endpoints:
             cached.admin_endpoints_snapshot = result.admin_endpoints
 
-        self._cache.save(cached)
+        if not self._cache.save(cached):
+            print("[LICENSE CLIENT] Bootstrap cache was not saved after activate")
 
     def _update_cache_from_heartbeat(self, result: HeartbeatResult, endpoint: str):
         """Cập nhật bootstrap cache sau heartbeat thành công."""
@@ -300,7 +301,8 @@ class LicenseClient:
         if result.admin_endpoints:
             cached.admin_endpoints_snapshot = result.admin_endpoints
 
-        self._cache.save(cached)
+        if not self._cache.save(cached):
+            print("[LICENSE CLIENT] Bootstrap cache was not saved after heartbeat")
 
     def get_cached_db_url(self) -> Optional[str]:
         """

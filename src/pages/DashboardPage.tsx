@@ -14,6 +14,7 @@ import { parseUtcMs, utcToVN, getTodayVN, normalizeSignalDates } from '../utils/
 import toast from 'react-hot-toast';
 import { TradeDetailModal } from '../components/TradeDetailModal';
 import { buildFetchPlan, fetchKlines1m } from '../utils/klineSimulator';
+import { useAppStore } from '../store/appStore';
 
 const API = '/api';
 async function fetchAPI(ep) { const r = await fetch(`${API}${ep}`); if (!r.ok) throw new Error(`${r.status}`); return r.json(); }
@@ -40,6 +41,8 @@ function ChartTooltip({ active, payload, label }) {
 }
 
 export function Dashboard() {
+  const { appRole } = useAppStore();
+  const isBotDashboard = appRole === 'BOT';
   const INIT_CAP = 10000;
   const todayVN = getTodayVN();
 
@@ -659,7 +662,7 @@ export function Dashboard() {
       </Card>
 
       {/* METRICS + PORTFOLIO */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 ${isBotDashboard ? 'lg:grid-cols-2' : 'lg:grid-cols-3'} gap-6`}>
         {/* Strategy Metrics */}
         <Card>
           <div className="flex items-center justify-between mb-4">
@@ -678,21 +681,22 @@ export function Dashboard() {
           </div>
         </Card>
 
-        {/* Portfolio Compounding */}
-        <Card>
-          <CardHeader title="Portfolio (Compounding)" subtitle={`Size = $${appliedPsize} x (NAV/$${appliedCap.toLocaleString()})`} />
-          <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${appliedCap.toLocaleString()}</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Final NAV</span><span className={`font-bold ${clr(pComp.pnl)}`}>${$(pComp.nav)}</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Total P&L</span><span className={`font-bold ${clr(pComp.pnl)}`}>{pComp.pnl >= 0 ? '+' : ''}${$(pComp.pnl)}</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Peak NAV</span><span className="font-bold text-emerald-400">${$(pComp.peakNav)}</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Trough NAV</span><span className="font-bold text-red-400">${$(pComp.troughNav)}</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Max DD</span><span className="font-bold text-red-400">{pComp.maxDD.toFixed(2)}%</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Max Gain</span><span className="font-bold text-emerald-400">{pComp.maxGain.toFixed(2)}%</span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Calmar</span><span className="font-bold text-white">{pComp.calmar.toFixed(2)}</span></div>
-            <div className="flex justify-between py-2"><span className="text-slate-400">Sharpe</span><span className="font-bold text-white">{pComp.sharpe.toFixed(2)}</span></div>
-          </div>
-        </Card>
+        {!isBotDashboard && (
+          <Card>
+            <CardHeader title="Portfolio (Compounding)" subtitle={`Size = $${appliedPsize} x (NAV/$${appliedCap.toLocaleString()})`} />
+            <div className="space-y-3">
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Initial Capital</span><span className="font-bold text-white">${appliedCap.toLocaleString()}</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Final NAV</span><span className={`font-bold ${clr(pComp.pnl)}`}>${$(pComp.nav)}</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Total P&L</span><span className={`font-bold ${clr(pComp.pnl)}`}>{pComp.pnl >= 0 ? '+' : ''}${$(pComp.pnl)}</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Peak NAV</span><span className="font-bold text-emerald-400">${$(pComp.peakNav)}</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Trough NAV</span><span className="font-bold text-red-400">${$(pComp.troughNav)}</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Max DD</span><span className="font-bold text-red-400">{pComp.maxDD.toFixed(2)}%</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Max Gain</span><span className="font-bold text-emerald-400">{pComp.maxGain.toFixed(2)}%</span></div>
+              <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Calmar</span><span className="font-bold text-white">{pComp.calmar.toFixed(2)}</span></div>
+              <div className="flex justify-between py-2"><span className="text-slate-400">Sharpe</span><span className="font-bold text-white">{pComp.sharpe.toFixed(2)}</span></div>
+            </div>
+          </Card>
+        )}
 
         {/* Portfolio Fixed */}
         <Card>
