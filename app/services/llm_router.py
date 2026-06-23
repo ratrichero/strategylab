@@ -1,5 +1,7 @@
 import requests
 from app.core.config import get_groq_api_key, get_gemini_api_key
+import time
+
 
 # =========================
 # API KEYS
@@ -9,9 +11,9 @@ from app.core.config import get_groq_api_key, get_gemini_api_key
 # ENDPOINTS (2026)
 # =========================
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro-latest:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
 
-TIMEOUT_SECONDS = 12
+TIMEOUT_SECONDS = 20
 
 
 # =========================
@@ -19,6 +21,7 @@ TIMEOUT_SECONDS = 12
 # =========================
 def ask_groq(prompt: str):
     api_key = get_groq_api_key()
+    #print("DEBUG GROQ KEY:", api_key)
 
     if not api_key:
         print("Groq API key missing")
@@ -65,31 +68,42 @@ def ask_gemini(prompt: str):
         print("Gemini API key missing")
         return None
 
-    try:
-        response = requests.post(
-            f"{GEMINI_URL}?key={api_key}",
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [
-                    {
-                        "parts": [{"text": prompt}]
-                    }
-                ]
-            },
-            timeout=TIMEOUT_SECONDS
-        )
+    url = f"{GEMINI_URL}?key={api_key}"
 
-        print("Gemini response:", response.status_code)
+    for attempt in range(2):  # tối đa 2 lần (1 retry)
+        try:
+            response = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [
+                        {
+                            "parts": [{"text": prompt}]
+                        }
+                    ]
+                },
+                timeout=TIMEOUT_SECONDS
+            )
 
-        if response.status_code != 200:
-            print("Gemini error:", response.text)
+            print("Gemini response:", response.status_code)
+
+            # ✅ Nếu quá tải → retry 1 lần
+            if response.status_code == 503 and attempt == 0:
+                print("Gemini overloaded - retrying once...")
+                time.sleep(2)
+                continue
+
+            if response.status_code != 200:
+                print("Gemini error:", response.text)
+                return None
+
+            return response.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+        except Exception as e:
+            print("Gemini exception:", str(e))
             return None
 
-        return response.json()["candidates"][0]["content"]["parts"][0]["text"]
-
-    except Exception as e:
-        print("Gemini exception:", str(e))
-        return None
+    return None
 
 
 # =========================

@@ -33,12 +33,20 @@ def get_telegram_chat_id() -> str:
 
 def get_groq_api_key() -> str:
     from app.services.config_service import get_connection_value
-    return get_connection_value("GROQ_API_KEY", "")
+    val = get_connection_value("GROQ_API_KEY", "")
+    # Fallback to env if DB value is invalid (like "1")
+    if not val or len(val) < 10:
+        return os.getenv("GROQ_API_KEY", "")
+    return val
 
 
 def get_gemini_api_key() -> str:
     from app.services.config_service import get_connection_value
-    return get_connection_value("GEMINI_API_KEY", "")
+    val = get_connection_value("GEMINI_API_KEY", "")
+    # Fallback to env if DB value is invalid (like "1")
+    if not val or len(val) < 10:
+        return os.getenv("GEMINI_API_KEY", "")
+    return val
 
 
 # ── Backward-compatible constants ────────────────────────────

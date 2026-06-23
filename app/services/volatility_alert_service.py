@@ -264,7 +264,6 @@ class VolatilityAlertService:
                 f"{icon} <b>{alert['symbol']}</b> {direction}: {alert['reason']} "
                 f"| 1m {alert['signed_delta_1m']:+.2f}% "
                 f"| 5m {alert['signed_delta_5m']:+.2f}%"
-                f"| Giá hiện tại: {alert['current_price']:+.2f}%"
             )
 
         lines.append("\n👀 Dùng như tín hiệu theo dõi sớm; không phải lệnh giao dịch.")
