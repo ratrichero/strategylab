@@ -612,6 +612,12 @@ class BinanceExecutor:
                 **self._signed_params()
             )
 
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            # Avoid hitting exchange with invalid symbol
+            print(f"[EXEC] Query order skipped invalid symbol {symbol}/{order_id}")
+            return None
+
         try:
             return self._call_signed_with_retry(_do)
         except Exception as e:
@@ -629,6 +635,10 @@ class BinanceExecutor:
                 **self._signed_params()
             )
 
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            raise ExchangeQueryError(f"Query order error {symbol}/{order_id}: Invalid symbol")
+
         try:
             return self._call_signed_with_retry(_do)
         except Exception as e:
@@ -644,6 +654,11 @@ class BinanceExecutor:
                 origClientOrderId=client_order_id,
                 **self._signed_params()
             )
+
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            print(f"[EXEC] Query order by client id skipped invalid symbol {symbol}/{client_order_id}")
+            return None
 
         try:
             return self._call_signed_with_retry(_do)
@@ -663,6 +678,11 @@ class BinanceExecutor:
                 symbol=symbol,
                 **self._signed_params()
             )
+
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            print(f"[EXEC] Get open orders skipped invalid symbol {symbol}")
+            return []
 
         try:
             return self._call_signed_with_retry(_do)
@@ -715,6 +735,11 @@ class BinanceExecutor:
                 return abs(float(positions[0]["positionAmt"]))
             return 0.0
 
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            print(f"[EXEC] Get position size skipped invalid symbol {symbol}")
+            return 0.0
+
         try:
             return float(self._call_signed_with_retry(_do) or 0.0)
         except Exception as e:
@@ -742,6 +767,11 @@ class BinanceExecutor:
                         "leverage":         int(p.get("leverage", 1)),
                         "direction":        "LONG" if amt > 0 else "SHORT",
                     }
+            return None
+
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            print(f"[EXEC] Get position info skipped invalid symbol {symbol}")
             return None
 
         try:
@@ -772,6 +802,10 @@ class BinanceExecutor:
                         "direction":        "LONG" if amt > 0 else "SHORT",
                     }
             return None
+
+        symbol = symbol.upper()
+        if not self.is_symbol_valid(symbol):
+            raise ExchangeQueryError(f"Position info error {symbol}: Invalid symbol")
 
         try:
             return self._call_signed_with_retry(_do)

@@ -261,26 +261,28 @@ export function TradeDetailModal({ trade, klines, onClose, loadingKlines = false
               )}
             </div>
 
-            {/* Simulation Result */}
+            {/* Trade Details */}
             <div className="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
               <div className="flex items-center gap-2 mb-3">
                 <BarChart3 className="w-4 h-4 text-emerald-400" />
-                <h4 className="text-sm font-semibold text-white">Simulation</h4>
+                <h4 className="text-sm font-semibold text-white">Trade Details</h4>
               </div>
               <Stat label="Entry" value={fmt(trade.entry_price)} color="text-indigo-400" />
-              <Stat label="SL (Orig)" value={fmt(trade.stop_loss)} color="text-red-300" />
-              <Stat label="TP (Orig)" value={fmt(trade.take_profit)} color="text-emerald-300" />
-              <Stat label="SL (Sim)" value={fmt(trade.sim_sl ?? trade.stop_loss)} color="text-red-400" />
-              <Stat label="TP (Sim)" value={fmt(trade.sim_tp ?? trade.take_profit)} color="text-emerald-400" />
-              <Stat label="SL %" value={trade._debug_sl_pct != null ? `${Number(trade._debug_sl_pct).toFixed(3)}%` : '–'} />
-              <Stat label="TP %" value={trade._debug_tp_pct != null ? `${Number(trade._debug_tp_pct).toFixed(3)}%` : '–'} />
+              <Stat label="SL" value={fmt(trade.sim_sl ?? trade.stop_loss)} color="text-red-400" />
+              <Stat label="TP" value={fmt(trade.sim_tp ?? trade.take_profit)} color="text-emerald-400" />
+              <Stat label="Exit Price" value={fmt(trade.exit_price)} color="text-white" />
+              <Stat label="MAE" value={trade.mae != null ? pct(trade.mae) : '–'} color="text-red-400" />
+              <Stat label="MFE" value={trade.mfe != null ? pct(trade.mfe) : '–'} color="text-emerald-400" />
               <Stat label="Result" value={pct(pnl)} color={pnlColor} />
               <Stat label="Status" value={displayStatus || '-'} mono={false} color={
                 displayStatus === 'WIN' ? 'text-emerald-400' :
                 displayStatus === 'LOSS' ? 'text-red-400' : 'text-orange-400'
               } />
-              <Stat label="Entry Time" value={utcToVN(trade.entry_time || trade.created_at || trade.candle_time)} mono={false} />
-              <Stat label="Hit At" value={trade.hit_at_ms ? utcToVN(new Date(trade.hit_at_ms).toISOString()) : '–'} mono={false} />
+              <Stat label="Open Time" value={utcToVN(trade.entry_time || trade.created_at || trade.candle_time)} mono={false} />
+              <Stat label="Close Time" value={utcToVN(trade.exit_time)} mono={false} />
+              {trade.hit_at_ms && (
+                <Stat label="Hit At" value={utcToVN(new Date(trade.hit_at_ms).toISOString())} mono={false} />
+              )}
               {trade._debug_scanned != null && (
                 <Stat label="Bars Scanned" value={trade._debug_scanned} />
               )}

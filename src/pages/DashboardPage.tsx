@@ -751,38 +751,32 @@ export function Dashboard() {
         ) : <div className="h-[220px] flex items-center justify-center text-slate-500">No data</div>}
       </Card>
 
-      {/* REGIME */}
-      <Card>
-        <CardHeader title="Regime Breakdown" subtitle="Filtered" />
-        {regimeBreakdown.length > 0 ? <DataTable columns={regimeColumns} data={regimeBreakdown} pageSize={5} /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}
-      </Card>
-
       {/* ACTIVE (UNFILTERED) */}
       <Card>
-        <CardHeader 
-          title="Active Signals" 
+        <CardHeader
+          title="Active Signals"
           subtitle={`${allOpen.length} open - P&L: ${totalUnrealizedPnL >= 0 ? '+' : ''}${totalUnrealizedPnL.toFixed(2)}% - Live 10s`}
           action={
             <div className="flex items-center gap-3">
               <span className="text-xs text-emerald-400 animate-pulse">Live</span>
               <Button variant="danger" size="sm" onClick={handleCancelAllActive} icon={<X className="w-4 h-4" />}>Close All</Button>
             </div>
-          } 
+          }
         />
-        <DataTable columns={activeColumns} data={activeWithPrice} pageSize={10} emptyMessage="No active signals" />
+        <DataTable columns={activeColumns} data={activeWithPrice} pageSize={10} emptyMessage="No active signals" onRowClick={handleRecentTradeClick} />
       </Card>
 
       {/* PENDING SIGNALS (WAIT) */}
       <Card>
-        <CardHeader 
-          title="Pending Signals" 
+        <CardHeader
+          title="Pending Signals"
           subtitle={`${pendingSignals.length} waiting - Trigger price orders`}
           action={
             <div className="flex items-center gap-3">
               <span className="text-xs text-yellow-400">Pending</span>
               <Button variant="danger" size="sm" onClick={handleCancelAllPending} icon={<X className="w-4 h-4" />}>Cancel All</Button>
             </div>
-          } 
+          }
         />
         <DataTable columns={pendingColumns} data={pendingWithPrice} pageSize={10} emptyMessage="No pending signals" />
       </Card>
@@ -809,6 +803,12 @@ export function Dashboard() {
           emptyMessage="No closed trades today"
           onRowClick={handleRecentTradeClick}
         />
+      </Card>
+
+      {/* REGIME */}
+      <Card>
+        <CardHeader title="Regime Breakdown" subtitle="Filtered" />
+        {regimeBreakdown.length > 0 ? <DataTable columns={regimeColumns} data={regimeBreakdown} pageSize={5} /> : <div className="h-48 flex items-center justify-center text-slate-500">No data</div>}
       </Card>
 
       {/* HEATMAP (UNFILTERED) */}

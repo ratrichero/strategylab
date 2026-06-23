@@ -624,6 +624,26 @@ def _process_single_live(db, p, price_map, now):
         if not exec_result.success:
             error_msg = exec_result.error or ""
 
+            # Immediate reject for invalid symbols
+            em_low = (error_msg or "").lower()
+            if error_msg.startswith("INVALID_SYMBOL") or "invalid symbol" in em_low or "invalid_symbol" in em_low:
+                p.status = "REJECTED"
+                p.rejection_reason = f"ENTRY_FAIL::{error_msg}"
+                db.commit()
+                print(f"🚫 REJECTED (invalid symbol): {p.symbol} | {error_msg}")
+                try:
+                    from app.services.telegram_service import send_telegram
+                    send_telegram(
+                        f"⚠️ <b>Lệnh vào bị từ chối</b>\n\n"
+                        f"🪙 <b>Coin:</b> {p.symbol}\n"
+                        f"📍 <b>Hướng:</b> {p.direction}\n"
+                        f"📝 <b>Lý do:</b> {error_msg}\n"
+                        f"⭐ <b>Score:</b> {p.signal_score}"
+                    )
+                except Exception:
+                    pass
+                return
+
             if _is_deterministic_error(error_msg):
                 p.status = "REJECTED"
                 p.rejection_reason = f"ENTRY_FAIL::{error_msg}"

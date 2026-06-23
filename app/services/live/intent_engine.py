@@ -417,6 +417,17 @@ def _process_one_pending_intent(pending_id: int, price_map, cfg):
 
         if not exec_result.success:
             error_msg = exec_result.error or "UNKNOWN_PLACE_ERROR"
+
+            # Immediate reject for invalid symbols to avoid retry storm
+            em_low = (error_msg or "").lower()
+            if error_msg.startswith("INVALID_SYMBOL") or "invalid symbol" in em_low or "invalid_symbol" in em_low:
+                p.status = "REJECTED"
+                p.rejection_reason = f"ENTRY_FAIL::{error_msg}"
+                p.next_retry_at = None
+                db.commit()
+                print(f"🚫 LIVE ENTRY REJECTED (invalid symbol): {p.symbol} | {error_msg}")
+                return
+
             _schedule_place_retry_or_reject(db, p, error_msg, now)
             return
 
