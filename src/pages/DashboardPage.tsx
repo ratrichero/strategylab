@@ -46,7 +46,8 @@ export function Dashboard() {
   const INIT_CAP = 10000;
   const todayVN = getTodayVN();
 
-  const [allSignals, setAllSignals] = useState([]);
+  const [activeSignals, setActiveSignals] = useState([]);
+  const [closedSignals, setClosedSignals] = useState([]);
   const [pendingSignals, setPendingSignals] = useState([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [maxOpen, setMaxOpen] = useState(50);
@@ -69,6 +70,7 @@ export function Dashboard() {
   const [tradeKlineCache, setTradeKlineCache] = useState(new Map());
   const [tradeKlineLoading, setTradeKlineLoading] = useState(false);
   const selectedTradeKeyRef = useRef('');
+  const allSignals = useMemo(() => [...closedSignals, ...activeSignals], [closedSignals, activeSignals]);
 
   // Parse CAP|PSize from filter
   const parseCapPsize = (v) => {
@@ -174,23 +176,42 @@ export function Dashboard() {
     }
   };
 
+  const refreshRealtimeTables = async () => {
+    const [openSigs, pending] = await Promise.all([
+      fetchAPI('/signals?status=OPEN&limit=10000'),
+      fetchAPI('/pending-signals?status=WAIT&limit=200').catch(() => ({ data: [], total: 0 })),
+    ]);
+    setActiveSignals((openSigs.data || []).map(normalizeSignalDates));
+    setPendingSignals((pending.data || []).map(normalizeSignalDates));
+    setPendingCount(pending.total || 0);
+  };
+
+  const refreshClosedSignals = async () => {
+    const closedSigs = await fetchAPI('/signals?include_manual=true&limit=10000');
+    setClosedSignals((closedSigs.data || []).map(normalizeSignalDates));
+  };
+
   // ========== LOAD ==========
   useEffect(() => {
     (async () => {
       setLoading(true); setApiError('');
       try {
         console.log('[Dashboard] todayVN:', todayVN);
-        const [allSigs, pending, vers, prices, appCfg] = await Promise.all([
-          fetchAPI('/signals?limit=10000').catch(e => { setApiError(p => p + ' signals:' + e.message); return { data: [] }; }),
+        const [closedSigs, openSigs, pending, vers, prices, appCfg] = await Promise.all([
+          fetchAPI('/signals?include_manual=true&limit=10000').catch(e => { setApiError(p => p + ' signals:' + e.message); return { data: [] }; }),
+          fetchAPI('/signals?status=OPEN&limit=10000').catch(e => { setApiError(p => p + ' active:' + e.message); return { data: [] }; }),
           fetchAPI('/pending-signals?status=WAIT&limit=200').catch(() => ({ data: [], total: 0 })),
           fetchAPI('/engine/versions').catch(() => []),
           fetchBinancePrices(),
           fetchAPI('/app-config').catch(() => ({})),
         ]);
-        const signals = (allSigs.data || []).map(normalizeSignalDates);
-        console.log('[Dashboard] all:', signals.length);
+        const closed = (closedSigs.data || []).map(normalizeSignalDates);
+        const active = (openSigs.data || []).map(normalizeSignalDates);
+        const signals = [...closed, ...active];
+        console.log('[Dashboard] closed:', closed.length, 'active:', active.length);
 
-        setAllSignals(signals);
+        setClosedSignals(closed);
+        setActiveSignals(active);
         setPendingSignals((pending.data || []).map(normalizeSignalDates));
         setPendingCount(pending.total || 0);
         setEngineVersions(vers.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
@@ -209,6 +230,22 @@ export function Dashboard() {
     console.log('[Dashboard] Filter applied:', appliedFilters.startDate || '(all)', '->', appliedFilters.endDate || '(all)', '| allSignals:', allSignals.length);
   }, [appliedFilters.startDate, appliedFilters.endDate, allSignals]);
 
+  // Auto-refresh realtime tables so Active drops out quickly when trades close.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      refreshRealtimeTables().catch(e => console.error('[Dashboard] realtime refresh failed:', e));
+    }, 10000);
+    return () => clearInterval(iv);
+  }, []);
+
+  // Refresh closed trades slightly more often than the materialized view cadence.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      refreshClosedSignals().catch(e => console.error('[Dashboard] closed refresh failed:', e));
+    }, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
   // Auto-refresh prices
   useEffect(() => {
     const iv = setInterval(async () => {
@@ -225,7 +262,7 @@ export function Dashboard() {
   }, []);
 
   // ========== DATA SPLITS ==========
-  const allOpen = useMemo(() => allSignals.filter(s => s.status === 'OPEN').sort((a, b) => new Date(b.candle_time || 0).getTime() - new Date(a.candle_time || 0).getTime()), [allSignals]);
+  const allOpen = useMemo(() => activeSignals.filter(s => s.status === 'OPEN').sort((a, b) => new Date(b.candle_time || 0).getTime() - new Date(a.candle_time || 0).getTime()), [activeSignals]);
   const allClosed = useMemo(() => {
     const isWL = statusMode === 'WL';
     return allSignals.filter(s => {
@@ -492,7 +529,7 @@ export function Dashboard() {
       const res = await fetch(`${API}/signals/${id}/close`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       toast.success('Signal closed');
-      window.location.reload();
+      await refreshRealtimeTables();
     } catch (e) { toast.error('Failed to close signal'); }
   };
   const handleCancelAllActive = async () => {
@@ -501,7 +538,7 @@ export function Dashboard() {
       const res = await fetch(`${API}/admin/cancel-all-active`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       toast.success('All signals closed');
-      window.location.reload();
+      await refreshRealtimeTables();
     } catch (e) { toast.error('Failed to close all signals'); }
   };
   const handleCancelPending = async (id) => {
@@ -510,7 +547,7 @@ export function Dashboard() {
       const res = await fetch(`${API}/pending/${id}/cancel`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       toast.success('Pending cancelled');
-      window.location.reload();
+      await refreshRealtimeTables();
     } catch (e) { toast.error('Failed to cancel pending'); }
   };
   const handleCancelAllPending = async () => {
@@ -519,7 +556,7 @@ export function Dashboard() {
       const res = await fetch(`${API}/admin/cancel-all-pending`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed');
       toast.success('All pending cancelled');
-      window.location.reload();
+      await refreshRealtimeTables();
     } catch (e) { toast.error('Failed to cancel all pending'); }
   };
 

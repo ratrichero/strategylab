@@ -58,14 +58,16 @@ async def get_signals(page:int=1, limit:int=50, symbol:Optional[str]=None,
     regime:Optional[str]=None, start_date:Optional[str]=None,
     end_date:Optional[str]=None, date_field:Optional[str]="created_at",
     min_score:Optional[float]=None, max_score:Optional[float]=None,
-    strategy:Optional[str]=None):
+    strategy:Optional[str]=None, include_manual:bool=False):
     pool = await get_async_pool()
     conds = ["1=1"]; params = []; idx = 1
     for col, val in [("symbol",symbol),("timeframe",timeframe),("direction",direction),
-                     ("status",status),("pattern",pattern),("regime",regime),
+                     ("pattern",pattern),("regime",regime),
                      ("strategy_name",strategy)]:
         if val:
             conds.append(f"{col}=${idx}"); params.append(val); idx+=1
+    if status:
+        conds.append(f"status=${idx}"); params.append(status); idx+=1
     dc = "exit_time" if date_field=="exit_time" else "created_at"
 
     # ✅ PATCHED: use _parse_vn_date for VN-aware date handling
@@ -81,14 +83,26 @@ async def get_signals(page:int=1, limit:int=50, symbol:Optional[str]=None,
     if max_score is not None: conds.append(f"score<=${idx}"); params.append(max_score); idx+=1
     where = " AND ".join(conds); offset = (page-1)*limit
     async with pool.acquire() as conn:
-        # Use mv_signal_performance view (includes all required fields after migration)
-        count = await conn.fetchval(f"SELECT COUNT(*) FROM mv_signal_performance WHERE {where}", *params)
-        rows = await conn.fetch(f"""
-            SELECT * FROM mv_signal_performance
-            WHERE {where}
-            ORDER BY candle_time DESC
-            LIMIT {limit} OFFSET {offset}
-        """, *params)
+        # Use view for WIN/LOSS/MANUAL (accept 5min delay), realtime for OPEN
+        if status == 'OPEN':
+            # Realtime query for open signals
+            count = await conn.fetchval(f"SELECT COUNT(*) FROM signals WHERE {where}", *params)
+            rows = await conn.fetch(f"""
+                SELECT * FROM signals
+                WHERE {where}
+                ORDER BY candle_time DESC
+                LIMIT {limit} OFFSET {offset}
+            """, *params)
+        else:
+            # Use view for closed trades (WIN/LOSS/MANUAL)
+            view_where = where if (status or include_manual) else f"{where} AND status IN ('WIN','LOSS')"
+            count = await conn.fetchval(f"SELECT COUNT(*) FROM mv_signal_performance WHERE {view_where}", *params)
+            rows = await conn.fetch(f"""
+                SELECT * FROM mv_signal_performance
+                WHERE {view_where}
+                ORDER BY candle_time DESC
+                LIMIT {limit} OFFSET {offset}
+            """, *params)
     return {"data": serialize_records(rows), "total": count or 0, "page": page, "limit": limit,
             "pages": ((count or 0)+limit-1)//limit}
 

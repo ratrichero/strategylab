@@ -2,7 +2,7 @@ import asyncio
 
 async def safe_refresh_loop():
     while True:
-        await asyncio.sleep(600)
+        await asyncio.sleep(300)  # 5 minutes
         await safe_refresh_once()
 
 async def safe_refresh_once():
