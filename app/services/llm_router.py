@@ -9,7 +9,7 @@ from app.core.config import get_groq_api_key, get_gemini_api_key
 # ENDPOINTS (2026)
 # =========================
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro-latest:generateContent"
 
 TIMEOUT_SECONDS = 12
 
@@ -111,13 +111,13 @@ AI Probability: {signal_data.get('prob')}
 Risk/Reward: 1:2
 """
 
-    # ✅ Try Groq first
-    result = ask_groq(prompt)
+    # ✅  Gemini first
+    result = ask_gemini(prompt)
     if result:
         return result
 
-    # ✅ Fallback Gemini
-    result = ask_gemini(prompt)
+    # ✅ Try Groq Fallback
+    result = ask_groq(prompt)
     if result:
         return result
 
