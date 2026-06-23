@@ -322,10 +322,10 @@ def _generate_agent_prompt(summary: str, anomalies: List[str], live_context: Dic
 
 
 def _ask_agent(prompt: str) -> Optional[str]:
-    response = ask_groq(prompt)
+    response = ask_gemini(prompt)
     if response:
         return response
-    return ask_gemini(prompt)
+    return ask_groq(prompt)
 
 
 def generate_agent_report(report_type: str, days: int, title: str) -> str:
