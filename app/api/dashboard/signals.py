@@ -82,7 +82,20 @@ async def get_signals(page:int=1, limit:int=50, symbol:Optional[str]=None,
     where = " AND ".join(conds); offset = (page-1)*limit
     async with pool.acquire() as conn:
         count = await conn.fetchval(f"SELECT COUNT(*) FROM signals WHERE {where}", *params)
-        rows = await conn.fetch(f"SELECT * FROM signals WHERE {where} ORDER BY candle_time DESC LIMIT {limit} OFFSET {offset}", *params)
+        rows = await conn.fetch(f"""
+            SELECT s.*, 
+                   toa.max_drawdown as mae, 
+                   toa.max_favorable as mfe,
+                   toa.rr_realized,
+                   toa.time_to_exit,
+                   sd.indicators_snapshot
+            FROM signals s
+            LEFT JOIN trade_outcome_analytics toa ON toa.signal_id = s.id
+            LEFT JOIN scan_debug sd ON sd.signal_id = s.id
+            WHERE {where} 
+            ORDER BY s.candle_time DESC 
+            LIMIT {limit} OFFSET {offset}
+        """, *params)
     return {"data": serialize_records(rows), "total": count or 0, "page": page, "limit": limit,
             "pages": ((count or 0)+limit-1)//limit}
 

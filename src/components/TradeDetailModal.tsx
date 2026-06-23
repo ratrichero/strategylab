@@ -117,7 +117,19 @@ export function TradeDetailModal({ trade, klines, onClose, loadingKlines = false
       });
     }
 
-    // Hit marker
+    // Entry point marker
+    const entryMs = getTradeEntryMs(trade);
+    if (entryMs) {
+      createSeriesMarkers(candleSeries, [{
+        time: Math.floor(entryMs / 1000),
+        position: 'aboveBar',
+        color: '#6366f1',
+        shape: 'circle',
+        text: 'ENTRY',
+      }]);
+    }
+
+    // Exit/Hit marker
     if (trade.hit_at_ms) {
       createSeriesMarkers(candleSeries, [{
         time: Math.floor(trade.hit_at_ms / 1000),
@@ -125,6 +137,15 @@ export function TradeDetailModal({ trade, klines, onClose, loadingKlines = false
         color: trade.sim_status === 'WIN' ? '#10b981' : '#ef4444',
         shape: trade.sim_status === 'WIN' ? 'arrowUp' : 'arrowDown',
         text: trade.sim_status === 'WIN' ? 'TP HIT' : 'SL HIT',
+      }]);
+    } else if (trade.exit_time) {
+      const exitMs = new Date(trade.exit_time).getTime();
+      createSeriesMarkers(candleSeries, [{
+        time: Math.floor(exitMs / 1000),
+        position: 'belowBar',
+        color: '#f59e0b',
+        shape: 'circle',
+        text: 'EXIT',
       }]);
     }
 
