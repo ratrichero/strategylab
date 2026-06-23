@@ -6,301 +6,30 @@ import traceback
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
 
 from app.core.trading_mode import get_current_mode, TradingMode
 from app.core.time_utils import utc_now, vn_now_str
-from app.core.bg_runner import (
-    clear_shutdown,
-    mark_shutdown,
-    is_shutting_down,
-    start_daemon_job,
-)
-from app.services.price_feed import (
-    start_price_feed, stop_price_feed,
-    get_price_feed, add_price_callback
-)
+from app.core.bg_runner import clear_shutdown, mark_shutdown
+from app.services.price_feed import start_price_feed, stop_price_feed, get_price_feed, add_price_callback
 from app.services.volatility_alert_service import register_volatility_alerts
-from app.services.binance_user_stream_service import (
-    start_user_stream, stop_user_stream
-)
+from app.services.binance_user_stream_service import start_user_stream, stop_user_stream
 from app.services.config_service import get_runtime_config
 from app.core.config import get_telegram_token
-from app.api.account import router as account_router
-
-# ── Auth ──────────────────────────────────────────────────────
 from app.core.app_role import get_app_role, is_admin, is_bot
-from app.auth.routes import router as auth_router
 from app.auth.migration import run_auth_migration
-from app.auth.middleware import is_public_path, require_auth_from_cookie
 
-# ── Control Plane Routes ─────────────────────────────────────
-from app.control.admin_routes import router as admin_routes_router
-from app.control.bot_api import router as bot_api_router
+# ── Refactored Modules ───────────────────────────────────────
+from app.core.middleware import setup_middleware
+from app.core.app_setup import setup_app
+from app.core.background_tasks import get_background_tasks, scan_queue
+from app.core.price_callback import on_price_update, set_main_loop
 
-# ── Routers ───────────────────────────────────────────────────
-from app.api.health import router as health_router
-from app.api.scan import router as scan_router
-from app.api.ml import router as ml_router
-from app.api.performance import router as performance_router
-from app.api.assistant import router as assistant_router
-from app.api.report import router as report_router
-from app.api.report_history import router as report_history_router
-from app.api.telegram_webhook import router as telegram_webhook_router
-from app.api.config import router as config_router
-from app.api.monitor_trade import router as monitor_trade_router
-from app.api.retrain import router as retrain_router
-from app.api.signal_analysis_handler_update import router as signal_analysis_router
-from app.api.system import router as system_router
-from app.api.dashboard.signals import router as dash_signals_router
-from app.api.dashboard.research import router as dash_research_router
-from app.api.dashboard.analysis import router as dash_analysis_router
-from app.api.dashboard.edge import router as dash_edge_router
-from app.api.dashboard.config_api import router as dash_config_router
-from app.api.dashboard.performance_api import router as dash_perf_router
-from app.api.dashboard.pending_api import router as dash_pending_router
-from app.api.price_feed_status import router as price_feed_status_router
-from app.api.backtest_replay import router as backtest_replay_router
-from app.api.live_settings import router as live_settings_router
-
-from asyncio import Queue as AsyncQueue
 import logging
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 # ── Globals ───────────────────────────────────────────────────
-scan_queue: AsyncQueue = AsyncQueue()
 _main_loop: Optional[asyncio.AbstractEventLoop] = None
-_last_monitor_run: float = 0
-MONITOR_THROTTLE = 2.0
-
-_monitor_running = False
-_monitor_lock = threading.Lock()
-
-
-# ── Price Callback — PAPER ONLY ──────────────────────────────
-
-def on_price_update(price_map: dict):
-    """
-    Callback từ price feed thread.
-    PAPER mode: dispatch sang paper monitor.
-    LIVE mode: chỉ cache giá, KHÔNG chạy monitor/pending.
-    """
-    global _main_loop
-    if _main_loop is None or _main_loop.is_closed():
-        return
-
-    if is_shutting_down():
-        return
-
-    # LIVE mode: price callback không trigger paper monitor
-    if get_current_mode() != TradingMode.PAPER:
-        return
-
-    try:
-        asyncio.run_coroutine_threadsafe(
-            _process_price_update_paper(price_map),
-            _main_loop
-        )
-    except Exception as e:
-        print(f"[PRICE CALLBACK] {e}")
-
-
-async def _process_price_update_paper(price_map: dict):
-    import time
-    global _last_monitor_run
-
-    now = time.time()
-    if now - _last_monitor_run < MONITOR_THROTTLE:
-        return
-    _last_monitor_run = now
-
-    cfg = get_runtime_config()
-    if not cfg.get("ENABLE_MONITOR", True):
-        return
-
-    try:
-        start_daemon_job("paper_monitor", _run_paper_monitor, price_map)
-    except Exception as e:
-        print(f"[PAPER MONITOR ERROR] {e}")
-        traceback.print_exc()
-
-
-def _run_paper_monitor(price_map: dict):
-    """
-    PAPER ONLY monitor cycle.
-    Chỉ cho phép 1 cycle chạy tại 1 thời điểm.
-    """
-    global _monitor_running
-
-    with _monitor_lock:
-        if _monitor_running:
-            return
-        _monitor_running = True
-
-    try:
-        from app.services.pending_engine import process_pending_signals
-        from app.services.trade_monitor import monitor_open_trades
-
-        try:
-            process_pending_signals(price_map=price_map)
-        except Exception as e:
-            print(f"[PAPER PENDING ERROR] {type(e).__name__}: {e}")
-            traceback.print_exc()
-
-        try:
-            monitor_open_trades(price_map=price_map)
-        except Exception as e:
-            print(f"[PAPER MONITOR ERROR] {type(e).__name__}: {e}")
-            traceback.print_exc()
-
-    finally:
-        with _monitor_lock:
-            _monitor_running = False
-
-
-# ── Scan helpers ─────────────────────────────────────────────
-
-def _run_scan_job(timeframe: str):
-    print(f"🚀 [SCAN] {timeframe} | {vn_now_str()}")
-    from app.services.signal_service import run_market_scan_single_tf
-    run_market_scan_single_tf(timeframe)
-    print(f"✅ [SCAN DONE] {timeframe} | {vn_now_str()}")
-
-
-# ── Background Tasks ─────────────────────────────────────────
-
-async def scan_worker():
-    while True:
-        timeframe = await scan_queue.get()
-        try:
-            while True:
-                if is_shutting_down():
-                    break
-
-                started = start_daemon_job("scan_worker", _run_scan_job, timeframe)
-                if started:
-                    break
-
-                await asyncio.sleep(0.5)
-
-        except Exception as e:
-            print(f"[SCAN ERROR] {e}")
-            traceback.print_exc()
-        finally:
-            scan_queue.task_done()
-
-
-async def scheduler_loop():
-    last = {"15m": None, "1h": None, "4h": None}
-    while True:
-        cfg = get_runtime_config()
-        if not cfg.get("ENABLE_SCHEDULER", True):
-            await asyncio.sleep(5)
-            continue
-
-        # ← CHANGED: Bot runtime gate check
-        # Nếu bot monitor_only → không enqueue scan
-        if is_bot():
-            try:
-                from app.bot_runtime.runtime_gate import get_runtime_gate
-                gate = get_runtime_gate()
-                if gate.is_monitor_only():
-                    await asyncio.sleep(5)
-                    continue
-            except ImportError:
-                pass
-
-        now = utc_now()
-
-        # LIVE scheduler pause gate:
-        # nếu saturated và local queue đã đủ reserve thì không enqueue scan auto
-        if get_current_mode() != TradingMode.PAPER:
-            try:
-                from app.db.session import SessionLocal
-                from app.services.live.capacity_service import get_capacity_snapshot, should_pause_scan
-
-                with SessionLocal() as db:
-                    c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
-                    cap = get_capacity_snapshot(db, c_config)
-
-                    if should_pause_scan(cap):
-                        await asyncio.sleep(1)
-                        continue
-            except Exception as e:
-                print(f"[SCHEDULER CAPACITY CHECK] {e}")
-
-        if now.minute in [1, 16, 31, 46] and last["15m"] != now.minute:
-            await scan_queue.put("15m")
-            last["15m"] = now.minute
-
-        if now.minute == 1 and last["1h"] != now.hour:
-            await scan_queue.put("1h")
-            last["1h"] = now.hour
-
-        if now.minute == 1 and now.hour % 4 == 0 and last["4h"] != now.hour:
-            await scan_queue.put("4h")
-            last["4h"] = now.hour
-
-        await asyncio.sleep(1)
-
-
-async def heartbeat_loop():
-    from app.services.crash_recovery import update_heartbeat
-    while True:
-        await asyncio.sleep(30)
-        try:
-            if is_shutting_down():
-                return
-            start_daemon_job("heartbeat", update_heartbeat)
-        except Exception as e:
-            print(f"[HEARTBEAT] {e}")
-
-
-async def mv_refresh_loop():
-    while True:
-        await asyncio.sleep(600)
-        try:
-            if is_shutting_down():
-                return
-            from app.services.mv_refresh import _do_refresh
-            start_daemon_job("mv_refresh", _do_refresh)
-        except Exception as e:
-            print(f"[MV REFRESH] {e}")
-
-
-async def report_scheduler_loop():
-    _ld = _lw = _lm = None
-    while True:
-        await asyncio.sleep(60)
-        try:
-            if is_shutting_down():
-                return
-
-            from app.core.time_utils import vn_now
-            now_vn = vn_now()
-
-            if now_vn.hour == 8 and now_vn.minute == 0 and _ld != now_vn.date():
-                _ld = now_vn.date()
-                from app.services.trading_agent_service import send_agent_daily
-                start_daemon_job("report_daily", send_agent_daily)
-
-            if (now_vn.weekday() == 0 and now_vn.hour == 8
-                    and now_vn.minute == 0 and _lw != now_vn.date()):
-                _lw = now_vn.date()
-                from app.services.trading_agent_service import send_agent_weekly
-                start_daemon_job("report_weekly", send_agent_weekly)
-
-            if (now_vn.day == 1 and now_vn.hour == 8
-                    and now_vn.minute == 0 and _lm != now_vn.month):
-                _lm = now_vn.month
-                from app.services.trading_agent_service import send_agent_monthly
-                start_daemon_job("report_monthly", send_agent_monthly)
-
-        except Exception as e:
-            print(f"[REPORT] {e}")
 
 
 # ── Lifespan ──────────────────────────────────────────────────
@@ -397,6 +126,7 @@ async def lifespan(app: FastAPI):
 
     # Price Feed
     print("\n📡 Price Feed...")
+    set_main_loop(_main_loop)
     add_price_callback(on_price_update)
     register_volatility_alerts()
     start_price_feed()
@@ -410,11 +140,8 @@ async def lifespan(app: FastAPI):
     # Background tasks
     print("⚙️  Background tasks...")
     tasks = [
-        asyncio.create_task(heartbeat_loop(),        name="heartbeat"),
-        asyncio.create_task(scheduler_loop(),        name="scheduler"),
-        asyncio.create_task(scan_worker(),           name="scan_worker"),
-        asyncio.create_task(mv_refresh_loop(),       name="mv_refresh"),
-        asyncio.create_task(report_scheduler_loop(), name="report"),
+        asyncio.create_task(task, name=name)
+        for task, name in zip(get_background_tasks(), ["heartbeat", "scheduler", "scan_worker", "mv_refresh", "report"])
     ]
 
     # ← CHANGED: Bot heartbeat task (chỉ khi BOT mode)
@@ -503,109 +230,6 @@ app = FastAPI(
     openapi_url="/openapi.json" if _api_docs_exposed else None,
 )
 
-_cors_origins_raw = os.getenv("CORS_ORIGINS", "*")
-_cors_origins = [
-    origin.strip()
-    for origin in _cors_origins_raw.split(",")
-    if origin.strip()
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins or ["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"]
-)
-
-
-# ── Auth middleware (global) ──────────────────────────────────
-# ← CHANGED: thêm auth check cho mọi request,
-# trừ whitelist (login, setup, health, bot machine auth, static)
-
-@app.middleware("http")
-async def auth_middleware(request: Request, call_next):
-    path = request.url.path
-
-    if not _api_docs_exposed and (
-        path in {"/docs", "/redoc", "/openapi.json"}
-        or path.startswith("/docs/")
-        or path.startswith("/redoc/")
-    ):
-        return JSONResponse(status_code=404, content={"detail": "Not found"})
-
-    # Whitelist: không cần auth
-    if is_public_path(path):
-        return await call_next(request)
-
-    # Check auth từ cookie
-    try:
-        require_auth_from_cookie(request)
-    except HTTPException as e:
-        # Nếu là API call → trả JSON 401
-        if path.startswith("/api/") or path.startswith("/admin/") or path.startswith("/scan"):
-            return JSONResponse(
-                status_code=e.status_code,
-                content={"detail": e.detail}
-            )
-        # Nếu là page navigation → redirect login
-        return RedirectResponse(url="/login", status_code=302)
-
-    return await call_next(request)
-
-
-# ── Mount routers ─────────────────────────────────────────────
-
-# Auth routes (public — không cần auth, đã whitelist)
-app.include_router(auth_router)
-
-# Control plane routes
-# (admin_routes cần require_admin dependency bên trong)
-# (bot_api cần bot machine auth bên trong)
-if is_admin():
-    app.include_router(admin_routes_router)
-    app.include_router(bot_api_router)
-
-# Trading/Dashboard routes (protected by auth middleware)
-for r in [
-    health_router, scan_router, ml_router, performance_router,
-    assistant_router, report_router, report_history_router,
-    telegram_webhook_router, config_router, monitor_trade_router,
-    retrain_router, signal_analysis_router, system_router,
-    dash_signals_router, dash_research_router, dash_analysis_router,
-    dash_edge_router, dash_config_router, dash_perf_router,
-    dash_pending_router, price_feed_status_router, account_router,
-    backtest_replay_router, live_settings_router,
-]:
-    app.include_router(r)
-
-
-@app.get("/")
-async def root():
-    return RedirectResponse(url="/dashboard")
-
-
-# ── SPA ───────────────────────────────────────────────────────
-
-_DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dist")
-if os.path.exists(_DIST):
-    _assets = os.path.join(_DIST, "assets")
-    if os.path.exists(_assets):
-        app.mount("/assets", StaticFiles(directory=_assets), name="assets")
-
-    @app.get("/{path:path}")
-    async def spa(path: str):
-        if path.startswith("api/"):
-            raise HTTPException(404)
-        fp = os.path.join(_DIST, path)
-        if os.path.exists(fp) and os.path.isfile(fp):
-            return FileResponse(fp)
-        return FileResponse(os.path.join(_DIST, "index.html"))
-
-
-@app.exception_handler(Exception)
-async def global_error(request: Request, exc: Exception):
-    e = f"{type(exc).__name__}: {exc}"
-    print(f"\n{'='*60}\n🚨 {e}\n{traceback.format_exc()}{'='*60}")
-    return JSONResponse(status_code=500, content={"error": e})
-
+# Setup app components
+setup_middleware(app)
+setup_app(app)
