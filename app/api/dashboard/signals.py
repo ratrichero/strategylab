@@ -81,16 +81,12 @@ async def get_signals(page:int=1, limit:int=50, symbol:Optional[str]=None,
     if max_score is not None: conds.append(f"score<=${idx}"); params.append(max_score); idx+=1
     where = " AND ".join(conds); offset = (page-1)*limit
     async with pool.acquire() as conn:
-        # Use existing mv_signal_performance view + indicators from scan_debug
+        # Use mv_signal_performance view (includes all required fields after migration)
         count = await conn.fetchval(f"SELECT COUNT(*) FROM mv_signal_performance WHERE {where}", *params)
         rows = await conn.fetch(f"""
-            SELECT 
-                sp.*,
-                sd.indicators_snapshot
-            FROM mv_signal_performance sp
-            LEFT JOIN scan_debug sd ON sd.signal_id = sp.id
+            SELECT * FROM mv_signal_performance
             WHERE {where}
-            ORDER BY sp.candle_time DESC
+            ORDER BY candle_time DESC
             LIMIT {limit} OFFSET {offset}
         """, *params)
     return {"data": serialize_records(rows), "total": count or 0, "page": page, "limit": limit,
