@@ -80,6 +80,7 @@ DEFAULTS = {
                 "price is outside the price band",
                 "apikey permission",
                 "symbol not trading",
+                "invalid symbol",
                 "set_leverage_failed",
             ],
             "temporary": [

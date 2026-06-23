@@ -407,6 +407,7 @@ class BinanceExecutor:
     # ── Symbol Info (CACHED) ─────────────────────────────
 
     def get_symbol_info(self, symbol: str) -> Optional[Dict]:
+        symbol = symbol.upper()
         self._refresh_exchange_info_if_needed()
 
         info = self._symbol_info_map.get(symbol)
@@ -426,6 +427,9 @@ class BinanceExecutor:
             print(f"[EXEC] Info error {symbol}: {e}")
 
         return None
+
+    def is_symbol_valid(self, symbol: str) -> bool:
+        return self.get_symbol_info(symbol.upper()) is not None
 
     def round_quantity(
         self, symbol: str, quantity: float,
@@ -466,6 +470,7 @@ class BinanceExecutor:
     def set_leverage(self, symbol: str, leverage: int) -> bool:
         if not self.ready:
             return False
+        symbol = symbol.upper()
 
         def _do():
             self._last_error = None
@@ -506,6 +511,7 @@ class BinanceExecutor:
     ) -> Optional[Dict]:
         if not self.ready:
             return None
+        symbol = symbol.upper()
 
         def _do():
             self._last_error = None
@@ -530,6 +536,7 @@ class BinanceExecutor:
     def limit_order(self, symbol, side, quantity, price, tif="GTC", client_order_id: Optional[str] = None):
         if not self.ready:
             return None
+        symbol = symbol.upper()
 
         def _do():
             self._last_error = None
@@ -868,6 +875,13 @@ def open_position(
                 mode=mode.get_mode().value
             )
 
+        if not executor.is_symbol_valid(pending.symbol):
+            return OrderResult(
+                success=False,
+                error=f"INVALID_SYMBOL::{pending.symbol}",
+                mode=mode.get_mode().value
+            )
+
         usdt_notional, leverage = _calc_order_size(
             entry_price=float(pending.trigger_price),
             stop_loss=float(pending.stop_loss),
@@ -961,6 +975,13 @@ def place_limit_entry_order(pending) -> OrderResult:
             return OrderResult(
                 success=False,
                 error=f"Low balance: ${balance:.2f}",
+                mode=mode.get_mode().value
+            )
+
+        if not executor.is_symbol_valid(pending.symbol):
+            return OrderResult(
+                success=False,
+                error=f"INVALID_SYMBOL::{pending.symbol}",
                 mode=mode.get_mode().value
             )
 

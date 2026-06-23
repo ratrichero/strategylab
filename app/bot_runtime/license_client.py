@@ -218,7 +218,7 @@ class LicenseClient:
         for endpoint in endpoints:
             url = f"{endpoint}/bot/heartbeat"
             try:
-                print(f"  📡 Heartbeat via {url}")
+                #print(f"  📡 Heartbeat via {url}")
                 with httpx.Client(timeout=httpx.Timeout(
                     connect=CONNECT_TIMEOUT,
                     read=REQUEST_TIMEOUT,

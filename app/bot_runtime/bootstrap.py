@@ -150,7 +150,7 @@ class BootstrapCache:
                 return False
 
             size = os.path.getsize(self._cache_path)
-            print(f"[BOOTSTRAP] Cache saved: {self._cache_path} ({size} bytes)")
+            #print(f"[BOOTSTRAP] Cache saved: {self._cache_path} ({size} bytes)")
             return True
 
         except Exception as e:
