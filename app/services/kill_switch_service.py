@@ -88,6 +88,8 @@ def _kill_switch_live() -> Dict:
     from app.services.live.command_service import request_kill_switch_all
     from app.services.live.reconciler import reconcile_all_active_symbols
 
+    mode = get_current_mode()
+    mode_label = mode.value
     now = utc_now()
 
     # 1) Gửi commands + exchange cleanup
@@ -110,7 +112,7 @@ def _kill_switch_live() -> Dict:
                 INSERT INTO audit_logs (event_type, message, metadata, created_at)
                 VALUES ('KILL_SWITCH', :msg, :meta, :now)
             """), {
-                "msg":  f"Kill switch executed. Mode: LIVE",
+                "msg":  f"Kill switch executed. Mode: {mode_label}",
                 "meta": json.dumps(cmd_result, default=str),
                 "now":  now,
             })
@@ -119,7 +121,7 @@ def _kill_switch_live() -> Dict:
             print(f"[KILL SWITCH AUDIT] {e}")
 
     result = {
-        "mode":              "LIVE",
+        "mode":              mode_label,
         "timestamp":         now.isoformat(),
         "exchange_cleanup":  cmd_result.get("success", False),
         "local_pending_cancelled": cmd_result.get("local_pending_cancelled", 0),

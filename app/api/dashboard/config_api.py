@@ -22,16 +22,7 @@ async def get_app_config():
 
     from app.core.app_role import is_bot
     if is_bot():
-        for key in [
-            "BINANCE_API_KEY",
-            "BINANCE_API_SECRET",
-            "BINANCE_TESTNET_API_KEY",
-            "BINANCE_TESTNET_API_SECRET",
-            "GROQ_API_KEY",
-            "GEMINI_API_KEY",
-            "DASHBOARD_API_KEY",
-        ]:
-            config.pop(key, None)
+        config.pop("DASHBOARD_API_KEY", None)
 
     return config
 
@@ -50,12 +41,6 @@ async def update_app_config(updates: Dict[str, str]):
     from app.core.app_role import is_bot
     if is_bot():
         blocked_keys = {
-            "BINANCE_API_KEY",
-            "BINANCE_API_SECRET",
-            "BINANCE_TESTNET_API_KEY",
-            "BINANCE_TESTNET_API_SECRET",
-            "GROQ_API_KEY",
-            "GEMINI_API_KEY",
             "DASHBOARD_API_KEY",
         }
         forbidden = sorted(k for k in updates if k in blocked_keys)

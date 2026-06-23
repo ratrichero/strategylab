@@ -22,7 +22,15 @@ import toast from "react-hot-toast";
 const API_BASE=import.meta.env.VITE_API_BASE||"";
 const API=`${API_BASE}/api`;
 async function loadConfig(){const r=await fetch(`${API}/app-config`,{credentials:"include"});return r.json();}
-async function saveConfigKeys(u){await fetch(`${API}/app-config`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(u),credentials:"include"});}
+async function saveConfigKeys(u){
+  const r=await fetch(`${API}/app-config`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(u),credentials:"include"});
+  if(!r.ok){
+    let msg=`Save failed (${r.status})`;
+    try{const d=await r.json();msg=d.detail||d.error||msg;}catch{}
+    throw new Error(msg);
+  }
+  return r.json();
+}
 
 function Field({label,hint,children}){return <div><label className="block text-sm font-medium text-slate-300 mb-1.5">{label}</label>{children}{hint&&<p className="text-xs text-slate-500 mt-1">{hint}</p>}</div>;}
 function NumField({label,value,onChange,hint,step}){return <Field label={label} hint={hint}><input type="number" step={step||"any"} value={value} onChange={e=>onChange(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/></Field>;}

@@ -18,7 +18,7 @@ _api_docs_exposed = (
 )
 
 
-def auth_middleware(request: Request, call_next):
+async def auth_middleware(request: Request, call_next):
     """
     Global auth middleware.
     Checks auth from cookie for all requests except public paths.
@@ -34,7 +34,7 @@ def auth_middleware(request: Request, call_next):
 
     # Whitelist: không cần auth
     if is_public_path(path):
-        return call_next(request)
+        return await call_next(request)
 
     # Check auth từ cookie
     try:
@@ -49,10 +49,10 @@ def auth_middleware(request: Request, call_next):
         # Nếu là page navigation → redirect login
         return RedirectResponse(url="/login", status_code=302)
 
-    return call_next(request)
+    return await call_next(request)
 
 
-def global_error(request: Request, exc: Exception):
+async def global_error(request: Request, exc: Exception):
     """
     Global error handler for unhandled exceptions.
     """

@@ -1044,6 +1044,7 @@ def _notify_live_close(signal: Signal):
 
         result = float(signal.result_percent or 0)
         status = signal.status
+        mode_label = getattr(signal, "trading_mode", None) or get_current_mode().value
 
         if status == "MANUAL":
             icon = "🛑"
@@ -1051,12 +1052,12 @@ def _notify_live_close(signal: Signal):
             status_text = "MANUAL 🔧"
         else:
             icon = "🎉" if result > 0 else "📉"
-            title = "Lệnh LIVE đã đóng"
+            title = f"Lệnh {mode_label} đã đóng"
             status_text = "WIN 🟢" if result > 0 else "LOSS 🔴"
 
         msg = (
             f"{icon} <b>{title} - {status_text}</b>\n\n"
-            f"💰 <b>Chế độ:</b> LIVE\n"
+            f"💰 <b>Chế độ:</b> {mode_label}\n"
             f"🪙 <b>Coin:</b> {signal.symbol}\n"
             f"🧩 <b>Strategy:</b> {signal.strategy_name}\n"
             f"📍 <b>Hướng:</b> {signal.direction}\n"

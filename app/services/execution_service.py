@@ -483,6 +483,21 @@ class BinanceExecutor:
             print(f"[EXEC] Leverage error {symbol}: {e}")
             return False
 
+    def set_leverage_with_fallback(self, symbol: str, leverage: int) -> Optional[int]:
+        requested = max(1, int(leverage or 1))
+
+        for lev in range(requested, 0, -1):
+            if self.set_leverage(symbol, lev):
+                if lev != requested:
+                    print(f"[EXEC] Leverage fallback {symbol}: {requested}x -> {lev}x")
+                return lev
+
+            err = str(getattr(self, "_last_error", "") or "")
+            if "-4028" not in err and "not valid" not in err.lower():
+                return None
+
+        return None
+
     # ── Standard Orders ──────────────────────────────────
 
     def market_order(
@@ -861,13 +876,18 @@ def open_position(
 
         symbol_info = executor.get_symbol_info(pending.symbol)
 
-        if not executor.set_leverage(pending.symbol, leverage):
+        requested_leverage = leverage
+        actual_leverage = executor.set_leverage_with_fallback(pending.symbol, leverage)
+        if actual_leverage is None:
             err = getattr(executor, "_last_error", None) or f"failed to set leverage={leverage}"
             return OrderResult(
                 success=False,
                 error=f"SET_LEVERAGE_FAILED::{err}",
                 mode=mode.get_mode().value
             )
+        if actual_leverage != requested_leverage:
+            usdt_notional = usdt_notional * actual_leverage / max(1, requested_leverage)
+            leverage = actual_leverage
 
         current_price = float(price_map.get(pending.symbol, pending.trigger_price))
         raw_qty = usdt_notional / current_price
@@ -952,13 +972,18 @@ def place_limit_entry_order(pending) -> OrderResult:
 
         symbol_info = executor.get_symbol_info(pending.symbol)
 
-        if not executor.set_leverage(pending.symbol, leverage):
+        requested_leverage = leverage
+        actual_leverage = executor.set_leverage_with_fallback(pending.symbol, leverage)
+        if actual_leverage is None:
             err = getattr(executor, "_last_error", None) or f"failed to set leverage={leverage}"
             return OrderResult(
                 success=False,
                 error=f"SET_LEVERAGE_FAILED::{err}",
                 mode=mode.get_mode().value
             )
+        if actual_leverage != requested_leverage:
+            usdt_notional = usdt_notional * actual_leverage / max(1, requested_leverage)
+            leverage = actual_leverage
 
         raw_qty = usdt_notional / float(pending.trigger_price)
         quantity = executor.round_quantity(
@@ -1453,8 +1478,9 @@ def close_position(trade, reason: str) -> OrderResult:
         if result:
             actual_exit = float(result.get("avgPrice", 0)) or 0
             fee = float(result.get("commission", 0))
+            mode_label = mode.get_mode().value
             print(
-                f"💰 LIVE CLOSE: {trade.symbol} {trade.direction} "
+                f"💰 {mode_label} CLOSE: {trade.symbol} {trade.direction} "
                 f"| Reason={reason} | Exit={actual_exit:.4f}"
             )
             return OrderResult(

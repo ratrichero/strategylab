@@ -154,12 +154,15 @@ def _recover_live_startup(now):
     2. Gọi live reconciler để sync tất cả active symbols
     3. KHÔNG auto bulk cancel/close trước khi hỏi exchange
     """
-    print(f"  Mode: LIVE")
-    print(f"  🔄 Running LIVE startup reconcile...")
+    mode = get_current_mode()
+    mode_label = mode.value
+
+    print(f"  Mode: {mode_label}")
+    print(f"  🔄 Running {mode_label} startup reconcile...")
 
     results = {
         "recovery_time": now.isoformat(),
-        "mode":          "LIVE",
+        "mode":          mode_label,
         "errors":        [],
     }
 
@@ -167,11 +170,11 @@ def _recover_live_startup(now):
         from app.services.live.recovery import run_startup_live_recovery
         run_startup_live_recovery()
         results["reconcile_ok"] = True
-        print("  ✅ LIVE startup reconcile complete")
+        print(f"  ✅ {mode_label} startup reconcile complete")
     except Exception as e:
         results["reconcile_ok"] = False
         results["errors"].append(f"Reconcile error: {e}")
-        print(f"  ❌ LIVE startup reconcile error: {e}")
+        print(f"  ❌ {mode_label} startup reconcile error: {e}")
         import traceback
         traceback.print_exc()
 
@@ -182,7 +185,7 @@ def _recover_live_startup(now):
                 "INSERT INTO audit_logs (event_type, message, metadata, created_at) "
                 "VALUES ('CRASH_RECOVERY', :msg, :meta, :now)"
             ), {
-                "msg": f"LIVE startup recovery. Reconcile OK: {results.get('reconcile_ok')}",
+                "msg": f"{mode_label} startup recovery. Reconcile OK: {results.get('reconcile_ok')}",
                 "meta": json.dumps(results),
                 "now": now,
             })
@@ -225,8 +228,8 @@ def _notify(results):
             )
         else:
             msg = (
-                f"⚠️ <b>LIVE vừa khởi động và reconcile</b>\n\n"
-                f"💰 <b>Chế độ:</b> LIVE\n"
+                f"⚠️ <b>{mode} vừa khởi động và reconcile</b>\n\n"
+                f"💰 <b>Chế độ:</b> {mode}\n"
                 f"🔄 <b>Reconcile OK:</b> {results.get('reconcile_ok', False)}\n"
             )
 
