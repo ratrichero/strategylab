@@ -91,7 +91,7 @@ def setup_spa(app: FastAPI):
     """
     Setup SPA (Single Page Application) serving.
     """
-    _DIST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "dist")
+    _DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "dist")
     if os.path.exists(_DIST):
         _assets = os.path.join(_DIST, "assets")
         if os.path.exists(_assets):
