@@ -36,6 +36,21 @@ function pct(v, digits = 2) {
   return `${n >= 0 ? '+' : ''}${n.toFixed(digits)}%`;
 }
 
+function formatChartTimeVN(time) {
+  const seconds = typeof time === 'number'
+    ? time
+    : typeof time === 'object' && time?.timestamp
+      ? time.timestamp
+      : 0;
+  if (!seconds) return '';
+  const vn = new Date(seconds * 1000 + 7 * 60 * 60 * 1000);
+  const M = String(vn.getUTCMonth() + 1).padStart(2, '0');
+  const D = String(vn.getUTCDate()).padStart(2, '0');
+  const h = String(vn.getUTCHours()).padStart(2, '0');
+  const m = String(vn.getUTCMinutes()).padStart(2, '0');
+  return `${M}/${D} ${h}:${m} VN`;
+}
+
 export function TradeDetailModal({ trade, klines, onClose, loadingKlines = false }) {
   const chartContainerRef = useRef(null);
   const chartRef = useRef(null);
@@ -69,7 +84,15 @@ export function TradeDetailModal({ trade, klines, onClose, loadingKlines = false
       },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: '#334155' },
-      timeScale: { borderColor: '#334155', timeVisible: true, secondsVisible: false },
+      timeScale: {
+        borderColor: '#334155',
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: formatChartTimeVN,
+      },
+      localization: {
+        timeFormatter: formatChartTimeVN,
+      },
       width: chartContainerRef.current.clientWidth,
       height: chartHeight,
     });

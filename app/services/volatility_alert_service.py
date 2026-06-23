@@ -230,6 +230,7 @@ class VolatilityAlertService:
 
         return {
             "symbol": symbol,
+            "current_price": current,
             "direction": direction,
             "delta_1m": abs_1m,
             "delta_5m": abs_5m,
@@ -259,9 +260,10 @@ class VolatilityAlertService:
         for alert in alerts:
             direction = "TĂNG" if alert["direction"] == "UP" else "GIẢM"
             icon = "🟢" if alert["direction"] == "UP" else "🔴"
+            price_str = f"${alert['current_price']:,.2f}" if alert.get('current_price') else ""
             self._recent_alerts.appendleft(dict(alert))
             lines.append(
-                f"{icon} <b>{alert['symbol']}</b> {direction}: {alert['reason']} "
+                f"{icon} <b>{alert['symbol']}</b> {price_str} {direction}: {alert['reason']} "
                 f"| 1m {alert['signed_delta_1m']:+.2f}% "
                 f"| 5m {alert['signed_delta_5m']:+.2f}%"
             )
