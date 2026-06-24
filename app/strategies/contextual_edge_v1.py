@@ -16,9 +16,9 @@ class ContextualEdgeStrategyV1(BaseStrategy):
     }
 
     # Định nghĩa các Pattern Name để Tracking
-    PAT_15M_LONG_PB  = "Edge: 15m Long Pullback"
-    PAT_4H_SHORT_PB  = "Edge: 4h Short Bearish Pullback"
-    PAT_15M_SHORT_REV= "Edge: 15m Short Reversal"
+    PAT_15M_LONG_PB  = "L Pullback 15m"
+    PAT_4H_SHORT_PB  = "S Bearish Pullback 4h"
+    PAT_15M_SHORT_REV= "S Reversal 15m"
 
     def detect(self, df: pd.DataFrame, timeframe: str) -> Optional[SignalResult]:
         if timeframe not in ["15m", "4h"]:
