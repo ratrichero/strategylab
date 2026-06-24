@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, indicator_sql_expr, to_float
 
 router = APIRouter(tags=["Indicators - Scatter"])
 
@@ -15,6 +15,8 @@ router = APIRouter(tags=["Indicators - Scatter"])
 class ScatterRequest(AnalyticsFilter):
     x_indicator: Literal["rsi", "volume_ratio", "atr_ratio", "score"] = "rsi"
     y_indicator: Literal["rsi", "volume_ratio", "atr_ratio", "score"] = "volume_ratio"
+    x_axis: Literal["rsi", "volume_ratio", "atr_ratio", "score"] | None = None
+    y_axis: Literal["rsi", "volume_ratio", "atr_ratio", "score"] | None = None
     limit: int = 300
 
 
@@ -33,15 +35,8 @@ class ScatterResponse(BaseModel):
 async def indicators_scatter(body: ScatterRequest) -> ScatterResponse:
     sql_filter = build_sql_filter(body, source="closed", alias="s")
 
-    # Map indicators to column names
-    indicator_column_map = {
-        "rsi": "s.rsi",
-        "volume_ratio": "s.volume_ratio",
-        "atr_ratio": "s.atr_ratio",
-        "score": "s.score",
-    }
-    x_col = indicator_column_map.get(body.x_indicator, "s.rsi")
-    y_col = indicator_column_map.get(body.y_indicator, "s.volume_ratio")
+    x_col = indicator_sql_expr(body.x_axis or body.x_indicator, alias="s")
+    y_col = indicator_sql_expr(body.y_axis or body.y_indicator, alias="s")
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:
@@ -63,8 +58,8 @@ async def indicators_scatter(body: ScatterRequest) -> ScatterResponse:
 
     data: list[ScatterItem] = []
     for r in rows:
-        x_val = r["x_val"] or 0
-        y_val = r["y_val"] or 0
+        x_val = to_float(r["x_val"])
+        y_val = to_float(r["y_val"])
         # Only include if at least one value is non-zero
         if x_val > 0 or y_val > 0:
             data.append(

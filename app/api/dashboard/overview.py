@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Dashboard - Overview"])
 
@@ -102,19 +102,20 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
     win_rate = (wins / total * 100) if total > 0 else 0.0
 
     # Profit factor
-    gains = sum(r["result_percent"] or 0 for r in rows if (r["result_percent"] or 0) > 0)
-    losses_abs = abs(sum(r["result_percent"] or 0 for r in rows if (r["result_percent"] or 0) < 0))
+    result_percents = [to_float(r["result_percent"]) for r in rows]
+    gains = sum(rp for rp in result_percents if rp > 0)
+    losses_abs = abs(sum(rp for rp in result_percents if rp < 0))
     profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
 
     # Expectancy
-    win_rows = [r for r in rows if (r["result_percent"] or 0) > 0]
-    loss_rows = [r for r in rows if (r["result_percent"] or 0) < 0]
-    avg_win = sum(r["result_percent"] or 0 for r in win_rows) / len(win_rows) if win_rows else 0.0
-    avg_loss = abs(sum(r["result_percent"] or 0 for r in loss_rows) / len(loss_rows)) if loss_rows else 0.0
+    win_rows = [rp for rp in result_percents if rp > 0]
+    loss_rows = [rp for rp in result_percents if rp < 0]
+    avg_win = sum(win_rows) / len(win_rows) if win_rows else 0.0
+    avg_loss = abs(sum(loss_rows) / len(loss_rows)) if loss_rows else 0.0
     expectancy = (win_rate / 100) * avg_win - ((1 - win_rate / 100) * avg_loss)
 
     # Sharpe (trade-level)
-    returns = [r["result_percent"] or 0 for r in rows]
+    returns = result_percents
     if len(returns) >= 2:
         avg_ret = sum(returns) / len(returns)
         std_ret = math.sqrt(sum((x - avg_ret) ** 2 for x in returns) / len(returns))
@@ -134,7 +135,7 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
     short_wins = sum(1 for r in shorts if r["status"] == "WIN")
 
     # Duration
-    durations = [r["duration_sec"] for r in rows if r["duration_sec"] and r["duration_sec"] > 0]
+    durations = [to_float(r["duration_sec"]) for r in rows if to_float(r["duration_sec"]) > 0]
     avg_dur = sum(durations) / len(durations) if durations else None
 
     # trades_today: use the same VN date logic as the filter

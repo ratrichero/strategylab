@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Manual Behavior - Trades"])
 
@@ -124,13 +124,13 @@ async def manual_behavior_trades(body: ManualBehaviorTradesRequest) -> ManualBeh
     data = []
     for r in rows:
         is_standard = r["status"] in ("WIN", "LOSS")
-        entry = r["entry_price"] or 0
-        exit = r["exit_price"] or 0
+        entry = to_float(r["entry_price"])
+        exit = to_float(r["exit_price"])
         direction = r["direction"] or "LONG"
         
         if is_standard:
             derived_status = r["status"]
-            derived_pnl = r["result_percent"] or 0
+            derived_pnl = to_float(r["result_percent"])
         else:
             # Derive WIN/LOSS from entry/exit/direction
             if entry and exit:
@@ -141,7 +141,7 @@ async def manual_behavior_trades(body: ManualBehaviorTradesRequest) -> ManualBeh
                 derived_status = "WIN" if derived_pnl >= 0 else "LOSS"
             else:
                 derived_status = r["status"]
-                derived_pnl = r["result_percent"] or 0
+                derived_pnl = to_float(r["result_percent"])
         
         data.append(ManualTradeItem(
             id=r["id"],
@@ -149,18 +149,18 @@ async def manual_behavior_trades(body: ManualBehaviorTradesRequest) -> ManualBeh
             direction=r["direction"],
             timeframe=r["timeframe"],
             pattern=r["pattern"],
-            score=r["score"] or 0,
-            entry_price=r["entry_price"] or 0,
-            exit_price=r["exit_price"] or 0,
-            result_percent=r["result_percent"] or 0,
+            score=to_float(r["score"]),
+            entry_price=entry,
+            exit_price=exit,
+            result_percent=to_float(r["result_percent"]),
             status=r["status"],
             derived_status=derived_status,
             derived_pnl=derived_pnl,
             is_manual=not is_standard,
             regime=r["regime"] or "N/A",
             strategy_name=r["strategy_name"] or "",
-            candle_time=r["candle_time"] or "",
-            exit_time=r["exit_time"] or "",
+            candle_time=r["candle_time"].isoformat() if r["candle_time"] else "",
+            exit_time=r["exit_time"].isoformat() if r["exit_time"] else "",
         ))
 
     pages = (total + body.limit - 1) // body.limit if total > 0 else 0

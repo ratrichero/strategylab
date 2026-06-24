@@ -1,10 +1,12 @@
 import unittest
+from decimal import Decimal
 
 from app.services.analytics_filter import (
     AnalyticsFilter,
     build_sql_filter,
     normalize_symbols,
     parse_vn_date_range,
+    to_float,
 )
 
 
@@ -66,6 +68,11 @@ class AnalyticsFilterTests(unittest.TestCase):
         built = build_sql_filter(AnalyticsFilter(timeframes=[], strategies=[]), source="closed")
         self.assertNotIn("timeframe = ANY", built.where)
         self.assertNotIn("strategy_name = ANY", built.where)
+
+    def test_to_float_normalizes_db_numeric_values(self):
+        self.assertEqual(to_float(Decimal("1.23")), 1.23)
+        self.assertEqual(to_float(None), 0.0)
+        self.assertEqual(to_float("bad", default=-1.0), -1.0)
 
 
 if __name__ == "__main__":

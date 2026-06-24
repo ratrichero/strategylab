@@ -22,6 +22,11 @@ const API = '/api';
 async function fetchAPI(ep) { const r = await fetch(`${API}${ep}`); if (!r.ok) throw new Error(`${r.status}`); return r.json(); }
 function ScoreCell({ value }) { const v = Number(value) || 0; return <span className={`font-mono text-sm ${v >= 8 ? 'text-emerald-400' : v >= 6 ? 'text-yellow-400' : 'text-red-400'}`}>{v.toFixed(2)}</span>; }
 const fetchBinancePrices = async () => { try { const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/price'); const d = await r.json(); const p = {}; d.forEach((i) => { p[i.symbol] = parseFloat(i.price); }); return p; } catch { return {}; } };
+const fmtMoney = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPrice = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n.toFixed(n > 100 ? 2 : 4) : '-';
+};
 
 
 function ChartTooltip({ active, payload, label }) {
@@ -56,6 +61,7 @@ export function Dashboard() {
   const [strategies, setStrategies] = useState([]);
   const [allRegimes, setAllRegimes] = useState([]);
   const [allPatterns, setAllPatterns] = useState([]);
+  const [allTimeframes, setAllTimeframes] = useState([]);
   const [binancePrices, setBinancePrices] = useState({});
   const [priceFlash, setPriceFlash] = useState({});
   const [loading, setLoading] = useState(true);
@@ -184,10 +190,11 @@ export function Dashboard() {
       setLoading(true); setApiError('');
       try {
         console.log('[Dashboard] todayVN:', todayVN);
-        const [openSigs, pending, vers, prices, appCfg] = await Promise.all([
+        const [openSigs, pending, vers, filterOptions, prices, appCfg] = await Promise.all([
           fetchAPI('/signals?status=OPEN&limit=10000').catch(e => { setApiError(p => p + ' active:' + e.message); return { data: [] }; }),
           fetchAPI('/pending-signals?status=WAIT&limit=200').catch(() => ({ data: [], total: 0 })),
           fetchAPI('/engine/versions').catch(() => []),
+          fetchAPI('/filter-options?source=closed').catch(() => ({ strategies: [], patterns: [], regimes: [], timeframes: [] })),
           fetchBinancePrices(),
           fetchAPI('/app-config').catch(() => ({})),
         ]);
@@ -197,10 +204,11 @@ export function Dashboard() {
         setActiveSignals(active);
         setPendingSignals((pending.data || []).map(normalizeSignalDates));
         setPendingCount(pending.total || 0);
-        setEngineVersions(vers.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
-        setStrategies(Array.from(new Set(active.map(s => s.strategy_name).filter(Boolean))).sort());
-        setAllRegimes(Array.from(new Set(active.map(s => s.regime).filter(Boolean))).sort());
-        setAllPatterns(Array.from(new Set(active.map(s => s.pattern).filter(Boolean))).sort());
+        setEngineVersions((filterOptions.engine_versions?.length ? filterOptions.engine_versions : vers.map(v => String(v.engine_version))).filter(Boolean).sort().reverse());
+        setStrategies((filterOptions.strategies?.length ? filterOptions.strategies : Array.from(new Set(active.map(s => s.strategy_name).filter(Boolean)))).sort());
+        setAllRegimes((filterOptions.regimes?.length ? filterOptions.regimes : Array.from(new Set(active.map(s => s.regime).filter(Boolean)))).sort());
+        setAllPatterns((filterOptions.patterns?.length ? filterOptions.patterns : Array.from(new Set(active.map(s => s.pattern).filter(Boolean)))).sort());
+        setAllTimeframes((filterOptions.timeframes?.length ? filterOptions.timeframes : ['15m', '1h', '4h']).sort());
         setBinancePrices(prices);
         setMaxOpen(parseInt(appCfg['MAX_OPEN_TRADES'] || '10'));
       } catch (e) { console.error(e); setApiError(String(e)); }
@@ -286,7 +294,16 @@ export function Dashboard() {
   const profitFactor = overviewData?.profit_factor || 0;
   const expectancy = overviewData?.expectancy || 0;
   const tradeSharpe = overviewData?.sharpe || 0;
-  const streaks = overviewData?.streaks || { candle: { maxWin: 0, maxLoss: 0 }, exit: { maxWin: 0, maxLoss: 0 } };
+  const streaks = {
+    candle: {
+      maxWin: overviewData?.streaks?.candle?.max_win || overviewData?.streaks?.candle?.maxWin || 0,
+      maxLoss: overviewData?.streaks?.candle?.max_loss || overviewData?.streaks?.candle?.maxLoss || 0,
+    },
+    exit: {
+      maxWin: overviewData?.streaks?.exit?.max_win || overviewData?.streaks?.exit?.maxWin || 0,
+      maxLoss: overviewData?.streaks?.exit?.max_loss || overviewData?.streaks?.exit?.maxLoss || 0,
+    },
+  };
   const longShortWR = {
     longWR: overviewData?.direction?.long?.win_rate || 0,
     longTotal: overviewData?.direction?.long?.total || 0,
@@ -296,8 +313,20 @@ export function Dashboard() {
   const avgDuration = overviewData?.avg_duration_display || '-';
 
   // Portfolio from backend
-  const pComp = portfolioData?.compounding || { nav: 0, pnl: 0, ret: 0, maxDD: 0, maxGain: 0, peakNav: 0, troughNav: 0, sharpe: 0, calmar: 0, curve: [] };
-  const pFixed = portfolioData?.fixed || { nav: 0, pnl: 0, ret: 0, maxDD: 0, maxGain: 0, peakNav: 0, troughNav: 0, sharpe: 0, calmar: 0, curve: [] };
+  const normalizePortfolioMode = (mode) => ({
+    nav: Number(mode?.final_nav ?? mode?.nav ?? 0),
+    pnl: Number(mode?.total_pnl ?? mode?.pnl ?? 0),
+    ret: Number(mode?.return_pct ?? mode?.ret ?? 0),
+    maxDD: Number(mode?.max_dd_pct ?? mode?.maxDD ?? 0),
+    maxGain: Number(mode?.max_gain_pct ?? mode?.maxGain ?? 0),
+    peakNav: Number(mode?.peak_nav ?? mode?.peakNav ?? 0),
+    troughNav: Number(mode?.trough_nav ?? mode?.troughNav ?? 0),
+    sharpe: Number(mode?.sharpe ?? 0),
+    calmar: Number(mode?.calmar ?? 0),
+    curve: Array.isArray(mode?.curve) ? mode.curve : [],
+  });
+  const pComp = normalizePortfolioMode(portfolioData?.compounding);
+  const pFixed = normalizePortfolioMode(portfolioData?.fixed);
 
   // Regime breakdown from backend
   const regimeBreakdown = useMemo(() => {
@@ -398,14 +427,14 @@ export function Dashboard() {
     { key: 'pattern', header: 'Pattern', sortable: true },
     { key: 'direction', header: 'Dir', sortable: true, render: v => <DirectionBadge direction={v || 'LONG'} /> },
     { key: 'timeframe', header: 'TF', sortable: true },
-    { key: 'entry_price', header: 'Entry', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'entry_price', header: 'Entry', render: v => fmtPrice(v) },
     { key: 'currentPrice', header: 'Current', render: (v, row) => (
       <span className={`font-mono transition-all duration-300 ${row.flash === 'up' ? 'text-emerald-400 bg-emerald-500/20 px-1 rounded' : row.flash === 'down' ? 'text-red-400 bg-red-500/20 px-1 rounded' : 'text-white'}`}>
-        {v?.toFixed(v > 100 ? 2 : 4) || '-'}
+        {fmtPrice(v)}
       </span>
     )},
-    { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
-    { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'stop_loss', header: 'SL', render: v => fmtPrice(v) },
+    { key: 'take_profit', header: 'TP', render: v => fmtPrice(v) },
     { key: 'quantity', header: 'Qty', sortable: true, align: 'right', render: v => v ? Number(v).toFixed(4) : '-' },
     { key: 'pnl', header: 'P&L', sortable: true, render: v => <PercentChangeBadge value={v || 0} /> },
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
@@ -425,14 +454,14 @@ export function Dashboard() {
     { key: 'pattern', header: 'Pattern', sortable: true },
     { key: 'direction', header: 'Dir', sortable: true, render: v => <DirectionBadge direction={v || 'LONG'} /> },
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
-    { key: 'trigger_price', header: 'Entry', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'trigger_price', header: 'Entry', render: v => fmtPrice(v) },
     { key: 'currentPrice', header: 'Current', render: (v, row) => (
       <span className={`font-mono transition-all duration-300 ${row.flash === 'up' ? 'text-emerald-400 bg-emerald-500/20 px-1 rounded' : row.flash === 'down' ? 'text-red-400 bg-red-500/20 px-1 rounded' : 'text-white'}`}>
-        {v?.toFixed(v > 100 ? 2 : 4) || '-'}
+        {fmtPrice(v)}
       </span>
     )},
-    { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
-    { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'stop_loss', header: 'SL', render: v => fmtPrice(v) },
+    { key: 'take_profit', header: 'TP', render: v => fmtPrice(v) },
     { key: 'order_quantity', header: 'OrderQty', align: 'right', render: v => v ? Number(v).toFixed(4) : '-' },
     { key: 'executed_qty', header: 'ExeQty', align: 'right', render: v => v ? Number(v).toFixed(4) : '-' },
     { key: 'status', header: 'Status', sortable: true, render: v => <StatusBadge status={v} /> },
@@ -451,10 +480,10 @@ export function Dashboard() {
     { key: 'pattern', header: 'Pattern', sortable: true },
     { key: 'direction', header: 'Dir', sortable: true, render: v => <DirectionBadge direction={v || 'LONG'} /> },
     { key: 'timeframe', header: 'TF', sortable: true },
-    { key: 'entry_price', header: 'Entry', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
-    { key: 'exit_price', header: 'Exit', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
-    { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
-    { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
+    { key: 'entry_price', header: 'Entry', render: v => fmtPrice(v) },
+    { key: 'exit_price', header: 'Exit', render: v => fmtPrice(v) },
+    { key: 'stop_loss', header: 'SL', render: v => fmtPrice(v) },
+    { key: 'take_profit', header: 'TP', render: v => fmtPrice(v) },
     { key: 'result_percent', header: 'P&L', sortable: true, render: v => <PercentChangeBadge value={v || 0} /> },
     { key: 'status', header: 'Status', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
@@ -473,7 +502,7 @@ export function Dashboard() {
     { key: 'totalReturn', header: 'Total Return', sortable: true, render: v => <PercentChangeBadge value={v} /> },
   ];
 
-  const $ = v => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const $ = fmtMoney;
   const clr = v => v >= 0 ? 'text-emerald-400' : 'text-red-400';
 
   // ========== RENDER ==========
@@ -509,7 +538,7 @@ export function Dashboard() {
           <Select label="Pattern" value={filters.pattern} onChange={v => setFilterInstant('pattern', v)} options={[{ value: 'all', label: 'All' }, ...allPatterns.map(p => ({ value: p, label: p }))]} />
           <Select label="Direction" value={filters.direction} onChange={v => setFilterInstant('direction', v)} options={[{ value: 'all', label: 'All' }, { value: 'LONG', label: 'LONG' }, { value: 'SHORT', label: 'SHORT' }]} />
           <Select label="Regime" value={filters.regime} onChange={v => setFilterInstant('regime', v)} options={[{ value: 'all', label: 'All' }, ...allRegimes.map(r => ({ value: r, label: r }))]} />
-          <Select label="TF" value={filters.timeframe} onChange={v => setFilterInstant('timeframe', v)} options={[{ value: 'all', label: 'All' }, { value: '15m', label: '15m' }, { value: '1h', label: '1h' }, { value: '4h', label: '4h' }]} />
+          <Select label="TF" value={filters.timeframe} onChange={v => setFilterInstant('timeframe', v)} options={[{ value: 'all', label: 'All' }, ...allTimeframes.map(tf => ({ value: tf, label: tf }))]} />
           <Select label="Score" value={getScorePreset()} onChange={setScoreFilter} options={[{ value: 'all', label: 'All' }, { value: '6-7', label: '6 ~ 7' }, { value: '7-8', label: '7 ~ 8' }, { value: '8-9', label: '8 ~ 9' }, { value: '9-10', label: '9 ~ 10' }]} />
           <Input type="text" label="CAP / PSize($)" value={filters.capPsize} onChange={e => setFilters({ ...filters, capPsize: e.target.value })} placeholder="10000|1000" />
           <div className="flex items-end gap-2">
@@ -527,7 +556,7 @@ export function Dashboard() {
             <div><h3 className="text-lg font-semibold text-white">Strategy Metrics</h3><p className="text-sm text-slate-400">Trade-Level</p></div>
           </div>
           <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Win / Loss</span><span className="font-bold"><span className="text-emerald-400">{wins}</span> / <span className="text-red-400">{filteredTradesCount - wins}</span></span></div>
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Win / Loss</span><span className="font-bold"><span className="text-emerald-400">{wins}</span> / <span className="text-red-400">{losses}</span></span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Profit Factor</span><span className={`font-bold ${profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{profitFactor === Infinity ? 'Infinity' : profitFactor.toFixed(2)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Expectancy</span><span className={`font-bold ${clr(expectancy)}`}>{expectancy.toFixed(2)}%</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Sharpe</span><span className="font-bold text-white">{tradeSharpe.toFixed(2)}</span></div>

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Iterable, Literal, Optional
 import re
 
@@ -116,6 +117,37 @@ def clean_list(values: Optional[Iterable[Any]]) -> list[str]:
         if text:
             out.append(text)
     return sorted(set(out))
+
+
+def to_float(value: Any, default: float = 0.0) -> float:
+    """Normalize DB numeric values for Python math.
+
+    asyncpg can return NUMERIC columns as Decimal, while request models often
+    carry floats. Keeping calculations in float avoids Decimal/float runtime
+    type errors in analytics endpoints.
+    """
+    if value is None:
+        return default
+    if isinstance(value, Decimal):
+        return float(value)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def indicator_sql_expr(indicator: str, alias: str = "s") -> str:
+    """Return a numeric SQL expression for supported indicator fields."""
+    prefix = f"{alias}." if alias else ""
+    mapping = {
+        "score": f"{prefix}score::double precision",
+        "total_score": f"{prefix}total_score::double precision",
+        "rsi": f"NULLIF({prefix}indicators_snapshot ->> 'rsi', '')::double precision",
+        "volume_ratio": f"NULLIF({prefix}indicators_snapshot ->> 'volume_ratio', '')::double precision",
+        "atr_ratio": f"NULLIF({prefix}indicators_snapshot ->> 'atr_ratio', '')::double precision",
+        "atr_percentile": f"NULLIF({prefix}indicators_snapshot ->> 'atr_percentile', '')::double precision",
+    }
+    return mapping.get(indicator, mapping["rsi"])
 
 
 def expand_regimes(values: Optional[Iterable[Any]]) -> list[str]:

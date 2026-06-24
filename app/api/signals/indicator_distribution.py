@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, indicator_sql_expr, to_float
 
 router = APIRouter(tags=["Signals - Indicator Distribution"])
 
@@ -31,46 +31,40 @@ class IndicatorDistributionResponse(BaseModel):
 async def signals_indicator_distribution(body: IndicatorDistributionRequest) -> IndicatorDistributionResponse:
     sql_filter = build_sql_filter(body, source="closed", alias="s")
 
-    # Map indicator to column name
-    indicator_column_map = {
-        "rsi": "s.rsi",
-        "volume_ratio": "s.volume_ratio",
-        "atr_percentile": "s.atr_ratio",
-    }
-    indicator_col = indicator_column_map.get(body.indicator, "s.rsi")
+    indicator_col = indicator_sql_expr(body.indicator, alias="s")
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:
         # Create buckets based on indicator value
         if body.indicator == "rsi":
-            bucket_expr = """
+            bucket_expr = f"""
                 CASE 
-                    WHEN s.rsi IS NULL THEN 'unknown'
-                    WHEN s.rsi < 30 THEN '0-30'
-                    WHEN s.rsi < 50 THEN '30-50'
-                    WHEN s.rsi < 70 THEN '50-70'
+                    WHEN {indicator_col} IS NULL THEN 'unknown'
+                    WHEN {indicator_col} < 30 THEN '0-30'
+                    WHEN {indicator_col} < 50 THEN '30-50'
+                    WHEN {indicator_col} < 70 THEN '50-70'
                     ELSE '70-100'
                 END
             """
         elif body.indicator == "volume_ratio":
-            bucket_expr = """
+            bucket_expr = f"""
                 CASE 
-                    WHEN s.volume_ratio IS NULL THEN 'unknown'
-                    WHEN s.volume_ratio < 0.5 THEN '0-0.5'
-                    WHEN s.volume_ratio < 1.0 THEN '0.5-1.0'
-                    WHEN s.volume_ratio < 1.5 THEN '1.0-1.5'
-                    WHEN s.volume_ratio < 2.0 THEN '1.5-2.0'
+                    WHEN {indicator_col} IS NULL THEN 'unknown'
+                    WHEN {indicator_col} < 0.5 THEN '0-0.5'
+                    WHEN {indicator_col} < 1.0 THEN '0.5-1.0'
+                    WHEN {indicator_col} < 1.5 THEN '1.0-1.5'
+                    WHEN {indicator_col} < 2.0 THEN '1.5-2.0'
                     ELSE '2.0+'
                 END
             """
         else:  # atr_percentile
-            bucket_expr = """
+            bucket_expr = f"""
                 CASE 
-                    WHEN s.atr_ratio IS NULL THEN 'unknown'
-                    WHEN s.atr_ratio < 0.5 THEN '0-0.5'
-                    WHEN s.atr_ratio < 1.0 THEN '0.5-1.0'
-                    WHEN s.atr_ratio < 1.5 THEN '1.0-1.5'
-                    WHEN s.atr_ratio < 2.0 THEN '1.5-2.0'
+                    WHEN {indicator_col} IS NULL THEN 'unknown'
+                    WHEN {indicator_col} < 0.5 THEN '0-0.5'
+                    WHEN {indicator_col} < 1.0 THEN '0.5-1.0'
+                    WHEN {indicator_col} < 1.5 THEN '1.0-1.5'
+                    WHEN {indicator_col} < 2.0 THEN '1.5-2.0'
                     ELSE '2.0+'
                 END
             """
@@ -95,7 +89,7 @@ async def signals_indicator_distribution(body: IndicatorDistributionRequest) -> 
         trades = r["trades"]
         wins = r["wins"]
         win_rate = (wins / trades * 100) if trades > 0 else 0.0
-        avg_return = r["avg_return"] or 0.0
+        avg_return = to_float(r["avg_return"])
 
         buckets.append(
             IndicatorBucketItem(

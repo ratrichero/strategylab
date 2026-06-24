@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Manual Behavior - Overview"])
 
@@ -75,13 +75,13 @@ async def manual_behavior_overview(body: ManualBehaviorOverviewRequest) -> Manua
     enriched = []
     for r in rows:
         is_standard = r["status"] in ("WIN", "LOSS")
-        entry = r["entry_price"] or 0
-        exit = r["exit_price"] or 0
+        entry = to_float(r["entry_price"])
+        exit = to_float(r["exit_price"])
         direction = r["direction"] or "LONG"
         
         if is_standard:
             derived_status = r["status"]
-            derived_pnl = r["result_percent"] or 0
+            derived_pnl = to_float(r["result_percent"])
         else:
             # Derive WIN/LOSS from entry/exit/direction
             if entry and exit:
@@ -92,13 +92,13 @@ async def manual_behavior_overview(body: ManualBehaviorOverviewRequest) -> Manua
                 derived_status = "WIN" if derived_pnl >= 0 else "LOSS"
             else:
                 derived_status = r["status"]
-                derived_pnl = r["result_percent"] or 0
+                derived_pnl = to_float(r["result_percent"])
         
         enriched.append({
             "is_manual": not is_standard,
             "derived_status": derived_status,
             "derived_pnl": derived_pnl,
-            "actual_pnl": r["result_percent"] or 0,
+            "actual_pnl": to_float(r["result_percent"]),
         })
 
     # Calculate KPIs

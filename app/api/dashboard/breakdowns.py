@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Dashboard - Breakdowns"])
 
@@ -84,8 +84,8 @@ async def dashboard_breakdowns(body: BreakdownsRequest) -> BreakdownsResponse:
         trades = r["trades"]
         wins = r["wins"]
         win_rate = (wins / trades * 100) if trades > 0 else 0.0
-        gains = r["gains"] or 0
-        losses_abs = r["losses_abs"] or 0
+        gains = to_float(r["gains"])
+        losses_abs = to_float(r["losses_abs"])
 
         # Calculate expectancy: win_rate_decimal * avg_win - loss_rate_decimal * avg_loss
         # avg_win = gains / wins, avg_loss = losses_abs / losses
@@ -108,7 +108,7 @@ async def dashboard_breakdowns(body: BreakdownsRequest) -> BreakdownsResponse:
                 win_rate=win_rate,
                 expectancy=round(expectancy, 2),
                 profit_factor=round(profit_factor, 2) if profit_factor != math.inf else float("inf"),
-                total_return=round(r["total_return"] or 0, 2),
+                total_return=round(to_float(r["total_return"]), 2),
             )
         )
 

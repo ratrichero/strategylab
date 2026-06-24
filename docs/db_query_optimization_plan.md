@@ -1362,3 +1362,227 @@ One import bug found and fixed. One pre-existing frontend bug documented (not ca
 | Phase | Status | Change |
 |-------|--------|--------|
 | Phase 3 - Signals | `[x]` | Confirmed. All 5 endpoints implemented, SignalsPage migrated, typo URL removed. See findings above. |
+
+---
+
+## Live DB Smoke Test - Agent E Findings
+
+**Date:** 2026-06-24
+**Test Server:** `http://35.198.218.53:8002/`
+**Auth:** admin/ctv903
+
+### Summary
+
+**BLOCKED - Network restriction.** The Cascade environment cannot access the test server domain (Forbidden domain error). Live DB smoke tests require manual execution from a different environment or direct access to the test server.
+
+### Test Environment
+
+- **Server URL:** `http://35.198.218.53:8002/`
+- **Authentication:** admin/ctv903
+- **Network Status:** BLOCKED - Forbidden domain in Cascade environment
+
+### Endpoint Smoke Tests
+
+**Status:** NOT EXECUTED - Network restriction
+
+| Endpoint | Method | Payload | Status | Notes |
+| --- | --- | --- | --- | --- |
+| `GET /api/filter-options` | GET | N/A | ⏸️ SKIPPED | Network restriction |
+| `POST /api/analytics/preview` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/dashboard/overview` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/dashboard/portfolio` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/dashboard/breakdowns` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/dashboard/recent-trades` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/signals/overview` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/signals/group-performance` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/signals/heatmaps` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/signals/indicator-distribution` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/signals/trades` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/indicators/overview` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/indicators/thresholds` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/indicators/distribution` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/indicators/outcome-averages` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/indicators/scatter` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/indicators/regime-fingerprint` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/manual-behavior/overview` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/manual-behavior/comparison` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+| `POST /api/manual-behavior/trades` | POST | `{}` | ⏸️ SKIPPED | Network restriction |
+
+### Frontend Page Smoke Tests
+
+**Status:** NOT EXECUTED - Network restriction
+
+| Page | Status | Notes |
+| --- | --- | --- |
+| Dashboard | ⏸️ SKIPPED | Network restriction |
+| Signals | ⏸️ SKIPPED | Network restriction |
+| Indicators | ⏸️ SKIPPED | Network restriction |
+| Manual Behavior | ⏸️ SKIPPED | Network restriction |
+| Edge Discovery | ⏸️ SKIPPED | Network restriction |
+| Research | ⏸️ SKIPPED | Network restriction |
+| Simulation | ⏸️ SKIPPED | Network restriction |
+
+### Data Sanity/Parity
+
+**Status:** NOT EXECUTED - Network restriction
+
+- Dashboard total trades/winrate: ⏸️ SKIPPED
+- Signals group-performance count: ⏸️ SKIPPED
+- Indicators overview total: ⏸️ SKIPPED
+- Manual Behavior manual statuses: ⏸️ SKIPPED
+- Default analytics MANUAL exclusion: ⏸️ SKIPPED
+
+### Performance Smoke
+
+**Status:** NOT EXECUTED - Network restriction
+
+- Overview endpoints response time: ⏸️ SKIPPED
+- Trades endpoints response time: ⏸️ SKIPPED
+- Filter-options response time: ⏸️ SKIPPED
+
+### Issues Found
+
+| Severity | Issue | Owner | Status |
+| --- | --- | --- | --- |
+| BLOCKING | Cascade environment cannot access test server domain (Forbidden domain error) | Infrastructure | **BLOCKING** - Requires manual execution or environment change |
+
+### Overall Status
+
+**Overall: ⏸️ BLOCKED - Network restriction**
+
+Live DB smoke tests cannot be executed from the Cascade environment due to network restrictions (Forbidden domain). Manual execution required from a different environment with access to `http://35.198.218.53:8002/`.
+
+### Next Steps
+
+1. **Option A:** Execute smoke tests manually from a browser or curl with access to the test server
+2. **Option B:** Whitelist the test server domain in the Cascade environment
+3. **Option C:** Provide a local test environment that can be accessed from Cascade
+
+### Manual Smoke Test Instructions
+
+If executing manually, use the following test plan:
+
+**Backend Endpoints:**
+```bash
+# Test with empty payload
+curl -X POST http://35.198.218.53:8002/api/dashboard/overview -H "Content-Type: application/json" -d "{}" -u admin:ctv903
+
+# Test with date range
+curl -X POST http://35.198.218.53:8002/api/dashboard/overview -H "Content-Type: application/json" -d '{"start_date":"2024-01-01","end_date":"2024-12-31"}' -u admin:ctv903
+```
+
+**Frontend Pages:**
+1. Open `http://35.198.218.53:8002/` in browser
+2. Login with admin/ctv903
+3. Navigate to each analytics page
+4. Check for console errors, white screens, and `/api/signals?limit=10000` requests
+5. Test filter apply, date range, symbol filter
+6. Test pagination on trades tables
+
+**Acceptance Criteria:**
+- No 500 errors on main endpoints
+- No white screens on analytics pages
+- No schema/column missing errors
+- No `/api/signals?limit=10000` in analytics pages
+- Accepted exceptions documented (PendingSignalsPage, PlaceholderPages)
+
+---
+
+## Codex Local Live DB Smoke - 2026-06-24
+
+**Executor:** Codex final reviewer
+
+**Environment:** Local uvicorn server with `--reload`, authenticated as `admin`, using the test DB/server provided for this epic.
+
+### Fixes Applied During Smoke
+
+- Dashboard blank screen:
+  - Replaced stale `filteredTradesCount` usage with backend `losses`.
+  - Mapped portfolio response fields from backend snake_case (`final_nav`, `total_pnl`, `max_dd_pct`, etc.) to the UI shape.
+  - Added safe numeric/price formatting for Dashboard tables.
+- Dashboard filter options:
+  - Dashboard now loads strategy/pattern/regime/timeframe options from `/api/filter-options?source=closed`, not only from active OPEN signals.
+- Backend numeric handling:
+  - Added shared `to_float()` for asyncpg `Decimal` values.
+  - Applied it to Dashboard, Signals, Indicators, and Manual Behavior calculations that mix DB numeric values with Python floats.
+- Indicator endpoints:
+  - Added shared `indicator_sql_expr()` because `mv_signal_performance` stores indicators inside `indicators_snapshot jsonb`, not physical `s.rsi`, `s.volume_ratio`, or `s.atr_ratio` columns.
+  - Updated new Signals/Indicators analytics endpoints to read `rsi`, `volume_ratio`, `atr_ratio`, and `atr_percentile` from JSONB safely.
+- Manual behavior:
+  - Normalized numeric PnL calculations.
+  - Serialized `candle_time` and `exit_time` to ISO strings for Pydantic response validation.
+
+### Live Endpoint Smoke Result
+
+**Status:** PASS
+
+20/20 authenticated live endpoint checks passed:
+
+| Endpoint | Result |
+| --- | --- |
+| `GET /api/filter-options?source=closed` | PASS |
+| `POST /api/analytics/preview` | PASS |
+| `POST /api/dashboard/overview` | PASS |
+| `POST /api/dashboard/portfolio` | PASS |
+| `POST /api/dashboard/breakdowns` | PASS |
+| `POST /api/dashboard/recent-trades` | PASS |
+| `POST /api/signals/overview` | PASS |
+| `POST /api/signals/group-performance` | PASS |
+| `POST /api/signals/heatmaps` | PASS |
+| `POST /api/signals/indicator-distribution` | PASS |
+| `POST /api/signals/trades` | PASS |
+| `POST /api/indicators/overview` | PASS |
+| `POST /api/indicators/distribution` | PASS |
+| `POST /api/indicators/scatter` | PASS |
+| `POST /api/indicators/thresholds` | PASS |
+| `POST /api/indicators/outcome-averages` | PASS |
+| `POST /api/indicators/regime-fingerprint` | PASS |
+| `POST /api/manual-behavior/overview` | PASS |
+| `POST /api/manual-behavior/comparison` | PASS |
+| `POST /api/manual-behavior/trades` | PASS |
+
+### Filtered Payload Smoke
+
+**Status:** PASS
+
+Payload used:
+
+```json
+{
+  "include_manual": true,
+  "timeframes": ["15m"],
+  "score_min": 5,
+  "score_max": 10,
+  "engine_version": "all",
+  "engine_mode": "only"
+}
+```
+
+6/6 filtered endpoint checks passed:
+
+- `POST /api/dashboard/overview`
+- `POST /api/dashboard/portfolio`
+- `POST /api/signals/overview`
+- `POST /api/indicators/overview`
+- `POST /api/manual-behavior/overview`
+- `POST /api/analytics/preview`
+
+### Static/Build Tests
+
+- `python -m unittest discover -s tests -p "test_*.py"`: PASS, 11 tests.
+- `npm run build`: PASS.
+- In-memory Python compile for modified endpoint files: PASS.
+- Grep check for stale migrated Dashboard identifier `filteredTradesCount`: PASS, no migrated-page usage.
+- Grep check for typo URLs `signalsxlimit`, `signals-limit`, `signals->limit`: PASS, no `src`/new API usage.
+
+### Accepted Remaining Exceptions
+
+- `src/pages/PendingSignalsPage.tsx` still uses `/api/pending-signals?limit=10000`; this is realtime/pending, out of closed analytics scope.
+- `src/pages/PlaceholderPages.tsx` still uses `/api/signals?limit=10000`; this is a placeholder/utility page and was already documented as out of scope.
+- Legacy `app/api/signal_analysis_handler*.py` still references physical `s.rsi`/`s.atr_ratio`; these are legacy handlers, not the new migrated analytics endpoints verified in this smoke.
+
+### Current QA Status
+
+**Overall:** PASS for static/build/unit plus authenticated local live DB smoke of the migrated backend analytics endpoints.
+
+**Residual manual check:** Browser navigation across Signals, Indicators, Manual Behavior, Research, and Simulation should still be visually spot-checked for layout/console issues, but backend endpoint smoke no longer shows 500/schema/runtime failures for the migrated APIs.

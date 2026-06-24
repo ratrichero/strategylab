@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Dashboard - Portfolio"])
 
@@ -73,8 +73,8 @@ async def dashboard_portfolio(body: PortfolioRequest) -> PortfolioResponse:
             *sql_filter.params,
         )
 
-    ic = body.initial_capital
-    ps = body.position_size
+    ic = to_float(body.initial_capital)
+    ps = to_float(body.position_size)
 
     # Compounding
     nav_c = ic
@@ -86,7 +86,7 @@ async def dashboard_portfolio(body: PortfolioRequest) -> PortfolioResponse:
     curve_c: list[CurvePoint] = []
 
     for r in rows:
-        rp = r["result_percent"] or 0.0
+        rp = to_float(r["result_percent"])
         dynamic = ps * (nav_c / ic)
         pnl = dynamic * (rp / 100.0)
         nav_c += pnl
@@ -122,7 +122,7 @@ async def dashboard_portfolio(body: PortfolioRequest) -> PortfolioResponse:
     curve_f: list[CurvePoint] = []
 
     for r in rows:
-        rp = r["result_percent"] or 0.0
+        rp = to_float(r["result_percent"])
         pnl = ps * (rp / 100.0)
         nav_f += pnl
         pnl_list_f.append(pnl)

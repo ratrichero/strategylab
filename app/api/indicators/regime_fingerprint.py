@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, indicator_sql_expr, to_float
 
 router = APIRouter(tags=["Indicators - Regime Fingerprint"])
 
@@ -40,9 +40,9 @@ async def indicators_regime_fingerprint(body: RegimeFingerprintRequest) -> Regim
                 COALESCE(s.regime, 'UNKNOWN') AS regime,
                 COUNT(*) AS trades,
                 COUNT(*) FILTER (WHERE s.status = 'WIN') AS wins,
-                AVG(s.rsi) AS avg_rsi,
-                AVG(s.volume_ratio) AS avg_vol_ratio,
-                AVG(s.atr_ratio) AS avg_atr_ratio,
+                AVG({indicator_sql_expr("rsi", alias="s")}) AS avg_rsi,
+                AVG({indicator_sql_expr("volume_ratio", alias="s")}) AS avg_vol_ratio,
+                AVG({indicator_sql_expr("atr_ratio", alias="s")}) AS avg_atr_ratio,
                 AVG(s.score) AS avg_score
             FROM {sql_filter.table} s
             WHERE {sql_filter.where}
@@ -63,10 +63,10 @@ async def indicators_regime_fingerprint(body: RegimeFingerprintRequest) -> Regim
                 regime=r["regime"],
                 trades=trades,
                 winrate=round(winrate, 1),
-                rsi=round(r["avg_rsi"] or 0, 1),
-                volume_ratio=round(r["avg_vol_ratio"] or 0, 2),
-                atr_ratio=round(r["avg_atr_ratio"] or 0, 2),
-                score=round(r["avg_score"] or 0, 2),
+                rsi=round(to_float(r["avg_rsi"]), 1),
+                volume_ratio=round(to_float(r["avg_vol_ratio"]), 2),
+                atr_ratio=round(to_float(r["avg_atr_ratio"]), 2),
+                score=round(to_float(r["avg_score"]), 2),
             )
         )
 

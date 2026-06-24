@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Signals - Group Performance"])
 
@@ -50,10 +50,10 @@ async def signals_group_performance(body: GroupPerformanceRequest) -> GroupPerfo
     # For score grouping, bucket into ranges
     if body.group_by == "score":
         group_expr = f"CASE WHEN s.score IS NULL THEN 'unknown' ELSE FLOOR(s.score)::text END"
-        order_expr = "FLOOR(s.score)"
+        order_expr = "name"
     else:
         group_expr = f"COALESCE({group_col}, 'unknown')"
-        order_expr = group_col
+        order_expr = "name"
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:
@@ -80,10 +80,10 @@ async def signals_group_performance(body: GroupPerformanceRequest) -> GroupPerfo
         wins = r["wins"]
         losses = trades - wins
         winrate = (wins / trades * 100) if trades > 0 else 0.0
-        gains = r["gains"] or 0
-        losses_abs = r["losses_abs"] or 0
+        gains = to_float(r["gains"])
+        losses_abs = to_float(r["losses_abs"])
         profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
-        avg_return = (r["total_return"] or 0) / trades if trades > 0 else 0.0
+        avg_return = to_float(r["total_return"]) / trades if trades > 0 else 0.0
 
         groups.append(
             GroupPerformanceItem(

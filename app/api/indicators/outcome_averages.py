@@ -5,7 +5,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, indicator_sql_expr, to_float
 
 router = APIRouter(tags=["Indicators - Outcome Averages"])
 
@@ -35,9 +35,9 @@ async def indicators_outcome_averages(body: OutcomeAveragesRequest) -> OutcomeAv
             f"""
             SELECT
                 s.status,
-                AVG(s.rsi) AS avg_rsi,
-                AVG(s.volume_ratio) AS avg_vol_ratio,
-                AVG(s.atr_ratio) AS avg_atr_ratio,
+                AVG({indicator_sql_expr("rsi", alias="s")}) AS avg_rsi,
+                AVG({indicator_sql_expr("volume_ratio", alias="s")}) AS avg_vol_ratio,
+                AVG({indicator_sql_expr("atr_ratio", alias="s")}) AS avg_atr_ratio,
                 AVG(s.score) AS avg_score
             FROM {sql_filter.table} s
             WHERE {sql_filter.where} AND s.status IN ('WIN', 'LOSS')
@@ -52,17 +52,17 @@ async def indicators_outcome_averages(body: OutcomeAveragesRequest) -> OutcomeAv
     for r in rows:
         if r["status"] == "WIN":
             win_avg = {
-                "rsi": r["avg_rsi"] or 0,
-                "volume_ratio": r["avg_vol_ratio"] or 0,
-                "atr_ratio": r["avg_atr_ratio"] or 0,
-                "score": r["avg_score"] or 0,
+                "rsi": to_float(r["avg_rsi"]),
+                "volume_ratio": to_float(r["avg_vol_ratio"]),
+                "atr_ratio": to_float(r["avg_atr_ratio"]),
+                "score": to_float(r["avg_score"]),
             }
         elif r["status"] == "LOSS":
             loss_avg = {
-                "rsi": r["avg_rsi"] or 0,
-                "volume_ratio": r["avg_vol_ratio"] or 0,
-                "atr_ratio": r["avg_atr_ratio"] or 0,
-                "score": r["avg_score"] or 0,
+                "rsi": to_float(r["avg_rsi"]),
+                "volume_ratio": to_float(r["avg_vol_ratio"]),
+                "atr_ratio": to_float(r["avg_atr_ratio"]),
+                "score": to_float(r["avg_score"]),
             }
 
     labels = {"rsi": "RSI", "volume_ratio": "Vol Ratio", "atr_ratio": "ATR Ratio", "score": "Score"}

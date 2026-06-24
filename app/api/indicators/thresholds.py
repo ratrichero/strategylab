@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, indicator_sql_expr
 
 router = APIRouter(tags=["Indicators - Thresholds"])
 
@@ -30,14 +30,7 @@ class ThresholdsResponse(BaseModel):
 async def indicators_thresholds(body: ThresholdsRequest) -> ThresholdsResponse:
     sql_filter = build_sql_filter(body, source="closed", alias="s")
 
-    # Map indicator to column name
-    indicator_column_map = {
-        "rsi": "s.rsi",
-        "volume_ratio": "s.volume_ratio",
-        "atr_ratio": "s.atr_ratio",
-        "score": "s.score",
-    }
-    indicator_col = indicator_column_map.get(body.indicator, "s.rsi")
+    indicator_col = indicator_sql_expr(body.indicator, alias="s")
 
     # Define threshold steps based on indicator
     if body.indicator == "rsi":

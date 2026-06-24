@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
 
 router = APIRouter(tags=["Signals - Overview"])
 
@@ -40,10 +40,7 @@ async def signals_overview(body: SignalsOverviewRequest) -> SignalsOverviewRespo
             SELECT
                 s.status,
                 s.result_percent,
-                s.score,
-                s.rsi,
-                s.volume_ratio,
-                s.atr_ratio
+                s.score
             FROM {sql_filter.table} s
             WHERE {sql_filter.where}
             """,
@@ -66,25 +63,26 @@ async def signals_overview(body: SignalsOverviewRequest) -> SignalsOverviewRespo
     win_rate = (wins / total * 100)
 
     # Profit factor
-    gains = sum(r["result_percent"] or 0 for r in rows if (r["result_percent"] or 0) > 0)
-    losses_abs = abs(sum(r["result_percent"] or 0 for r in rows if (r["result_percent"] or 0) < 0))
+    result_percents = [to_float(r["result_percent"]) for r in rows]
+    gains = sum(rp for rp in result_percents if rp > 0)
+    losses_abs = abs(sum(rp for rp in result_percents if rp < 0))
     profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
 
     # Expectancy
-    win_rows = [r for r in rows if (r["result_percent"] or 0) > 0]
-    loss_rows = [r for r in rows if (r["result_percent"] or 0) < 0]
-    avg_win = sum(r["result_percent"] or 0 for r in win_rows) / len(win_rows) if win_rows else 0.0
-    avg_loss = abs(sum(r["result_percent"] or 0 for r in loss_rows) / len(loss_rows)) if loss_rows else 0.0
+    win_rows = [rp for rp in result_percents if rp > 0]
+    loss_rows = [rp for rp in result_percents if rp < 0]
+    avg_win = sum(win_rows) / len(win_rows) if win_rows else 0.0
+    avg_loss = abs(sum(loss_rows) / len(loss_rows)) if loss_rows else 0.0
     expectancy = (win_rate / 100) * avg_win - ((1 - win_rate / 100) * avg_loss)
 
     # NAV with compounding
     nav = body.initial_capital
     for r in rows:
-        nav += body.position_size * ((r["result_percent"] or 0) / 100)
+        nav += to_float(body.position_size) * (to_float(r["result_percent"]) / 100)
 
     # Score to return correlation
-    scores = [r["score"] or 0 for r in rows if r["score"] is not None]
-    returns = [r["result_percent"] or 0 for r in rows]
+    scores = [to_float(r["score"]) for r in rows if r["score"] is not None]
+    returns = result_percents
     if len(scores) >= 2 and len(returns) >= 2:
         n = len(scores)
         avg_score = sum(scores) / n
