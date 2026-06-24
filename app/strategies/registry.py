@@ -5,6 +5,7 @@ from app.strategies.breakout_strategy       import BreakoutStrategy
 from app.strategies.mean_reversion_strategy import MeanReversionStrategy
 from app.strategies.pullback_strategy       import PullBackStrategy
 from app.strategies.trend_following_strategy import TrendFollowingStrategy
+from app.strategies.contextual_edge_v1      import ContextualEdgeStrategyV1
 
 _REGISTRY: Dict[str, BaseStrategy] = {
     "candlestick":    CandlestickStrategy(),
@@ -12,6 +13,7 @@ _REGISTRY: Dict[str, BaseStrategy] = {
     "mean_reversion": MeanReversionStrategy(),
     "pullback":       PullBackStrategy(),
     "trend_following":TrendFollowingStrategy(),
+    "contextual_edge_v1": ContextualEdgeStrategyV1(),
 }
 
 def get_strategy(name: str) -> Optional[BaseStrategy]:

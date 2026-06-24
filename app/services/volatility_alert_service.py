@@ -3,6 +3,7 @@ import json
 import time
 from collections import deque
 from statistics import mean
+from threading import Lock
 from typing import Deque, Dict, List, Optional, Tuple
 
 from app.core.bg_runner import start_daemon_job
@@ -18,7 +19,7 @@ class _SymbolState:
         self.last_price: Optional[float] = None
         self.last_price_ts: float = 0.0
 
-    def record_price(self, price: float, ts: float):
+    def record_price(self, price: float, ts: float, max_history: float):
         if self.last_price is not None and self.last_price > 0:
             delta = abs(price - self.last_price) / self.last_price
             if delta < 0.0002 and ts - self.last_price_ts < 5:
@@ -27,13 +28,9 @@ class _SymbolState:
         self.history.append((ts, price))
         self.last_price = price
         self.last_price_ts = ts
-        cutoff = ts - self.max_history
+        cutoff = ts - max_history
         while self.history and self.history[0][0] < cutoff:
             self.history.popleft()
-
-    @property
-    def max_history(self) -> float:
-        return float(os.getenv("VOL_ALERT_HISTORY_SECONDS", "600"))
 
     def price_at(self, age_seconds: float, now: float) -> Optional[Tuple[float, float]]:
         target = now - age_seconds
@@ -66,7 +63,30 @@ class VolatilityAlertService:
         self._last_cycle = 0.0
         self._recent_alerts: Deque[dict] = deque(maxlen=50)
         self._table_ready = False
+        self._run_lock = Lock()
+        self._history_seconds = 600.0
+        self._5m_disabled_warned = False
         self._load_config()
+
+    def _parse_symbol_list(self, raw) -> List[str]:
+        if isinstance(raw, str):
+            items = raw.split(",")
+        elif isinstance(raw, (list, tuple, set)):
+            items = list(raw)
+        else:
+            return []
+
+        result: List[str] = []
+        seen = set()
+        for item in items:
+            if not isinstance(item, str):
+                continue
+            symbol = item.strip().upper()
+            if not symbol or symbol in seen:
+                continue
+            seen.add(symbol)
+            result.append(symbol)
+        return result
 
     def _load_config(self):
         """Load config from VOL_ALERT_CONFIG with env fallback."""
@@ -76,6 +96,14 @@ class VolatilityAlertService:
         self._enabled = vol_cfg.get("enabled", os.getenv("ENABLE_VOL_ALERTS", "true").lower() in ["1", "true", "yes", "on"])
         self._cycle_delay = float(vol_cfg.get("cycle_seconds", os.getenv("VOL_ALERT_CYCLE_SECONDS", "3")))
         self._symbols_limit = int(vol_cfg.get("symbols_limit", os.getenv("VOL_ALERT_SYMBOL_LIMIT", "1200")))
+        self._history_seconds = float(vol_cfg.get("history_seconds", os.getenv("VOL_ALERT_HISTORY_SECONDS", "600")))
+
+        if self._history_seconds < 300:
+            if not self._5m_disabled_warned:
+                print("[VOL ALERT] history_seconds < 300, disable 5m logic. TODO: surface warning in admin/config UI.")
+                self._5m_disabled_warned = True
+        else:
+            self._5m_disabled_warned = False
 
         btc_cfg = vol_cfg.get("btc", {})
         self._btc_threshold_1m = float(btc_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_BTC_1M_PCT", "2.0")))
@@ -86,21 +114,21 @@ class VolatilityAlertService:
         self._major_threshold_1m = float(major_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_MAJOR_1M_PCT", "5.0")))
         self._major_threshold_5m = float(major_cfg.get("threshold_5m_pct", os.getenv("VOL_ALERT_MAJOR_5M_PCT", "8.0")))
         self._major_cooldown = float(major_cfg.get("cooldown_minutes", os.getenv("VOL_ALERT_MAJOR_COOLDOWN_MINUTES", "30"))) * 60
-        self._major_symbols = {
-            s.strip().upper()
-            for s in major_cfg.get("symbols", os.getenv("VOL_ALERT_MAJOR_SYMBOLS", "ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT"))
-            if isinstance(s, str) and s.strip()
-        }
+        self._major_symbols = set(
+            self._parse_symbol_list(
+                major_cfg.get("symbols", os.getenv("VOL_ALERT_MAJOR_SYMBOLS", "ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT,DOGEUSDT,ADAUSDT"))
+            )
+        )
 
         watch_cfg = vol_cfg.get("watchlist", {})
         self._watch_threshold_1m = float(watch_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_WATCHLIST_1M_PCT", "6.0")))
         self._watch_threshold_5m = float(watch_cfg.get("threshold_5m_pct", os.getenv("VOL_ALERT_WATCHLIST_5M_PCT", "10.0")))
         self._watch_cooldown = float(watch_cfg.get("cooldown_minutes", os.getenv("VOL_ALERT_WATCHLIST_COOLDOWN_MINUTES", "25"))) * 60
-        self._watchlist_symbols = {
-            s.strip().upper()
-            for s in watch_cfg.get("symbols", os.getenv("VOL_ALERT_WATCHLIST_SYMBOLS", ""))
-            if isinstance(s, str) and s.strip()
-        }
+        self._watchlist_symbols = set(
+            self._parse_symbol_list(
+                watch_cfg.get("symbols", os.getenv("VOL_ALERT_WATCHLIST_SYMBOLS", ""))
+            )
+        )
 
         coin_cfg = vol_cfg.get("coin", {})
         self._coin_threshold_1m = float(coin_cfg.get("threshold_1m_pct", os.getenv("VOL_ALERT_COIN_1M_PCT", "10.0")))
@@ -109,13 +137,14 @@ class VolatilityAlertService:
 
         self._unusual_ratio = float(vol_cfg.get("unusual_ratio", os.getenv("VOL_ALERT_UNUSUAL_RATIO", "3.0")))
         self._exclude_tokens = vol_cfg.get("exclude_tokens", ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"])
-        self._priority_symbols = [
-            s.strip().upper()
-            for s in vol_cfg.get("priority_symbols", os.getenv("VOL_ALERT_PRIORITY_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"))
-            if isinstance(s, str) and s.strip()
-        ]
+        self._priority_symbols = self._parse_symbol_list(
+            vol_cfg.get("priority_symbols", os.getenv("VOL_ALERT_PRIORITY_SYMBOLS", "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"))
+        )
 
     def callback(self, price_map: dict):
+        if not self._run_lock.locked():
+            self._load_config()
+
         if not self._enabled:
             return
 
@@ -123,8 +152,21 @@ class VolatilityAlertService:
         if now - self._last_cycle < self._cycle_delay:
             return
 
+        if not self._run_lock.acquire(blocking=False):
+            return
+
         self._last_cycle = now
-        start_daemon_job("volatility_alert", self._run_cycle, price_map, now)
+        try:
+            start_daemon_job("volatility_alert", self._run_cycle_guarded, price_map, now)
+        except Exception:
+            self._run_lock.release()
+            raise
+
+    def _run_cycle_guarded(self, price_map: dict, now: float):
+        try:
+            self._run_cycle(price_map, now)
+        finally:
+            self._run_lock.release()
 
     def _run_cycle(self, price_map: dict, now: float):
         alerts = []
@@ -139,7 +181,7 @@ class VolatilityAlertService:
                 continue
 
             state = self._states.setdefault(symbol, _SymbolState())
-            state.record_price(float(price), now)
+            state.record_price(float(price), now, self._history_seconds)
             symbols_checked += 1
 
             alert = self._evaluate_symbol(symbol, state, now)
@@ -179,7 +221,7 @@ class VolatilityAlertService:
             return None
 
         price_1m = state.price_at(60.0, now)
-        price_5m = state.price_at(300.0, now)
+        price_5m = state.price_at(300.0, now) if self._history_seconds >= 300 else None
         if not price_1m and not price_5m:
             return None
 
@@ -260,7 +302,12 @@ class VolatilityAlertService:
         for alert in alerts:
             direction = "TĂNG" if alert["direction"] == "UP" else "GIẢM"
             icon = "🟢" if alert["direction"] == "UP" else "🔴"
-            price_str = f"${alert['current_price']:,.2f}" if alert.get('current_price') else ""
+            current_price = alert.get("current_price")
+            if current_price is not None and current_price > 0:
+                price_str = f"${current_price:,.2f}"
+            else:
+                price_str = ""
+                print(f"[VOL ALERT] Missing current_price for {alert.get('symbol')}: {alert}")
             self._recent_alerts.appendleft(dict(alert))
             lines.append(
                 f"{icon} <b>{alert['symbol']}</b> {price_str} {direction}: {alert['reason']} "
