@@ -32,6 +32,8 @@ from datetime import timedelta, datetime
 from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 
+from app.core.time_utils import ensure_utc, utc_now
+
 
 @dataclass
 class RetryStrategy:
@@ -66,7 +68,7 @@ class CircuitBreaker:
 
     def record_failure(self):
         self.failure_count += 1
-        self.last_failure_time = datetime.utcnow()
+        self.last_failure_time = utc_now()
         
         if self.failure_count >= self.failure_threshold:
             self.state = "open"
@@ -77,8 +79,8 @@ class CircuitBreaker:
         
         if self.state == "open":
             if self.last_failure_time:
-                cooldown_end = self.last_failure_time + timedelta(seconds=self.cooldown_seconds)
-                if datetime.utcnow() >= cooldown_end:
+                cooldown_end = ensure_utc(self.last_failure_time) + timedelta(seconds=self.cooldown_seconds)
+                if utc_now() >= cooldown_end:
                     self.state = "half_open"
                     return True
             return False
@@ -300,7 +302,7 @@ class RetryPolicyService:
         if not config.get("enabled", True):
             # Fallback to old behavior: retry 1 time với 10s backoff
             if failed_attempts <= 1:
-                next_retry = datetime.utcnow() + timedelta(seconds=10)
+                next_retry = utc_now() + timedelta(seconds=10)
                 return RetryDecision(
                     should_retry=True,
                     next_retry_at=next_retry,
@@ -326,7 +328,7 @@ class RetryPolicyService:
             # Instead of rejecting, schedule retry after circuit breaker cooldown
             cb_config = self._get_config().get("circuit_breaker", {})
             cooldown = cb_config.get("cooldown_seconds", 300)
-            next_retry = datetime.utcnow() + timedelta(seconds=cooldown)
+            next_retry = utc_now() + timedelta(seconds=cooldown)
             return RetryDecision(
                 should_retry=True,  # Still retry but with long backoff
                 next_retry_at=next_retry,
@@ -358,7 +360,7 @@ class RetryPolicyService:
         
         # Calculate next retry time
         backoff_seconds = self._calculate_backoff(strategy, max(0, failed_attempts - 1))
-        next_retry_at = datetime.utcnow() + timedelta(seconds=backoff_seconds)
+        next_retry_at = utc_now() + timedelta(seconds=backoff_seconds)
         
         return RetryDecision(
             should_retry=True,

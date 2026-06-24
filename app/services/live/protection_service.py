@@ -188,7 +188,7 @@ def set_breakeven_retry_backoff(trade: Signal, reason: str, seconds: Optional[in
         retry_policy = get_retry_policy_service()
         decision = retry_policy.should_retry(reason or "PROTECTION_RETRY", 0)
         if decision.should_retry and decision.next_retry_at:
-            backoff_seconds = (decision.next_retry_at - utc_now()).total_seconds()
+            backoff_seconds = max(0.0, (ensure_utc(decision.next_retry_at) - utc_now()).total_seconds())
         else:
             backoff_seconds = BREAKEVEN_RETRY_BACKOFF_SECONDS  # Fallback to default
     else:
