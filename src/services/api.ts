@@ -12,8 +12,8 @@ async function req<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { ...options, headers, credentials: "include" });
   // ← CHANGED: auto redirect về login nếu 401
   if (res.status === 401) {
-    if (!window.location.hash.includes("/login")) {
-      window.location.hash = "#/login";
+    if (window.location.pathname !== "/login") {
+      window.location.assign("/login");
     }
     throw new Error("Unauthorized");
   }

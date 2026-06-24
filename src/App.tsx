@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { useEffect, useState } from 'react';
-import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { useIsMobile } from './hooks/useIsMobile';
 import { Layout } from './components/layout/Layout';
@@ -95,7 +95,7 @@ export default function App() {
   const LayoutWrapper = isMobile ? MobileLayout : Layout;
 
   return (
-    <HashRouter>
+    <BrowserRouter>
       <Toaster position="top-right" toastOptions={{ style: { background: '#1e293b', color: '#e2e8f0', border: '1px solid #334155' } }} />
       <Routes>
         {/* ← CHANGED: Login route — không cần auth */}
@@ -108,6 +108,7 @@ export default function App() {
             <LayoutWrapper>
               <Routes>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/research" element={<Research />} />
                 <Route path="/market" element={<MarketPage />} />
                 <Route path="/signals" element={<Signals />} />
@@ -129,6 +130,6 @@ export default function App() {
           </AuthGuard>
         } />
       </Routes>
-    </HashRouter>
+    </BrowserRouter>
   );
 }
