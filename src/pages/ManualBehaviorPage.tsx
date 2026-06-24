@@ -8,9 +8,9 @@ import { Input } from '../components/ui/Input';
 import { DataTable } from '../components/ui/Table';
 import { DirectionBadge, PercentChangeBadge, StatusBadge } from '../components/ui/Badge';
 import { Loader2, UserX, RefreshCw } from 'lucide-react';
-import { parseUtcMs, utcToVN, getTodayVN, normalizeSignalDates } from '../utils/time';
+import { parseUtcMs, utcToVN, getTodayVN } from '../utils/time';
+import { manualApi } from '../services/manualApi';
 
-const API = '/api';
 const VN_MS = 7 * 3600 * 1000;
 
 function exitToVNDate(exitTime) {
@@ -21,25 +21,8 @@ function exitToVNDate(exitTime) {
   return `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,'0')}-${String(vn.getUTCDate()).padStart(2,'0')}`;
 }
 
-/** Derive WIN/LOSS from entry, exit, direction for non-WIN/LOSS statuses */
-function deriveOutcome(s) {
-  const entry = Number(s.entry_price) || 0;
-  const exit = Number(s.exit_price) || 0;
-  if (!entry || !exit) return { derivedStatus: s.status, derivedPnl: s.result_percent || 0 };
-
-  const pnl = s.direction === 'LONG'
-    ? ((exit - entry) / entry) * 100
-    : ((entry - exit) / entry) * 100;
-
-  return {
-    derivedStatus: pnl >= 0 ? 'WIN' : 'LOSS',
-    derivedPnl: pnl,
-  };
-}
-
 export function ManualBehaviorPage() {
   const todayVN = getTodayVN();
-  const [allSignals, setAllSignals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
     startDate: '', endDate: '', timeframe: 'all', strategy: 'all',
@@ -48,107 +31,89 @@ export function ManualBehaviorPage() {
   const [applied, setApplied] = useState({ ...filters });
   const set = (k, v) => setFilters(prev => ({ ...prev, [k]: v }));
 
+  const [overviewData, setOverviewData] = useState(null);
+  const [comparisonData, setComparisonData] = useState(null);
+  const [tradesData, setTradesData] = useState([]);
+  const [tradesTotal, setTradesTotal] = useState(0);
+  const [tradesPage, setTradesPage] = useState(1);
+
   const [strategies, setStrategies] = useState([]);
   const [regimes, setRegimes] = useState([]);
   const [patterns, setPatterns] = useState([]);
 
+  // Load filter options
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/filter-options').then(r => r.json()).catch(() => ({ strategies: [], patterns: [], regimes: [] }));
+        setStrategies(res.strategies || []);
+        setRegimes(res.regimes || []);
+        setPatterns(res.patterns || []);
+      } catch (e) { console.error(e); }
+    })();
+  }, []);
+
+  // Load data when filters change
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`${API}/signals?limit=10000`).then(r => r.json()).catch(() => ({ data: [] }));
-        const sigs = (res.data || []).map(normalizeSignalDates);
-        setAllSignals(sigs);
-        setStrategies(Array.from(new Set(sigs.map(s => s.strategy_name).filter(Boolean))).sort());
-        setRegimes(Array.from(new Set(sigs.map(s => s.regime).filter(Boolean))).sort());
-        setPatterns(Array.from(new Set(sigs.map(s => s.pattern).filter(Boolean))).sort());
+        const filterParams = buildAnalysisParams();
+        const [overview, comparison, trades] = await Promise.all([
+          manualApi.fetchOverview(filterParams).catch(() => null),
+          manualApi.fetchComparison(filterParams).catch(() => null),
+          manualApi.fetchTrades({ ...filterParams, page: tradesPage, limit: 20, search_symbols: '', sort_by: 'exit_time', sort_order: 'desc' }).catch(() => ({ data: [], total: 0 })),
+        ]);
+        setOverviewData(overview);
+        setComparisonData(comparison);
+        setTradesData(trades.data || []);
+        setTradesTotal(trades.total || 0);
       } catch (e) { console.error(e); }
       finally { setLoading(false); }
     })();
-  }, []);
+  }, [applied, tradesPage]);
 
-  // All closed signals (WIN + LOSS + MANUAL + any other closed status)
-  const allClosed = useMemo(() => {
-    return allSignals.filter(s => s.status !== 'OPEN' && s.exit_time);
-  }, [allSignals]);
-
-  // Enrich with derived outcome
-  const enriched = useMemo(() => {
-    return allClosed.map(s => {
-      const isStandard = s.status === 'WIN' || s.status === 'LOSS';
-      const { derivedStatus, derivedPnl } = isStandard
-        ? { derivedStatus: s.status, derivedPnl: s.result_percent || 0 }
-        : deriveOutcome(s);
-      return {
-        ...s,
-        originalStatus: s.status,
-        derivedStatus,
-        derivedPnl,
-        isManual: !isStandard,
-        actualPnl: s.result_percent || 0,
-        plannedPnl: derivedPnl,
-      };
-    });
-  }, [allClosed]);
-
-  // Unique non-standard statuses
-  const uniqueStatuses = useMemo(() => {
-    return Array.from(new Set(enriched.filter(s => s.isManual).map(s => s.originalStatus))).sort();
-  }, [enriched]);
-
-  // Filtered
-  const filtered = useMemo(() => {
+  const buildAnalysisParams = () => {
     const af = applied;
-    return enriched.filter(s => {
-      // Status view filter
-      if (af.statusView === 'unique' && !s.isManual) return false;
-      if (af.statusView !== 'all' && af.statusView !== 'unique' && s.originalStatus !== af.statusView) return false;
+    const p: any = {};
+    if (af.startDate) p.start_date = af.startDate;
+    if (af.endDate) p.end_date = af.endDate;
+    if (af.timeframe !== 'all') p.timeframes = [af.timeframe];
+    if (af.strategy !== 'all') p.strategies = [af.strategy];
+    if (af.regime !== 'all') p.regimes = [af.regime];
+    if (af.pattern !== 'all') p.patterns = [af.pattern];
+    if (af.direction !== 'all') p.directions = [af.direction];
+    return p;
+  };
 
-      // Date filter
-      if (af.startDate || af.endDate) {
-        const vnDate = exitToVNDate(s.exit_time);
-        if (!vnDate) return false;
-        if (af.startDate && vnDate < af.startDate) return false;
-        if (af.endDate && vnDate > af.endDate) return false;
-      }
-
-      if (af.timeframe !== 'all' && s.timeframe !== af.timeframe) return false;
-      if (af.strategy !== 'all' && s.strategy_name !== af.strategy) return false;
-      if (af.regime !== 'all' && s.regime !== af.regime) return false;
-      if (af.pattern !== 'all' && s.pattern !== af.pattern) return false;
-      if (af.direction !== 'all' && s.direction !== af.direction) return false;
-      return true;
-    });
-  }, [enriched, applied]);
-
-  // KPI
+  // KPI from backend
   const kpi = useMemo(() => {
-    const total = filtered.length;
-    const manualCount = filtered.filter(s => s.isManual).length;
-    const wins = filtered.filter(s => s.derivedStatus === 'WIN').length;
-    const wr = total > 0 ? (wins / total) * 100 : 0;
-
-    const manualSignals = filtered.filter(s => s.isManual);
-    const manualWins = manualSignals.filter(s => s.derivedStatus === 'WIN').length;
-    const manualWR = manualSignals.length > 0 ? (manualWins / manualSignals.length) * 100 : 0;
-
-    // Impact: avg result of manual vs avg result of standard
-    const stdSignals = filtered.filter(s => !s.isManual);
-    const avgStdPnl = stdSignals.length > 0 ? stdSignals.reduce((a, s) => a + s.actualPnl, 0) / stdSignals.length : 0;
-    const avgManualPnl = manualSignals.length > 0 ? manualSignals.reduce((a, s) => a + s.actualPnl, 0) / manualSignals.length : 0;
-
-    // Planned vs actual for manual signals
-    const plannedTotal = manualSignals.reduce((a, s) => a + Math.abs(s.derivedPnl), 0);
-    const actualTotal = manualSignals.reduce((a, s) => a + s.actualPnl, 0);
-
+    if (!overviewData) {
+      return {
+        total: 0, manualCount: 0, wins: 0, wr: 0, manualWR: 0, manualWins: 0,
+        manualTotal: 0, avgStdPnl: 0, avgManualPnl: 0, plannedTotal: 0, actualTotal: 0, impact: 0,
+      };
+    }
     return {
-      total, manualCount, wins, wr, manualWR, manualWins,
-      manualTotal: manualSignals.length,
-      avgStdPnl, avgManualPnl,
-      plannedTotal, actualTotal,
-      impact: avgManualPnl - avgStdPnl,
+      total: overviewData.total,
+      manualCount: overviewData.manual_count,
+      wins: overviewData.wins,
+      wr: overviewData.win_rate,
+      manualWR: overviewData.manual_win_rate,
+      manualWins: overviewData.manual_wins,
+      manualTotal: overviewData.manual_count,
+      avgStdPnl: overviewData.avg_std_pnl,
+      avgManualPnl: overviewData.avg_manual_pnl,
+      plannedTotal: overviewData.planned_total,
+      actualTotal: overviewData.actual_total,
+      impact: overviewData.impact,
     };
-  }, [filtered]);
+  }, [overviewData]);
+
+  // Unique statuses from trades data
+  const uniqueStatuses = useMemo(() => {
+    return Array.from(new Set(tradesData.filter(s => s.is_manual).map(s => s.status))).sort();
+  }, [tradesData]);
 
   const handleApply = () => setApplied({ ...filters });
 
@@ -159,9 +124,9 @@ export function ManualBehaviorPage() {
     { key: 'pattern', header: 'Pattern', sortable: true },
     { key: 'entry_price', header: 'Entry', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'exit_price', header: 'Exit', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
-    { key: 'actualPnl', header: 'Actual %', sortable: true, render: v => <PercentChangeBadge value={v || 0} /> },
-    { key: 'originalStatus', header: 'Status', sortable: true, render: v => <StatusBadge status={v} /> },
-    { key: 'derivedStatus', header: 'Derived', sortable: true, render: v => <StatusBadge status={v} /> },
+    { key: 'derived_pnl', header: 'Actual %', sortable: true, render: v => <PercentChangeBadge value={v || 0} /> },
+    { key: 'status', header: 'Status', sortable: true, render: v => <StatusBadge status={v} /> },
+    { key: 'derived_status', header: 'Derived', sortable: true, render: v => <StatusBadge status={v} /> },
     { key: 'regime', header: 'Regime', sortable: true, render: v => <StatusBadge status={v || 'N/A'} /> },
     { key: 'score', header: 'Score', sortable: true, render: v => {
       const n = Number(v) || 0;
@@ -217,58 +182,48 @@ export function ManualBehaviorPage() {
       {/* Comparison cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader title="Standard Signals (WIN/LOSS)" subtitle={`${filtered.filter(s => !s.isManual).length} signals`} />
+          <CardHeader title="Standard Signals (WIN/LOSS)" subtitle={`${comparisonData?.standard?.total || 0} signals`} />
           <div className="space-y-3">
-            {(() => {
-              const std = filtered.filter(s => !s.isManual);
-              const w = std.filter(s => s.derivedStatus === 'WIN').length;
-              const wr = std.length > 0 ? (w / std.length) * 100 : 0;
-              const avgPnl = std.length > 0 ? std.reduce((a, s) => a + s.actualPnl, 0) / std.length : 0;
-              const gp = std.filter(s => s.actualPnl > 0).reduce((a, s) => a + s.actualPnl, 0);
-              const gl = Math.abs(std.filter(s => s.actualPnl < 0).reduce((a, s) => a + s.actualPnl, 0));
-              const pf = gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
-              return [
-                ['Total', std.length], ['Wins', w], ['Win Rate', `${wr.toFixed(1)}%`],
-                ['Avg PnL', `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`],
-                ['Profit Factor', pf === Infinity ? '∞' : pf.toFixed(2)],
-              ].map(([l, v]) => (
-                <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
-                  <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
-                </div>
-              ));
-            })()}
+            {comparisonData?.standard ? [
+              ['Total', comparisonData.standard.total], ['Wins', comparisonData.standard.wins], ['Win Rate', `${comparisonData.standard.win_rate.toFixed(1)}%`],
+              ['Avg PnL', `${comparisonData.standard.avg_pnl >= 0 ? '+' : ''}${comparisonData.standard.avg_pnl.toFixed(2)}%`],
+              ['Profit Factor', comparisonData.standard.profit_factor === Infinity ? '∞' : comparisonData.standard.profit_factor.toFixed(2)],
+            ].map(([l, v]) => (
+              <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
+                <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
+              </div>
+            )) : null}
           </div>
         </Card>
 
         <Card>
-          <CardHeader title="Manual Signals (Derived)" subtitle={`${filtered.filter(s => s.isManual).length} signals`} />
+          <CardHeader title="Manual Signals (Derived)" subtitle={`${comparisonData?.manual?.total || 0} signals`} />
           <div className="space-y-3">
-            {(() => {
-              const man = filtered.filter(s => s.isManual);
-              const w = man.filter(s => s.derivedStatus === 'WIN').length;
-              const wr = man.length > 0 ? (w / man.length) * 100 : 0;
-              const avgPnl = man.length > 0 ? man.reduce((a, s) => a + s.actualPnl, 0) / man.length : 0;
-              const gp = man.filter(s => s.actualPnl > 0).reduce((a, s) => a + s.actualPnl, 0);
-              const gl = Math.abs(man.filter(s => s.actualPnl < 0).reduce((a, s) => a + s.actualPnl, 0));
-              const pf = gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
-              return [
-                ['Total', man.length], ['Derived Wins', w], ['Derived WR', `${wr.toFixed(1)}%`],
-                ['Avg Actual PnL', `${avgPnl >= 0 ? '+' : ''}${avgPnl.toFixed(2)}%`],
-                ['Profit Factor', pf === Infinity ? '∞' : pf.toFixed(2)],
-              ].map(([l, v]) => (
-                <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
-                  <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
-                </div>
-              ));
-            })()}
+            {comparisonData?.manual ? [
+              ['Total', comparisonData.manual.total], ['Derived Wins', comparisonData.manual.wins], ['Derived WR', `${comparisonData.manual.win_rate.toFixed(1)}%`],
+              ['Avg Actual PnL', `${comparisonData.manual.avg_pnl >= 0 ? '+' : ''}${comparisonData.manual.avg_pnl.toFixed(2)}%`],
+              ['Profit Factor', comparisonData.manual.profit_factor === Infinity ? '∞' : comparisonData.manual.profit_factor.toFixed(2)],
+            ].map(([l, v]) => (
+              <div key={l} className="flex justify-between py-2 border-b border-slate-700 last:border-0">
+                <span className="text-slate-400">{l}</span><span className="font-bold text-white">{v}</span>
+              </div>
+            )) : null}
           </div>
         </Card>
       </div>
 
       {/* Table */}
       <Card>
-        <CardHeader title="Signal Details" subtitle={`${filtered.length} signals — Derived = WIN/LOSS based on entry/exit/direction`} />
-        <DataTable columns={columns} data={[...filtered].sort((a, b) => parseUtcMs(b.exit_time) - parseUtcMs(a.exit_time))} pageSize={20} emptyMessage="No signals found" />
+        <CardHeader title="Signal Details" subtitle={`${tradesTotal} signals — Derived = WIN/LOSS based on entry/exit/direction`} />
+        <DataTable 
+          columns={columns} 
+          data={tradesData} 
+          pageSize={20} 
+          total={tradesTotal}
+          page={tradesPage}
+          onPageChange={setTradesPage}
+          emptyMessage="No signals found" 
+        />
       </Card>
     </div>
   );

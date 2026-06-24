@@ -87,14 +87,13 @@ export function EdgeDiscovery() {
   useEffect(() => {
     (async () => {
       try {
-        const [sigRes, versRes] = await Promise.all([
-          fetch(`${API}/signals?limit=10000`).then(r=>r.json()).catch(()=>({data:[]})),
-          fetch(`${API}/engine/versions`).then(r=>r.json()).catch(()=>[]),
+        const [filterOpts, versRes] = await Promise.all([
+          fetch(`${API}/filter-options`).then(r => r.json()).catch(() => ({ strategies: [], patterns: [] })),
+          fetch(`${API}/engine/versions`).then(r => r.json()).catch(() => []),
         ]);
-        const sigs = sigRes.data || [];
-        setAllStrategies(Array.from(new Set(sigs.map(s=>s.strategy_name).filter(Boolean))).sort());
-        setAllPatterns(Array.from(new Set(sigs.map(s=>s.pattern).filter(Boolean))).sort());
-        setEngineVersions(versRes.map(v=>String(v.engine_version)).filter(Boolean).sort().reverse());
+        setAllStrategies(filterOpts.strategies || []);
+        setAllPatterns(filterOpts.patterns || []);
+        setEngineVersions(versRes.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
       } catch {}
     })();
   }, []);

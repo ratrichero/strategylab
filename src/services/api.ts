@@ -151,6 +151,12 @@ export const pending = {
   list: (p: Record<string, any> = {}) => req<any>(`/api/pending-signals${qs(p)}`),
 };
 
+export const analyticsSupport = {
+  filterOptions: (p: Record<string, any> = {}) => req<any>(`/api/filter-options${qs(p)}`),
+  preview: (body: Record<string, any>) =>
+    req<any>("/api/analytics/preview", { method: "POST", body: JSON.stringify(body) }),
+};
+
 export const engine = {
   status:   () => req<any>("/api/engine/status"),
   versions: () => req<any[]>("/api/engine/versions"),

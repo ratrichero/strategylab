@@ -15,6 +15,8 @@ import toast from 'react-hot-toast';
 import { TradeDetailModal } from '../components/TradeDetailModal';
 import { buildFetchPlan, fetchKlines1m } from '../utils/klineSimulator';
 import { useAppStore } from '../store/appStore';
+import { fetchDashboardOverview, fetchDashboardPortfolio, fetchDashboardBreakdowns, fetchDashboardRecentTrades } from '../services/dashboardApi';
+import { buildAnalyticsFilter } from '../utils/analyticsFilters';
 
 const API = '/api';
 async function fetchAPI(ep) { const r = await fetch(`${API}${ep}`); if (!r.ok) throw new Error(`${r.status}`); return r.json(); }
@@ -47,49 +49,39 @@ export function Dashboard() {
   const todayVN = getTodayVN();
 
   const [activeSignals, setActiveSignals] = useState([]);
-  const [closedSignals, setClosedSignals] = useState([]);
   const [pendingSignals, setPendingSignals] = useState([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [maxOpen, setMaxOpen] = useState(50);
   const [engineVersions, setEngineVersions] = useState([]);
   const [strategies, setStrategies] = useState([]);
+  const [allRegimes, setAllRegimes] = useState([]);
+  const [allPatterns, setAllPatterns] = useState([]);
   const [binancePrices, setBinancePrices] = useState({});
   const [priceFlash, setPriceFlash] = useState({});
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
 
-
-  const [allRegimes, setAllRegimes] = useState([]);
-  const [allPatterns, setAllPatterns] = useState([]);
   const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', capPsize: '10000|1000' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
   const [statusMode, setStatusMode] = useState('WL'); // WL = WIN/LOSS only, ALL = all statuses
   const [recentSearch, setRecentSearch] = useState('');
+  const [recentTradesPage, setRecentTradesPage] = useState(1);
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [selectedTradeKlines, setSelectedTradeKlines] = useState([]);
   const [tradeKlineCache, setTradeKlineCache] = useState(new Map());
   const [tradeKlineLoading, setTradeKlineLoading] = useState(false);
   const selectedTradeKeyRef = useRef('');
-  const allSignals = useMemo(() => [...closedSignals, ...activeSignals], [closedSignals, activeSignals]);
+
+  // Backend data states
+  const [overviewData, setOverviewData] = useState(null);
+  const [portfolioData, setPortfolioData] = useState(null);
+  const [breakdownsData, setBreakdownsData] = useState(null);
+  const [recentTradesData, setRecentTradesData] = useState({ data: [], total: 0, page: 1, limit: 10, pages: 1 });
 
   // Parse CAP|PSize from filter
   const parseCapPsize = (v) => {
     const parts = (v || '10000|1000').split('|');
     return { cap: parseFloat(parts[0]) || 10000, psize: parseFloat(parts[1]) || 1000 };
-  };
-  // Derive WIN/LOSS from entry/exit/direction for non-standard statuses
-  const deriveStatus = (s) => {
-    if (s.status === 'WIN' || s.status === 'LOSS') return s.status;
-    const entry = Number(s.entry_price) || 0, exit = Number(s.exit_price) || 0;
-    if (!entry || !exit) return 'LOSS';
-    const pnl = s.direction === 'LONG' ? exit - entry : entry - exit;
-    return pnl >= 0 ? 'WIN' : 'LOSS';
-  };
-  const deriveResultPct = (s) => {
-    if (s.status === 'WIN' || s.status === 'LOSS') return s.result_percent || 0;
-    const entry = Number(s.entry_price) || 0, exit = Number(s.exit_price) || 0;
-    if (!entry || !exit) return 0;
-    return s.direction === 'LONG' ? ((exit - entry) / entry) * 100 : ((entry - exit) / entry) * 100;
   };
 
   const setFilterInstant = (key, value) => {
@@ -186,38 +178,29 @@ export function Dashboard() {
     setPendingCount(pending.total || 0);
   };
 
-  const refreshClosedSignals = async () => {
-    const closedSigs = await fetchAPI('/signals?include_manual=true&limit=10000');
-    setClosedSignals((closedSigs.data || []).map(normalizeSignalDates));
-  };
-
   // ========== LOAD ==========
   useEffect(() => {
     (async () => {
       setLoading(true); setApiError('');
       try {
         console.log('[Dashboard] todayVN:', todayVN);
-        const [closedSigs, openSigs, pending, vers, prices, appCfg] = await Promise.all([
-          fetchAPI('/signals?include_manual=true&limit=10000').catch(e => { setApiError(p => p + ' signals:' + e.message); return { data: [] }; }),
+        const [openSigs, pending, vers, prices, appCfg] = await Promise.all([
           fetchAPI('/signals?status=OPEN&limit=10000').catch(e => { setApiError(p => p + ' active:' + e.message); return { data: [] }; }),
           fetchAPI('/pending-signals?status=WAIT&limit=200').catch(() => ({ data: [], total: 0 })),
           fetchAPI('/engine/versions').catch(() => []),
           fetchBinancePrices(),
           fetchAPI('/app-config').catch(() => ({})),
         ]);
-        const closed = (closedSigs.data || []).map(normalizeSignalDates);
         const active = (openSigs.data || []).map(normalizeSignalDates);
-        const signals = [...closed, ...active];
-        console.log('[Dashboard] closed:', closed.length, 'active:', active.length);
+        console.log('[Dashboard] active:', active.length);
 
-        setClosedSignals(closed);
         setActiveSignals(active);
         setPendingSignals((pending.data || []).map(normalizeSignalDates));
         setPendingCount(pending.total || 0);
         setEngineVersions(vers.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
-        setStrategies(Array.from(new Set(signals.map(s => s.strategy_name).filter(Boolean))).sort());
-        setAllRegimes(Array.from(new Set(signals.map(s => s.regime).filter(Boolean))).sort());
-        setAllPatterns(Array.from(new Set(signals.map(s => s.pattern).filter(Boolean))).sort());
+        setStrategies(Array.from(new Set(active.map(s => s.strategy_name).filter(Boolean))).sort());
+        setAllRegimes(Array.from(new Set(active.map(s => s.regime).filter(Boolean))).sort());
+        setAllPatterns(Array.from(new Set(active.map(s => s.pattern).filter(Boolean))).sort());
         setBinancePrices(prices);
         setMaxOpen(parseInt(appCfg['MAX_OPEN_TRADES'] || '10'));
       } catch (e) { console.error(e); setApiError(String(e)); }
@@ -225,24 +208,51 @@ export function Dashboard() {
     })();
   }, [todayVN]);
 
-  // Debug log when applied VN date range changes (all filtering is local)
+  // Fetch backend aggregates when filters change
   useEffect(() => {
-    console.log('[Dashboard] Filter applied:', appliedFilters.startDate || '(all)', '->', appliedFilters.endDate || '(all)', '| allSignals:', allSignals.length);
-  }, [appliedFilters.startDate, appliedFilters.endDate, allSignals]);
+    (async () => {
+      setLoading(true); setApiError('');
+      try {
+        const payload = buildAnalyticsFilter({
+          start_date: appliedFilters.startDate,
+          end_date: appliedFilters.endDate,
+          date_field: 'exit_time',
+          timeframes: appliedFilters.timeframe !== 'all' ? [appliedFilters.timeframe] : [],
+          strategies: appliedFilters.strategy !== 'all' ? [appliedFilters.strategy] : [],
+          patterns: appliedFilters.pattern !== 'all' ? [appliedFilters.pattern] : [],
+          regimes: appliedFilters.regime !== 'all' ? [appliedFilters.regime] : [],
+          directions: appliedFilters.direction !== 'all' ? [appliedFilters.direction] : [],
+          engine_version: appliedFilters.engineVersion !== 'all' ? appliedFilters.engineVersion : 'all',
+          engine_mode: 'only',
+          score_min: appliedFilters.scoreMin ? Number(appliedFilters.scoreMin) : undefined,
+          score_max: appliedFilters.scoreMax ? Number(appliedFilters.scoreMax) : undefined,
+          include_manual: statusMode !== 'WL',
+        });
+        const { cap, psize } = parseCapPsize(appliedFilters.capPsize);
+        const [overview, portfolio, breakdowns, recentTrades] = await Promise.all([
+          fetchDashboardOverview(payload).catch(e => { console.error('overview:', e); return null; }),
+          fetchDashboardPortfolio(payload, cap, psize).catch(e => { console.error('portfolio:', e); return null; }),
+          fetchDashboardBreakdowns(payload).catch(e => { console.error('breakdowns:', e); return null; }),
+          fetchDashboardRecentTrades(payload, recentTradesPage, 10, recentSearch).catch(e => { console.error('recent-trades:', e); return { data: [], total: 0, page: 1, limit: 10, pages: 1 }; }),
+        ]);
+        setOverviewData(overview);
+        setPortfolioData(portfolio);
+        setBreakdownsData(breakdowns);
+        setRecentTradesData(recentTrades);
+      } catch (e) {
+        console.error(e);
+        setApiError(String(e));
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [appliedFilters, statusMode, recentTradesPage, recentSearch]);
 
   // Auto-refresh realtime tables so Active drops out quickly when trades close.
   useEffect(() => {
     const iv = setInterval(() => {
       refreshRealtimeTables().catch(e => console.error('[Dashboard] realtime refresh failed:', e));
     }, 10000);
-    return () => clearInterval(iv);
-  }, []);
-
-  // Refresh closed trades slightly more often than the materialized view cadence.
-  useEffect(() => {
-    const iv = setInterval(() => {
-      refreshClosedSignals().catch(e => console.error('[Dashboard] closed refresh failed:', e));
-    }, 60000);
     return () => clearInterval(iv);
   }, []);
 
@@ -263,234 +273,56 @@ export function Dashboard() {
 
   // ========== DATA SPLITS ==========
   const allOpen = useMemo(() => activeSignals.filter(s => s.status === 'OPEN').sort((a, b) => new Date(b.candle_time || 0).getTime() - new Date(a.candle_time || 0).getTime()), [activeSignals]);
-  const allClosed = useMemo(() => {
-    const isWL = statusMode === 'WL';
-    return allSignals.filter(s => {
-      if (isWL) return s.status === 'WIN' || s.status === 'LOSS';
-      return s.status !== 'OPEN' && s.exit_time;
-    }).map(s => ({
-      ...s,
-      _derivedStatus: deriveStatus(s),
-      _derivedPct: deriveResultPct(s),
-    })).sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || ''));
-  }, [allSignals, statusMode]);
 
-  // VN date range filtering
-  const metricClosed = useMemo(() => {
-    const VN_MS = 7 * 3600 * 1000;
-    const startVN = appliedFilters.startDate;
-    const endVN = appliedFilters.endDate;
-    const isWL = statusMode === 'WL';
-    return allSignals.filter(s => {
-      if (isWL) { if (s.status !== 'WIN' && s.status !== 'LOSS') return false; }
-      else { if (s.status === 'OPEN' || !s.exit_time) return false; }
-      if (!s.exit_time) return false;
-      const exitMs = parseUtcMs(s.exit_time);
-      if (!exitMs) return false;
-      const vnDate = new Date(exitMs + VN_MS);
-      const vnDateStr = `${vnDate.getUTCFullYear()}-${String(vnDate.getUTCMonth()+1).padStart(2,'0')}-${String(vnDate.getUTCDate()).padStart(2,'0')}`;
-      if (startVN && vnDateStr < startVN) return false;
-      if (endVN && vnDateStr > endVN) return false;
-      return true;
-    }).map(s => ({
-      ...s,
-      _derivedStatus: deriveStatus(s),
-      _derivedPct: deriveResultPct(s),
-    })).sort((a, b) => parseUtcMs(b.exit_time || '') - parseUtcMs(a.exit_time || ''));
-  }, [allSignals, appliedFilters.startDate, appliedFilters.endDate, statusMode]);
-
-  // Date filter is already done server-side. Client-side only: timeframe, engine, score, strategy.
-  const filteredClosed = useMemo(() => {
-    const af = appliedFilters;
-    return metricClosed.filter(s => {
-      if (af.timeframe !== 'all' && s.timeframe !== af.timeframe) return false;
-      if (af.engineVersion !== 'all' && String(s.engine_version) !== af.engineVersion) return false;
-      const rawScore = Number(s.score) || 0;
-      if (af.scoreMin && rawScore < Number(af.scoreMin)) return false;
-      if (af.scoreMax && rawScore >= Number(af.scoreMax)) return false;
-      if (af.strategy !== 'all' && s.strategy_name !== af.strategy) return false;
-      if (af.regime !== 'all' && s.regime !== af.regime) return false;
-      if (af.pattern !== 'all' && s.pattern !== af.pattern) return false;
-      if (af.direction !== 'all' && s.direction !== af.direction) return false;
-      return true;
-    });
-  }, [metricClosed, appliedFilters]);
-
-  const filteredRecentTrades = useMemo(() => {
-    const query = String(recentSearch || '').trim().toUpperCase();
-    if (!query) return metricClosed;
-    const tokens = query.split(/\s+/).filter(Boolean);
-    if (!tokens.length) return metricClosed;
-    return metricClosed.filter(s => {
-      const symbol = String(s.symbol || '').toUpperCase();
-      return tokens.some(token => symbol.includes(token));
-    });
-  }, [metricClosed, recentSearch]);
-
-  // ========== TRADE-LEVEL METRICS ==========
+  // ========== BACKEND DATA DERIVATIONS ==========
   const { cap: appliedCap, psize: appliedPsize } = parseCapPsize(appliedFilters.capPsize);
-  const filteredTradesCount = filteredClosed.length;
-  const tradesTodayCount = useMemo(() => {
-    const VN_MS = 7 * 3600 * 1000;
-    return allClosed.filter(s => {
-      if (!s.exit_time) return false;
-      const exitMs = parseUtcMs(s.exit_time);
-      if (!exitMs) return false;
-      const vnDate = new Date(exitMs + VN_MS);
-      const vnDateStr = `${vnDate.getUTCFullYear()}-${String(vnDate.getUTCMonth()+1).padStart(2,'0')}-${String(vnDate.getUTCDate()).padStart(2,'0')}`;
-      return vnDateStr === todayVN;
-    }).length;
-  }, [allClosed, todayVN]);
 
-  const wins = filteredClosed.filter(s => s._derivedStatus === 'WIN').length;
-  const winRate = filteredTradesCount > 0 ? (wins / filteredTradesCount) * 100 : 0;
+  // KPI from backend overview
+  const totalTradesDisplay = overviewData?.total_trades || 0;
+  const tradesTodayCount = overviewData?.trades_today || 0;
+  const wins = overviewData?.wins || 0;
+  const losses = overviewData?.losses || 0;
+  const winRate = overviewData?.win_rate || 0;
+  const profitFactor = overviewData?.profit_factor || 0;
+  const expectancy = overviewData?.expectancy || 0;
+  const tradeSharpe = overviewData?.sharpe || 0;
+  const streaks = overviewData?.streaks || { candle: { maxWin: 0, maxLoss: 0 }, exit: { maxWin: 0, maxLoss: 0 } };
+  const longShortWR = {
+    longWR: overviewData?.direction?.long?.win_rate || 0,
+    longTotal: overviewData?.direction?.long?.total || 0,
+    shortWR: overviewData?.direction?.short?.win_rate || 0,
+    shortTotal: overviewData?.direction?.short?.total || 0,
+  };
+  const avgDuration = overviewData?.avg_duration_display || '-';
 
-  const profitFactor = useMemo(() => {
-    const gp = filteredClosed.filter(s => (s._derivedPct || 0) > 0).reduce((a, s) => a + (s._derivedPct || 0), 0);
-    const gl = Math.abs(filteredClosed.filter(s => (s._derivedPct || 0) < 0).reduce((a, s) => a + (s._derivedPct || 0), 0));
-    return gl > 0 ? gp / gl : gp > 0 ? Infinity : 0;
-  }, [filteredClosed]);
+  // Portfolio from backend
+  const pComp = portfolioData?.compounding || { nav: 0, pnl: 0, ret: 0, maxDD: 0, maxGain: 0, peakNav: 0, troughNav: 0, sharpe: 0, calmar: 0, curve: [] };
+  const pFixed = portfolioData?.fixed || { nav: 0, pnl: 0, ret: 0, maxDD: 0, maxGain: 0, peakNav: 0, troughNav: 0, sharpe: 0, calmar: 0, curve: [] };
 
-  const expectancy = useMemo(() => {
-    if (!filteredTradesCount) return 0;
-    const wA = filteredClosed.filter(s => (s._derivedPct || 0) > 0);
-    const lA = filteredClosed.filter(s => (s._derivedPct || 0) < 0);
-    const avgW = wA.length ? wA.reduce((a, s) => a + (s._derivedPct || 0), 0) / wA.length : 0;
-    const avgL = lA.length ? Math.abs(lA.reduce((a, s) => a + (s._derivedPct || 0), 0) / lA.length) : 0;
-    return (wins / filteredTradesCount) * avgW - ((filteredTradesCount - wins) / filteredTradesCount) * avgL;
-  }, [filteredClosed, filteredTradesCount, wins]);
-
-  const tradeSharpe = useMemo(() => {
-    const r = filteredClosed.map(s => s._derivedPct || 0);
-    if (r.length < 2) return 0;
-    const avg = r.reduce((a, b) => a + b, 0) / r.length;
-    const std = Math.sqrt(r.reduce((s, x) => s + (x - avg) ** 2, 0) / r.length);
-    return std > 0.0001 ? avg / std : 0;
-  }, [filteredClosed]);
-
-  const streaks = useMemo(() => {
-    const calc = (arr) => {
-      let mw = 0, ml = 0, cw = 0, cl = 0;
-      arr.forEach(s => {
-        if (s._derivedStatus === 'WIN') { cw++; cl = 0; mw = Math.max(mw, cw); }
-        else { cl++; cw = 0; ml = Math.max(ml, cl); }
-      });
-      return { maxWin: mw, maxLoss: ml };
-    };
-    return {
-      candle: calc([...filteredClosed].sort((a, b) => new Date(a.candle_time || 0).getTime() - new Date(b.candle_time || 0).getTime())),
-      exit: calc([...filteredClosed].sort((a, b) => new Date(a.exit_time || 0).getTime() - new Date(b.exit_time || 0).getTime())),
-    };
-  }, [filteredClosed]);
-
-  const longShortWR = useMemo(() => {
-    const longs = filteredClosed.filter(s => s.direction === 'LONG');
-    const shorts = filteredClosed.filter(s => s.direction === 'SHORT');
-    const longWins = longs.filter(s => s._derivedStatus === 'WIN').length;
-    const shortWins = shorts.filter(s => s._derivedStatus === 'WIN').length;
-    return {
-      longWR: longs.length > 0 ? (longWins / longs.length) * 100 : 0, longTotal: longs.length,
-      shortWR: shorts.length > 0 ? (shortWins / shorts.length) * 100 : 0, shortTotal: shorts.length,
-    };
-  }, [filteredClosed]);
-
-  const avgDuration = useMemo(() => {
-    const durations = filteredClosed.filter(s => s.candle_time && s.exit_time).map(s => parseUtcMs(s.exit_time) - parseUtcMs(s.candle_time)).filter(d => d > 0);
-    if (!durations.length) return '-';
-    const avgMs = durations.reduce((a, b) => a + b, 0) / durations.length;
-    const mins = Math.round(avgMs / 60000);
-    if (mins < 60) return `${mins}m`;
-    const hrs = Math.floor(mins / 60); const remainMins = mins % 60;
-    if (hrs < 24) return `${hrs}h ${remainMins}m`;
-    const days = Math.floor(hrs / 24); const remainHrs = hrs % 24;
-    return `${days}d ${remainHrs}h`;
-  }, [filteredClosed]);
-
-  // ========== PORTFOLIO: COMPOUNDING ==========
-  const pComp = useMemo(() => {
-    const fsInput = appliedPsize;
-    const IC = appliedCap;
-    const sorted = [...filteredClosed].sort((a, b) => parseUtcMs(a.exit_time || '') - parseUtcMs(b.exit_time || ''));
-    let nav = IC, peakNav = nav, troughNav = nav, maxDD = 0, maxGain = 0;
-    const curve = [];
-    const pnlList = [];
-    sorted.forEach(s => {
-      const rp = s._derivedPct || 0;
-      const dynamicPosSize = fsInput * (nav / IC);
-      const pnl = dynamicPosSize * (rp / 100);
-      nav += pnl; pnlList.push(pnl);
-      peakNav = Math.max(peakNav, nav); troughNav = Math.min(troughNav, nav);
-      const dd = (peakNav - nav) / peakNav * 100;
-      maxDD = Math.max(maxDD, dd); maxGain = Math.max(maxGain, (nav - IC) / IC * 100);
-      curve.push({ time: s.exit_time ? utcToVN(s.exit_time) : '', nav: Math.round(nav * 100) / 100, dd: Math.round(dd * 100) / 100, symbol: s.symbol, pnl: Math.round(pnl * 100) / 100, rp });
-    });
-    const ret = ((nav - IC) / IC) * 100;
-    const pctReturns = pnlList.map(p => (p / IC) * 100);
-    const avg = pctReturns.length ? pctReturns.reduce((a, b) => a + b, 0) / pctReturns.length : 0;
-    const std = pctReturns.length ? Math.sqrt(pctReturns.reduce((s, x) => s + (x - avg) ** 2, 0) / pctReturns.length) : 0;
-    return { nav, pnl: nav - IC, ret, maxDD, maxGain, peakNav, troughNav, sharpe: std > 0 ? avg / std : 0, calmar: maxDD > 0 ? ret / maxDD : 0, curve };
-  }, [filteredClosed, appliedFilters.capPsize]);
-
-  // ========== PORTFOLIO: FIXED SIZE ==========
-  const pFixed = useMemo(() => {
-    const fs = appliedPsize;
-    const IC = appliedCap;
-    const sorted = [...filteredClosed].sort((a, b) => parseUtcMs(a.exit_time || '') - parseUtcMs(b.exit_time || ''));
-    let nav = IC, peakNav = nav, troughNav = nav, maxDD = 0, maxGain = 0;
-    const curve = [];
-    const pnlList = [];
-    sorted.forEach(s => {
-      const rp = s._derivedPct || 0;
-      const pnl = fs * (rp / 100);
-      nav += pnl; pnlList.push(pnl);
-      peakNav = Math.max(peakNav, nav); troughNav = Math.min(troughNav, nav);
-      const dd = (peakNav - nav) / peakNav * 100;
-      maxDD = Math.max(maxDD, dd); maxGain = Math.max(maxGain, (nav - IC) / IC * 100);
-      curve.push({ time: s.exit_time ? utcToVN(s.exit_time) : '', nav: Math.round(nav * 100) / 100, dd: Math.round(dd * 100) / 100, symbol: s.symbol, pnl: Math.round(pnl * 100) / 100, rp });
-    });
-    const ret = ((nav - IC) / IC) * 100;
-    const pctReturns = pnlList.map(p => (p / IC) * 100);
-    const avg = pctReturns.length ? pctReturns.reduce((a, b) => a + b, 0) / pctReturns.length : 0;
-    const std = pctReturns.length ? Math.sqrt(pctReturns.reduce((s, x) => s + (x - avg) ** 2, 0) / pctReturns.length) : 0;
-    return { nav, pnl: nav - IC, ret, maxDD, maxGain, peakNav, troughNav, sharpe: std > 0 ? avg / std : 0, calmar: maxDD > 0 ? ret / maxDD : 0, curve };
-  }, [filteredClosed, appliedFilters.capPsize]);
-
-  // ========== REGIME ==========
+  // Regime breakdown from backend
   const regimeBreakdown = useMemo(() => {
-    const reg = {};
-    filteredClosed.forEach(s => {
-      const r = s.regime || 'UNKNOWN';
-      if (!reg[r]) reg[r] = { total: 0, wins: 0, returns: [] };
-      reg[r].total++; if (s.status === 'WIN') reg[r].wins++;
-      reg[r].returns.push(s._derivedPct || 0);
-    });
-    return Object.entries(reg).map(([regime, d]) => {
-      const wr = d.total > 0 ? (d.wins / d.total) * 100 : 0;
-      const wA = d.returns.filter(r => r > 0), lA = d.returns.filter(r => r < 0);
-      const avgW = wA.length ? wA.reduce((a, b) => a + b, 0) / wA.length : 0;
-      const avgL = lA.length ? Math.abs(lA.reduce((a, b) => a + b, 0) / lA.length) : 0;
-      const gp = wA.reduce((a, b) => a + b, 0), gl = Math.abs(lA.reduce((a, b) => a + b, 0));
-      return { regime, trades: d.total, wins: d.wins, winrate: wr, expectancy: (wr / 100) * avgW - ((1 - wr / 100) * avgL), profitFactor: gl > 0 ? gp / gl : gp > 0 ? Infinity : 0, totalReturn: d.returns.reduce((a, b) => a + b, 0) };
-    }).sort((a, b) => b.trades - a.trades);
-  }, [filteredClosed]);
-
-  // ========== HEATMAP (UNFILTERED) ==========
-  const heatmapData = useMemo(() => {
-    const data = [], patterns = new Set();
-    const g = {};
-    allClosed.forEach(s => {
-      if (!s.pattern) return; patterns.add(s.pattern);
-      if (!g[s.pattern]) g[s.pattern] = { All: { w: 0, t: 0 } };
-      if (!g[s.pattern][s.timeframe]) g[s.pattern][s.timeframe] = { w: 0, t: 0 };
-      g[s.pattern][s.timeframe].t++; g[s.pattern].All.t++;
-      if (s.status === 'WIN') { g[s.pattern][s.timeframe].w++; g[s.pattern].All.w++; }
-    });
-    patterns.forEach(p => ['15m', '1h', '4h', 'All'].forEach(tf => {
-      const st = g[p]?.[tf] || { w: 0, t: 0 };
-      data.push({ x: tf, y: p, value: st.t > 0 ? (st.w / st.t) * 100 : 50, count: st.t });
+    if (!breakdownsData?.regime_breakdown) return [];
+    return breakdownsData.regime_breakdown.map(r => ({
+      regime: r.regime,
+      trades: r.trades,
+      wins: r.wins,
+      winrate: r.win_rate,
+      expectancy: r.expectancy,
+      profitFactor: r.profit_factor,
+      totalReturn: r.total_return,
     }));
-    return data;
-  }, [allClosed]);
+  }, [breakdownsData]);
+
+  // Heatmap from backend
+  const heatmapData = useMemo(() => {
+    if (!breakdownsData?.heatmap) return [];
+    return breakdownsData.heatmap.map(h => ({
+      x: h.timeframe,
+      y: h.pattern,
+      value: h.win_rate,
+      count: h.count,
+    }));
+  }, [breakdownsData]);
 
   // ========== ACTIVE WITH PRICE ==========
   const activeWithPrice = useMemo(() => allOpen.map(s => {
@@ -644,17 +476,6 @@ export function Dashboard() {
   const $ = v => v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const clr = v => v >= 0 ? 'text-emerald-400' : 'text-red-400';
 
-  // Check if any filter is active (besides date)
-  const hasActiveFilters = useMemo(() => {
-    const af = appliedFilters;
-    return af.strategy !== 'all' || af.regime !== 'all' || af.pattern !== 'all' || 
-           af.direction !== 'all' || af.timeframe !== 'all' || af.engineVersion !== 'all' || 
-           af.scoreMin !== '' || af.scoreMax !== '';
-  }, [appliedFilters]);
-
-  // Total Trades: show all when no filters, filtered when filters active
-  const totalTradesDisplay = hasActiveFilters ? filteredTradesCount : allClosed.length;
-
   // ========== RENDER ==========
   return (
     <div className="space-y-6">
@@ -670,7 +491,7 @@ export function Dashboard() {
 
       {/* OVERVIEW KPI */}
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Card className="flex items-center gap-4"><div className="p-3 bg-indigo-500/20 rounded-xl"><BarChart3 className="w-6 h-6 text-indigo-400" /></div><div><p className="text-sm text-slate-400">Total Trades{hasActiveFilters && ' (Filtered)'}</p><p className="text-2xl font-bold text-white">{totalTradesDisplay}</p></div></Card>
+        <Card className="flex items-center gap-4"><div className="p-3 bg-indigo-500/20 rounded-xl"><BarChart3 className="w-6 h-6 text-indigo-400" /></div><div><p className="text-sm text-slate-400">Total Trades</p><p className="text-2xl font-bold text-white">{totalTradesDisplay}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-cyan-500/20 rounded-xl"><CalendarCheck className="w-6 h-6 text-cyan-400" /></div><div><p className="text-sm text-slate-400">Trades Today</p><p className="text-2xl font-bold text-white">{tradesTodayCount}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-emerald-500/20 rounded-xl"><Target className="w-6 h-6 text-emerald-400" /></div><div><p className="text-sm text-slate-400">Win Rate</p><p className={`text-2xl font-bold ${winRate >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{winRate.toFixed(1)}%</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-yellow-500/20 rounded-xl"><Zap className="w-6 h-6 text-yellow-400" /></div><div><p className="text-sm text-slate-400">Active Signals</p><p className="text-2xl font-bold text-white">{allOpen.length}</p></div></Card>
@@ -818,11 +639,11 @@ export function Dashboard() {
         <DataTable columns={pendingColumns} data={pendingWithPrice} pageSize={10} emptyMessage="No pending signals" />
       </Card>
 
-      {/* RECENT (UNFILTERED) */}
+      {/* RECENT (BACKEND PAGINATED) */}
       <Card>
         <CardHeader
           title="Recent Trades"
-          subtitle={`${filteredRecentTrades.length} / ${metricClosed.length} closed trades - By exit time`}
+          subtitle={`${recentTradesData.data.length} / ${recentTradesData.total} closed trades - Page ${recentTradesData.page} of ${recentTradesData.pages}`}
           action={
             <Input
               type="text"
@@ -835,10 +656,17 @@ export function Dashboard() {
         />
         <DataTable
           columns={recentColumns}
-          data={filteredRecentTrades}
+          data={recentTradesData.data}
           pageSize={10}
-          emptyMessage="No closed trades today"
+          emptyMessage="No closed trades"
           onRowClick={handleRecentTradeClick}
+          pagination={{
+            total: recentTradesData.total,
+            page: recentTradesData.page,
+            limit: recentTradesData.limit,
+            pages: recentTradesData.pages,
+            onPageChange: setRecentTradesPage,
+          }}
         />
       </Card>
 

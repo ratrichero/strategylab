@@ -120,10 +120,9 @@ export function SimulationPage() {
   const pollRef = useRef(null);
 
   useEffect(() => {
-    fetch(`${API}/signals->limit=10000`).then(r => r.json()).then(d => {
-      const s = d.data || [];
-      setAllStrategies(Array.from(new Set(s.map(x => x.strategy_name).filter(Boolean))).sort());
-      setAllPatterns(Array.from(new Set(s.map(x => x.pattern).filter(Boolean))).sort());
+    fetch(`${API}/filter-options`).then(r => r.json()).then(d => {
+      setAllStrategies(d.strategies || []);
+      setAllPatterns(d.patterns || []);
     }).catch(() => {});
   }, []);
 

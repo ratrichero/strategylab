@@ -28,11 +28,30 @@ from app.api.signal_analysis_handler_update import router as signal_analysis_rou
 from app.api.system import router as system_router
 from app.api.dashboard.signals import router as dash_signals_router
 from app.api.dashboard.research import router as dash_research_router
+from app.api.dashboard.analytics import router as dash_analytics_router
 from app.api.dashboard.analysis import router as dash_analysis_router
 from app.api.dashboard.edge import router as dash_edge_router
 from app.api.dashboard.config_api import router as dash_config_router
 from app.api.dashboard.performance_api import router as dash_perf_router
 from app.api.dashboard.pending_api import router as dash_pending_router
+from app.api.dashboard.overview import router as dash_overview_router
+from app.api.dashboard.portfolio import router as dash_portfolio_router
+from app.api.dashboard.breakdowns import router as dash_breakdowns_router
+from app.api.dashboard.recent_trades import router as dash_recent_trades_router
+from app.api.signals.overview import router as signals_overview_router
+from app.api.signals.group_performance import router as signals_group_performance_router
+from app.api.signals.heatmaps import router as signals_heatmaps_router
+from app.api.signals.indicator_distribution import router as signals_indicator_distribution_router
+from app.api.signals.trades import router as signals_trades_router
+from app.api.indicators.overview import router as indicators_overview_router
+from app.api.indicators.thresholds import router as indicators_thresholds_router
+from app.api.indicators.distribution import router as indicators_distribution_router
+from app.api.indicators.outcome_averages import router as indicators_outcome_averages_router
+from app.api.indicators.scatter import router as indicators_scatter_router
+from app.api.indicators.regime_fingerprint import router as indicators_regime_fingerprint_router
+from app.api.manual_behavior.overview import router as manual_behavior_overview_router
+from app.api.manual_behavior.comparison import router as manual_behavior_comparison_router
+from app.api.manual_behavior.trades import router as manual_behavior_trades_router
 from app.api.price_feed_status import router as price_feed_status_router
 from app.api.backtest_replay import router as backtest_replay_router
 from app.api.live_settings import router as live_settings_router
@@ -79,10 +98,16 @@ def setup_routers(app: FastAPI):
         assistant_router, report_router, report_history_router,
         telegram_webhook_router, config_router, monitor_trade_router,
         retrain_router, signal_analysis_router, system_router,
-        dash_signals_router, dash_research_router, dash_analysis_router,
+        dash_signals_router, dash_research_router, dash_analytics_router, dash_analysis_router,
         dash_edge_router, dash_config_router, dash_perf_router,
         dash_pending_router, price_feed_status_router, account_router,
         backtest_replay_router, live_settings_router,
+        dash_overview_router, dash_portfolio_router, dash_breakdowns_router, dash_recent_trades_router,
+        signals_overview_router, signals_group_performance_router, signals_heatmaps_router,
+        signals_indicator_distribution_router, signals_trades_router,
+        indicators_overview_router, indicators_thresholds_router, indicators_distribution_router,
+        indicators_outcome_averages_router, indicators_scatter_router, indicators_regime_fingerprint_router,
+        manual_behavior_overview_router, manual_behavior_comparison_router, manual_behavior_trades_router,
     ]:
         app.include_router(r)
 

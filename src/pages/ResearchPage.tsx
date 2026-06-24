@@ -184,14 +184,13 @@ export function Research() {
   useEffect(() => {
     (async () => {
       try {
-        const [vers, sigs] = await Promise.all([
+        const [vers, filterOpts] = await Promise.all([
           fetch(`${API}/engine/versions`).then(r => r.json()).catch(() => []),
-          fetch(`${API}/signals-limit=10000`).then(r => r.json()).catch(() => ({ data: [] })),
+          fetch(`${API}/filter-options`).then(r => r.json()).catch(() => ({ strategies: [], patterns: [] })),
         ]);
         setEngineVersions(vers.map(v => String(v.engine_version)).filter(Boolean).sort().reverse());
-        const s = sigs.data || [];
-        setAllStrategies(Array.from(new Set(s.map(x => x.strategy_name).filter(Boolean))).sort());
-        setAllPatterns(Array.from(new Set(s.map(x => x.pattern).filter(Boolean))).sort());
+        setAllStrategies(filterOpts.strategies || []);
+        setAllPatterns(filterOpts.patterns || []);
       } catch {}
       runWithConfig(DEFAULTS);
     })();
