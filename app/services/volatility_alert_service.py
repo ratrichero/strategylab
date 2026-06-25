@@ -9,6 +9,9 @@ from typing import Deque, Dict, List, Optional, Tuple
 from app.core.bg_runner import start_daemon_job
 from app.services.config_service import get_runtime_config
 from app.services.telegram_service import send_telegram
+from app.services.volatility_context_service import build_volatility_context
+from app.services.volatility_recommendation import evaluate_volatility_recommendation
+from app.services.volatility_message_builder import build_volatility_message_block
 
 
 class _SymbolState:
@@ -33,16 +36,35 @@ class _SymbolState:
             self.history.popleft()
 
     def price_at(self, age_seconds: float, now: float) -> Optional[Tuple[float, float]]:
+        """Linear interpolation tại target = now - age_seconds.
+        Trả về (price, actual_age). actual_age luôn = age_seconds nếu interpolate được.
+        None nếu không đủ data (không có entry <= target)."""
         target = now - age_seconds
-        candidate = None
+        before: Optional[Tuple[float, float]] = None
+        after: Optional[Tuple[float, float]] = None
+
         for ts, price in self.history:
             if ts <= target:
-                candidate = (price, now - ts)
-            else:
-                break
-        return candidate
+                before = (ts, price)
+            elif after is None:
+                after = (ts, price)
 
-    def avg_short_move(self, now: float) -> float:
+        if before is None:
+            return None
+
+        if after is None:
+            # Không có entry mới hơn target → dùng entry cuối làm baseline
+            return (before[1], now - before[0])
+
+        ts1, p1 = before
+        ts2, p2 = after
+        if ts2 == ts1:
+            return (p1, age_seconds)
+        fraction = (target - ts1) / (ts2 - ts1)
+        price = p1 + (p2 - p1) * fraction
+        return (price, age_seconds)
+
+    def avg_short_move(self) -> float:
         moves: List[float] = []
         last_ts, last_price = None, None
         for ts, price in self.history:
@@ -66,6 +88,26 @@ class VolatilityAlertService:
         self._run_lock = Lock()
         self._history_seconds = 600.0
         self._5m_disabled_warned = False
+        self._enabled = True
+        self._cycle_delay = 3.0
+        self._symbols_limit = 1200
+        self._btc_threshold_1m = 2.0
+        self._btc_threshold_5m = 3.5
+        self._btc_cooldown = 1200.0
+        self._major_threshold_1m = 5.0
+        self._major_threshold_5m = 8.0
+        self._major_cooldown = 1800.0
+        self._major_symbols: set = set()
+        self._watch_threshold_1m = 6.0
+        self._watch_threshold_5m = 10.0
+        self._watch_cooldown = 1500.0
+        self._watchlist_symbols: set = set()
+        self._coin_threshold_1m = 10.0
+        self._coin_threshold_5m = 15.0
+        self._coin_cooldown = 2400.0
+        self._unusual_ratio = 3.0
+        self._exclude_tokens = ["UP", "DOWN", "BULL", "BEAR", "SHORT", "LONG"]
+        self._priority_symbols: List[str] = []
         self._load_config()
 
     def _parse_symbol_list(self, raw) -> List[str]:
@@ -89,7 +131,8 @@ class VolatilityAlertService:
         return result
 
     def _load_config(self):
-        """Load config from VOL_ALERT_CONFIG with env fallback."""
+        """Load config from VOL_ALERT_CONFIG with env fallback.
+        Chỉ gọi từ trong lock (_run_cycle_guarded) để tránh race condition."""
         cfg = get_runtime_config()
         vol_cfg = cfg.get("VOL_ALERT_CONFIG") or {}
 
@@ -142,17 +185,15 @@ class VolatilityAlertService:
         )
 
     def callback(self, price_map: dict):
-        if not self._run_lock.locked():
-            self._load_config()
-
-        if not self._enabled:
-            return
-
         now = time.time()
         if now - self._last_cycle < self._cycle_delay:
             return
 
         if not self._run_lock.acquire(blocking=False):
+            return
+
+        if not self._enabled:
+            self._run_lock.release()
             return
 
         self._last_cycle = now
@@ -164,6 +205,9 @@ class VolatilityAlertService:
 
     def _run_cycle_guarded(self, price_map: dict, now: float):
         try:
+            self._load_config()
+            if not self._enabled:
+                return
             self._run_cycle(price_map, now)
         finally:
             self._run_lock.release()
@@ -237,7 +281,7 @@ class VolatilityAlertService:
         if age_since_alert < cooldown:
             return None
 
-        avg_move = state.avg_short_move(now)
+        avg_move = state.avg_short_move()
         unusual_move = bool(avg_move and abs_1m >= max(1.2, avg_move * self._unusual_ratio) and abs_1m >= 5.0)
 
         trigger_tf = None
@@ -296,26 +340,39 @@ class VolatilityAlertService:
         return "alt", self._coin_threshold_1m, self._coin_threshold_5m, self._coin_cooldown
 
     def _emit_message(self, alerts: List[dict]):
-        lines = ["🌊 <b>Cảnh báo biến động giá</b>"]
-        lines.append("Phát hiện biến động realtime. Hệ thống chỉ cảnh báo sớm, không thay đổi rule vào lệnh.")
+        lines = ["🌊 <b>Cảnh báo biến động giá nâng cao</b>"]
+        lines.append("Phát hiện biến động realtime kèm bối cảnh thị trường và khuyến nghị hành động.")
 
         for alert in alerts:
-            direction = "TĂNG" if alert["direction"] == "UP" else "GIẢM"
-            icon = "🟢" if alert["direction"] == "UP" else "🔴"
-            current_price = alert.get("current_price")
-            if current_price is not None and current_price > 0:
-                price_str = f"${current_price:,.2f}"
-            else:
-                price_str = ""
-                print(f"[VOL ALERT] Missing current_price for {alert.get('symbol')}: {alert}")
-            self._recent_alerts.appendleft(dict(alert))
-            lines.append(
-                f"{icon} <b>{alert['symbol']}</b> {price_str} {direction}: {alert['reason']} "
-                f"| 1m {alert['signed_delta_1m']:+.2f}% "
-                f"| 5m {alert['signed_delta_5m']:+.2f}%"
-            )
+            enriched_alert = dict(alert)
+            try:
+                context = build_volatility_context(alert)
+                recommendation = evaluate_volatility_recommendation(alert, context)
 
-        lines.append("\n👀 Dùng như tín hiệu theo dõi sớm; không phải lệnh giao dịch.")
+                enriched_alert["context"] = context
+                enriched_alert["recommendation"] = recommendation
+                self._recent_alerts.appendleft(dict(enriched_alert))
+
+                lines.extend(build_volatility_message_block(alert, context, recommendation))
+            except Exception as e:
+                print(f"[VOL ALERT] advisory build error for {alert.get('symbol')}: {type(e).__name__}: {e}")
+                direction = "TĂNG" if alert["direction"] == "UP" else "GIẢM"
+                icon = "🟢" if alert["direction"] == "UP" else "🔴"
+                current_price = alert.get("current_price")
+                if current_price is not None and current_price > 0:
+                    price_str = f"${current_price:,.2f}"
+                else:
+                    price_str = ""
+                    print(f"[VOL ALERT] Missing current_price for {alert.get('symbol')}: {alert}")
+
+                self._recent_alerts.appendleft(dict(enriched_alert))
+                lines.append(
+                    f"{icon} <b>{alert['symbol']}</b> {price_str} {direction}: {alert['reason']} "
+                    f"| 1m {alert['signed_delta_1m']:+.2f}% "
+                    f"| 5m {alert['signed_delta_5m']:+.2f}%"
+                )
+
+        lines.append("\n👀 Advisory chỉ mang tính hỗ trợ quyết định; không thay thế rule vào lệnh.")
         send_telegram("\n".join(lines))
 
     def get_recent_alerts(self, limit: int = 10) -> List[dict]:

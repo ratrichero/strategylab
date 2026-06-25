@@ -578,7 +578,11 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     "score_scaling": "linear_v1",
     "signal": "trigger_price",
     "indicator_snapshot_version": 1,
-    "snapshot_features": ["ema50", "ema200", "ema200_slope", "rsi", "rsi_slope", "atr_percentile", "bb_width"],
+    "snapshot_features": [
+        "close", "ema50", "ema200", "ema_distance", "ema200_slope",
+        "rsi", "rsi_slope", "volume_ratio", "atr_ratio", "atr",
+        "atr_percentile", "bb_width", "bb_position",
+    ],
     "derivative": {"enabled": True,"pre_buffer": pre_buffer,"bias_scale": bias_scale_map}
     }
     scan_run = ScanRun(
@@ -702,6 +706,37 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     threshold=0.002
                 )
 
+                indicators_snapshot = build_indicator_snapshot(df, engine_version)
+
+                vol_ratio_ctx = None
+                vol_ma_ctx = last.get("vol_ma")
+                if vol_ma_ctx is not None and not pd.isna(vol_ma_ctx) and float(vol_ma_ctx) > 0:
+                    vol_ratio_ctx = float(last["volume"]) / float(vol_ma_ctx)
+
+                try:
+                    from app.services.volatility_context_service import update_volatility_context_snapshot
+
+                    update_volatility_context_snapshot(symbol, timeframe, {
+                        "source": "scan_basic",
+                        "snapshot_ts": pd_ts_to_utc(last["time"]),
+                        "updated_at": utc_now(),
+                        "regime": regime,
+                        "ema50": safe(last.get("ema50")),
+                        "ema200": safe(last.get("ema200")),
+                        "ema200_slope": safe(last.get("ema200_slope")),
+                        "rsi": safe(last.get("rsi")),
+                        "rsi_slope": safe(last.get("rsi_slope")),
+                        "atr_percentile": safe(last.get("atr_percentile")),
+                        "bb_width": safe(last.get("bb_width")),
+                        "bb_position": safe(last.get("bb_position")),
+                        "close": safe(last.get("close")),
+                        "atr": safe(last.get("atr")),
+                        "vol_ratio": safe(vol_ratio_ctx),
+                        "indicators_snapshot": indicators_snapshot,
+                    })
+                except Exception as e:
+                    print(f"[VOL CONTEXT CACHE] basic update error {symbol}/{timeframe}: {e}")
+
                 # ================= Strategy Multi =================
 
                 # ── STRATEGY ENGINE ──────────────────────────────
@@ -813,6 +848,28 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     "regime": regime,
                     "derivative_bias": derivative_bias,
                 })
+
+                try:
+                    from app.services.volatility_context_service import update_volatility_context_snapshot
+
+                    update_volatility_context_snapshot(symbol, timeframe, {
+                        "source": "scan_candidate",
+                        "snapshot_ts": pd_ts_to_utc(last["time"]),
+                        "updated_at": utc_now(),
+                        "regime": regime,
+                        "strategy_name": strategy_name,
+                        "pattern": pattern,
+                        "direction": direction,
+                        "trend_score": float(components.get("trend_score", 0)),
+                        "momentum_score": float(components.get("momentum_score", 0)),
+                        "volume_score": float(components.get("volume_score", 0)),
+                        "mtf_score": float(components.get("mtf_score", 0)),
+                        "derivative_bias": float(derivative_bias),
+                        "total_score": float(score),
+                        "indicators_snapshot": indicators_snapshot,
+                    })
+                except Exception as e:
+                    print(f"[VOL CONTEXT CACHE] candidate update error {symbol}/{timeframe}: {e}")
 
                 # ================= FILTER =================
                 # ← CHANGED: dùng candidate_passed (đã tính theo effective_threshold)

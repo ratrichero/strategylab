@@ -536,6 +536,7 @@ def build_indicator_snapshot(df: pd.DataFrame,engine_version: float) -> dict:
     if bb_mid is not None and bb_upper is not None and bb_lower is not None:
         if bb_mid != 0:
             bb_width = (bb_upper - bb_lower) / bb_mid
+    bb_position = safe_float(last.get("bb_position"))
     
     # ================= VOLUME Ratio=================
 
@@ -590,6 +591,7 @@ def build_indicator_snapshot(df: pd.DataFrame,engine_version: float) -> dict:
         "atr": atr,
         "atr_percentile": atr_percentile,
         "bb_width": bb_width,
+        "bb_position": bb_position,
         
         "engine_version": engine_version,
     }
