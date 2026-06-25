@@ -119,7 +119,7 @@ async def heartbeat_loop():
 async def mv_refresh_loop():
     """MV refresh loop that periodically refreshes market data."""
     while True:
-        await asyncio.sleep(600)
+        await asyncio.sleep(1200)
         try:
             if is_shutting_down():
                 return

@@ -74,7 +74,13 @@ async def dashboard_recent_trades(body: RecentTradesRequest) -> RecentTradesResp
                 s.regime,
                 s.score,
                 s.candle_time,
-                s.exit_time
+                s.exit_time,
+                s.indicators_snapshot,
+                s.market_context,
+                s.mae,
+                s.mfe,
+                s.strategy_name,
+                s.engine_version
             FROM {sql_filter.table} s
             WHERE {where}
             ORDER BY s.exit_time DESC

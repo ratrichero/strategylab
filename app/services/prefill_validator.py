@@ -259,9 +259,10 @@ class PreFillValidator:
         max_adv = self.cfg["price_context"]["max_adverse_move_pct"].get(
             pending.timeframe, 2.5
         )
+        info["max_adverse_pct"] = round(float(max_adv), 3)
 
         if adverse > max_adv:
-            return False, f"adverse_{adverse:.2f}pct", info
+            return False, f"adverse_move_pct::current={adverse:.2f}::max={float(max_adv):.2f}", info
 
         return True, "ok", info
 
@@ -299,9 +300,10 @@ class PreFillValidator:
         max_ext = self.cfg["favorable_extension"]["max_extension_atr"].get(
             pending.timeframe, 1.0
         )
+        info["max_extension_atr"] = round(float(max_ext), 3)
 
         if favorable_atr > max_ext:
-            return False, f"favorable_extension_{favorable_atr:.2f}ATR", info
+            return False, f"favorable_extension_atr::current={favorable_atr:.2f}::max={float(max_ext):.2f}", info
 
         return True, "ok", info
 
@@ -397,7 +399,11 @@ class PreFillValidator:
             info["invalid_level"] = round(invalid_level, 6)
 
             if current_price < invalid_level:
-                return False, f"broke_{invalid_below_key}_{current_price:.6f}", info
+                return False, (
+                    f"broke_below::{invalid_below_key}"
+                    f"::current={current_price:.6f}"
+                    f"::level={invalid_level:.6f}"
+                ), info
 
         # SHORT: invalid nếu phá lên trên invalid_above
         else:
@@ -405,7 +411,11 @@ class PreFillValidator:
             info["invalid_level"] = round(invalid_level, 6)
 
             if current_price > invalid_level:
-                return False, f"broke_{invalid_above_key}_{current_price:.6f}", info
+                return False, (
+                    f"broke_above::{invalid_above_key}"
+                    f"::current={current_price:.6f}"
+                    f"::level={invalid_level:.6f}"
+                ), info
 
         # Confirm bằng close của vài nến gần nhất
         confirm_bars = int(self.cfg["pattern_invalidation"].get("confirm_closed_bars", 3))
@@ -415,11 +425,19 @@ class PreFillValidator:
             if pending.direction == "LONG":
                 confirm_level = invalid_below - buffer_value
                 if any(float(row["close"]) < confirm_level for _, row in recent.iterrows()):
-                    return False, f"confirmed_close_below_{invalid_below_key}", info
+                    return False, (
+                        f"confirmed_close_below::{invalid_below_key}"
+                        f"::level={confirm_level:.6f}"
+                        f"::bars={confirm_bars}"
+                    ), info
             else:
                 confirm_level = invalid_above + buffer_value
                 if any(float(row["close"]) > confirm_level for _, row in recent.iterrows()):
-                    return False, f"confirmed_close_above_{invalid_above_key}", info
+                    return False, (
+                        f"confirmed_close_above::{invalid_above_key}"
+                        f"::level={confirm_level:.6f}"
+                        f"::bars={confirm_bars}"
+                    ), info
 
         return True, "ok", info
 
@@ -443,6 +461,7 @@ class PreFillValidator:
             return True, "no_atr", info
 
         mult = self.cfg["candle_invalidation"]["adverse_body_atr_mult"]
+        info["adverse_body_atr_mult"] = float(mult)
 
         for i in range(-3, 0):
             if abs(i) > len(df):
@@ -452,10 +471,12 @@ class PreFillValidator:
             body = float(candle["close"]) - float(candle["open"])
 
             if pending.direction == "LONG" and body < 0 and abs(body) > atr * mult:
-                return False, f"adverse_candle_{abs(body)/atr:.1f}ATR", info
+                ratio = abs(body) / atr
+                return False, f"adverse_candle_body_atr::current={ratio:.2f}::max={float(mult):.2f}", info
 
             elif pending.direction == "SHORT" and body > 0 and abs(body) > atr * mult:
-                return False, f"adverse_candle_{abs(body)/atr:.1f}ATR", info
+                ratio = abs(body) / atr
+                return False, f"adverse_candle_body_atr::current={ratio:.2f}::max={float(mult):.2f}", info
 
         return True, "ok", info
 
@@ -478,12 +499,14 @@ class PreFillValidator:
         info["current_rsi"] = round(rsi, 2)
 
         cfg = self.cfg["momentum_check"]
+        info["rsi_reject_long_above"] = cfg["rsi_reject_long_above"]
+        info["rsi_reject_short_below"] = cfg["rsi_reject_short_below"]
 
         if pending.direction == "LONG" and rsi > cfg["rsi_reject_long_above"]:
-            return False, f"rsi_too_high_{rsi:.1f}", info
+            return False, f"rsi_too_high::current={rsi:.1f}::max={float(cfg['rsi_reject_long_above']):.1f}", info
 
         if pending.direction == "SHORT" and rsi < cfg["rsi_reject_short_below"]:
-            return False, f"rsi_too_low_{rsi:.1f}", info
+            return False, f"rsi_too_low::current={rsi:.1f}::min={float(cfg['rsi_reject_short_below']):.1f}", info
 
         return True, "ok", info
 
@@ -520,8 +543,9 @@ class PreFillValidator:
             info["atr_spike_ratio"] = round(ratio, 2)
 
             mult = self.cfg["volatility_guard"]["atr_spike_multiplier"]
+            info["atr_spike_multiplier"] = float(mult)
             if ratio > mult:
-                return False, f"atr_spike_{ratio:.1f}x", info
+                return False, f"atr_spike_ratio::current={ratio:.2f}::max={float(mult):.2f}", info
 
         return True, "ok", info
 
@@ -551,7 +575,7 @@ class PreFillValidator:
             (scan == "BEAR" and current == "BULL")):
             if ((pending.direction == "LONG" and current == "BEAR") or
                 (pending.direction == "SHORT" and current == "BULL")):
-                return False, f"regime_flipped_{scan}_to_{current}", info
+                return False, f"regime_flipped::from={scan}::to={current}", info
 
         return True, "ok", info
 

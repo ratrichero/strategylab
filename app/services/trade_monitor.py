@@ -44,23 +44,32 @@ def monitor_open_trades(price_map: Optional[Dict[str, float]] = None):
 
         mode = get_current_mode()
 
+        closed_count = 0
         for trade in open_trades:
             try:
                 if mode == TradingMode.PAPER:
-                    _check_paper(db, trade, price_map)
+                    if _check_paper(db, trade, price_map):
+                        closed_count += 1
                 else:
-                    _check_live_testnet(db, trade, price_map, mode)
+                    if _check_live_testnet(db, trade, price_map, mode):
+                        closed_count += 1
             except Exception as e:
                 db.rollback()
                 print(f"❌ Monitor [{trade.id}] {trade.symbol}: {type(e).__name__} - {e}")
 
         db.commit()
+        if closed_count:
+            try:
+                from app.services.mv_refresh import refresh_views_async
+                refresh_views_async(f"trade_monitor_closed_{closed_count}")
+            except Exception as e:
+                print(f"[MV REFRESH] monitor trigger failed: {e}")
 
 
 def _check_paper(db, trade, price_map):
     current = price_map.get(trade.symbol)
     if current is None:
-        return
+        return False
 
     current = float(current)
     sl = float(trade.stop_loss)
@@ -76,9 +85,12 @@ def _check_paper(db, trade, price_map):
     if hit_sl:
         close_trade(db, trade, sl, "SL")
         print(f"[PAPER CLOSE] {trade.symbol} {trade.direction} SL @ {sl:.4f}")
+        return True
     elif hit_tp:
         close_trade(db, trade, tp, "TP")
         print(f"[PAPER CLOSE] {trade.symbol} {trade.direction} TP @ {tp:.4f}")
+        return True
+    return False
 
 
 def _check_live_testnet(db, trade, price_map, mode):
@@ -86,7 +98,7 @@ def _check_live_testnet(db, trade, price_map, mode):
 
     current = price_map.get(trade.symbol)
     if current is None:
-        return
+        return False
     current = float(current)
 
     # 1) Position đã bị exchange đóng rồi?
@@ -94,14 +106,16 @@ def _check_live_testnet(db, trade, price_map, mode):
         reason, exit_price = _infer_exchange_close_reason(trade, current)
         close_trade(db, trade, exit_price, reason)
         print(f"[LIVE SYNC] {trade.symbol} {trade.direction} {reason} @ {exit_price:.4f}")
-        return
+        return True
 
     # 2) Kiểm tra Break-even / Profit Protection
     if PROFIT_PROTECTION_CONFIG.get("enabled", False):
         _check_profit_protection(db, trade, current)
 
     # 3) Safety net
+    before_status = trade.status
     _check_live_safety_net(db, trade, current)
+    return before_status == "OPEN" and trade.status != "OPEN"
 
 
 def _check_profit_protection(db, trade, current_price: float):

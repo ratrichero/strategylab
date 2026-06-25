@@ -4,12 +4,19 @@ import { useState, useMemo } from 'react';
 
 interface Column<T> { key: keyof T | string; header: string; sortable?: boolean; width?: string; render?: (value: any, row: T) => React.ReactNode; align?: 'left' | 'center' | 'right'; }
 
-interface DataTableProps<T> { columns: Column<T>[]; data: T[]; pageSize?: number; onRowClick?: (row: T) => void; className?: string; emptyMessage?: string; loading?: boolean; }
+interface ServerPagination { total: number; page: number; limit: number; pages: number; onPageChange: (page: number) => void; }
 
-export function DataTable<T extends Record<string, any>>({ columns, data, pageSize = 10, onRowClick, className, emptyMessage = 'No data available', loading = false }: DataTableProps<T>) {
+interface DataTableProps<T> { columns: Column<T>[]; data: T[]; pageSize?: number; onRowClick?: (row: T) => void; className?: string; emptyMessage?: string; loading?: boolean; pagination?: ServerPagination; }
+
+export function DataTable<T extends Record<string, any>>({ columns, data, pageSize = 10, onRowClick, className, emptyMessage = 'No data available', loading = false, pagination }: DataTableProps<T>) {
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [page, setPage] = useState(1);
+  const isServerPaginated = Boolean(pagination);
+  const currentPage = pagination?.page ?? page;
+  const totalRows = pagination?.total ?? data.length;
+  const effectivePageSize = pagination?.limit ?? pageSize;
+  const totalPages = Math.max(1, pagination?.pages ?? Math.ceil(data.length / pageSize));
 
   const sortedData = useMemo(() => {
     if (!sortKey) return data;
@@ -23,10 +30,18 @@ export function DataTable<T extends Record<string, any>>({ columns, data, pageSi
     });
   }, [data, sortKey, sortDir]);
 
-  const paginatedData = useMemo(() => { const start = (page - 1) * pageSize; return sortedData.slice(start, start + pageSize); }, [sortedData, page, pageSize]);
-  const totalPages = Math.ceil(data.length / pageSize);
+  const paginatedData = useMemo(() => {
+    if (isServerPaginated) return sortedData;
+    const start = (page - 1) * pageSize;
+    return sortedData.slice(start, start + pageSize);
+  }, [sortedData, page, pageSize, isServerPaginated]);
 
   const handleSort = (key: string) => { if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortKey(key); setSortDir('asc'); } };
+  const changePage = (nextPage: number) => {
+    const bounded = Math.min(totalPages, Math.max(1, nextPage));
+    if (isServerPaginated) pagination?.onPageChange(bounded);
+    else setPage(bounded);
+  };
 
   const SortIcon = ({ columnKey }: { columnKey: string }) => {
     if (sortKey !== columnKey) return <ChevronsUpDown className="w-4 h-4 opacity-30" />;
@@ -63,22 +78,22 @@ export function DataTable<T extends Record<string, any>>({ columns, data, pageSi
       </div>
       {totalPages > 1 && (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-slate-400">Showing {(page - 1) * pageSize + 1} to {Math.min(page * pageSize, data.length)} of {data.length}</p>
+          <p className="text-sm text-slate-400">Showing {(currentPage - 1) * effectivePageSize + 1} to {Math.min(currentPage * effectivePageSize, totalRows)} of {totalRows}</p>
           <div className="flex flex-wrap items-center gap-1.5">
-            <button onClick={() => setPage(1)} disabled={page === 1} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">First</button>
-            <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">‹ Prev</button>
+            <button onClick={() => changePage(1)} disabled={currentPage === 1} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">First</button>
+            <button onClick={() => changePage(currentPage - 1)} disabled={currentPage === 1} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">Prev</button>
             <div className="flex gap-1">
               {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                 let pageNum: number;
                 if (totalPages <= 5) pageNum = i + 1;
-                else if (page <= 3) pageNum = i + 1;
-                else if (page >= totalPages - 2) pageNum = totalPages - 4 + i;
-                else pageNum = page - 2 + i;
-                return <button key={pageNum} onClick={() => setPage(pageNum)} className={cn('w-8 h-8 text-sm rounded-lg transition-colors', page === pageNum ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600')}>{pageNum}</button>;
+                else if (currentPage <= 3) pageNum = i + 1;
+                else if (currentPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                else pageNum = currentPage - 2 + i;
+                return <button key={pageNum} onClick={() => changePage(pageNum)} className={cn('w-8 h-8 text-sm rounded-lg transition-colors', currentPage === pageNum ? 'bg-indigo-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600')}>{pageNum}</button>;
               })}
             </div>
-            <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">Next ›</button>
-            <button onClick={() => setPage(totalPages)} disabled={page === totalPages} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">Last</button>
+            <button onClick={() => changePage(currentPage + 1)} disabled={currentPage === totalPages} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">Next</button>
+            <button onClick={() => changePage(totalPages)} disabled={currentPage === totalPages} className="px-2.5 py-1.5 text-sm bg-slate-700 text-white rounded-lg disabled:opacity-30 hover:bg-slate-600">Last</button>
           </div>
         </div>
       )}

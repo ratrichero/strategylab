@@ -612,4 +612,11 @@ async def close_all_active():
             results["failed"] += 1
             results["errors"].append(f"Signal {signal_id}: {str(e)}")
 
+    if results["closed"] > 0:
+        try:
+            from app.services.mv_refresh import refresh_views_async
+            refresh_views_async("close_all_active")
+        except Exception as e:
+            results["errors"].append(f"MV refresh trigger: {e}")
+
     return results

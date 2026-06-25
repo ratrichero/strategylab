@@ -67,6 +67,11 @@ def _manual_close_signal_paper(signal_id: int) -> Dict:
         try:
             close_trade(db, trade, current_price, "MANUAL")
             db.commit()
+            try:
+                from app.services.mv_refresh import refresh_views_async
+                refresh_views_async("manual_close_paper")
+            except Exception as e:
+                print(f"[MV REFRESH] manual close trigger failed: {e}")
 
             return {
                 "success":        True,
