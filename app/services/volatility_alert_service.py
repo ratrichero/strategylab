@@ -341,7 +341,7 @@ class VolatilityAlertService:
 
     def _emit_message(self, alerts: List[dict]):
         lines = ["🌊 <b>Cảnh báo biến động giá nâng cao</b>"]
-        lines.append("Phát hiện biến động realtime kèm bối cảnh thị trường và khuyến nghị hành động.")
+        lines.append("Phát hiện biến động realtime kèm bối cảnh thị trường và gợi ý hành động.")
 
         for alert in alerts:
             enriched_alert = dict(alert)
