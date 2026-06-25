@@ -5,12 +5,38 @@ import json
 
 router = APIRouter(tags=["Dashboard - Config"])
 
+def _normalize_strategy_config_value(raw_value) -> str:
+    from app.strategies.registry import merge_default_strategy_config
+
+    if isinstance(raw_value, str):
+        strategy_config = json.loads(raw_value or "{}")
+    elif isinstance(raw_value, dict):
+        strategy_config = raw_value
+    else:
+        strategy_config = {}
+
+    runtime_cfg = {"STRATEGY_CONFIG": strategy_config}
+    merged, _ = merge_default_strategy_config(runtime_cfg)
+    return json.dumps(merged["STRATEGY_CONFIG"])
+
 @router.get("/api/app-config")
 async def get_app_config():
     pool = await get_async_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("SELECT key, value FROM app_config ORDER BY key")
     config = {r["key"]: r["value"] for r in rows}
+
+    try:
+        from app.services.config_service import get_runtime_config
+        runtime_cfg = get_runtime_config(force_reload=True)
+        if runtime_cfg and isinstance(runtime_cfg.get("STRATEGY_CONFIG"), dict):
+            config["STRATEGY_CONFIG"] = json.dumps(runtime_cfg["STRATEGY_CONFIG"])
+    except Exception:
+        if "STRATEGY_CONFIG" in config:
+            try:
+                config["STRATEGY_CONFIG"] = _normalize_strategy_config_value(config["STRATEGY_CONFIG"])
+            except Exception:
+                pass
 
     for key in [
         "DATABASE_URL",
@@ -46,6 +72,14 @@ async def update_app_config(updates: Dict[str, str]):
         forbidden = sorted(k for k in updates if k in blocked_keys)
         if forbidden:
             raise HTTPException(403, f"BOT role cannot update: {', '.join(forbidden)}")
+
+    if "STRATEGY_CONFIG" in updates:
+        try:
+            updates["STRATEGY_CONFIG"] = _normalize_strategy_config_value(
+                updates["STRATEGY_CONFIG"]
+            )
+        except Exception as e:
+            raise HTTPException(400, f"STRATEGY_CONFIG is invalid JSON: {e}")
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:

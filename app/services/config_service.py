@@ -277,14 +277,17 @@ def get_runtime_config(force_reload=False):
         "RETRY_POLICY_CONFIG":      parse_json("RETRY_POLICY_CONFIG"),
     }
 
-    _runtime_cache, defaults_written = merge_default_strategy_config(_runtime_cache)
+    runtime_config, defaults_written = merge_default_strategy_config(_runtime_cache)
+    _runtime_cache = runtime_config
     if defaults_written:
         try:
-            update_runtime_config({"STRATEGY_CONFIG": json.dumps(_runtime_cache["STRATEGY_CONFIG"])})
+            update_runtime_config({"STRATEGY_CONFIG": json.dumps(runtime_config["STRATEGY_CONFIG"])})
         except Exception as e:
             print(f"[CONFIG] Failed to persist default STRATEGY_CONFIG: {e}")
+        finally:
+            _runtime_cache = runtime_config
 
-    return _runtime_cache
+    return runtime_config
 
 
 def update_runtime_config(data: dict):
