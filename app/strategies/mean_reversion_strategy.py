@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class MeanReversionStrategy(BaseStrategy):
     STRATEGY_NAME = "mean_reversion"
+    DEFAULT_THRESHOLD = 99.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.15, momentum=0.30, volume=0.15, pattern=0.0, mtf=0.20, structure=0.20),
         "1h":  StrategyWeights(trend=0.15, momentum=0.30, volume=0.15, pattern=0.0, mtf=0.20, structure=0.20),
@@ -13,6 +14,10 @@ class MeanReversionStrategy(BaseStrategy):
     RSI_OVERSOLD = 30; RSI_OVERBOUGHT = 70
     BB_LOWER = 0.10; BB_UPPER = 0.90
     MAX_EMA_DIST = 0.05
+    PATTERN_THRESHOLDS = {
+        "Mean Reversion Long": 99.0,
+        "Mean Reversion Short": 99.0,
+    }
 
     def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if len(df) < self.get_min_bars(): return None

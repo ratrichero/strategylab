@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class BreakoutStrategy(BaseStrategy):
     STRATEGY_NAME = "breakout"
+    DEFAULT_THRESHOLD = 8.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.20, momentum=0.15, volume=0.20, pattern=0.0, mtf=0.25, structure=0.20),
         "1h":  StrategyWeights(trend=0.25, momentum=0.15, volume=0.15, pattern=0.0, mtf=0.25, structure=0.20),
@@ -13,6 +14,10 @@ class BreakoutStrategy(BaseStrategy):
     LOOKBACK = {"15m": 48, "1h": 24, "4h": 14}
     VOLUME_SURGE_MIN = 1.5
     BREAKOUT_MIN_PCT = 0.001
+    PATTERN_THRESHOLDS = {
+        "Bullish Breakout": 8.0,
+        "Bearish Breakout": 8.2,
+    }
 
     def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         lookback = self.LOOKBACK.get(timeframe, 24)

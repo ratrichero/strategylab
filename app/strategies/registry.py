@@ -56,6 +56,11 @@ def merge_default_strategy_config(runtime_cfg: dict, default_threshold: float = 
         if not isinstance(block.get("patterns"), dict):
             block["patterns"] = default_block["patterns"]
             modified = True
+        else:
+            for pattern, threshold in default_block["patterns"].items():
+                if pattern not in block["patterns"]:
+                    block["patterns"][pattern] = threshold
+                    modified = True
 
         if not isinstance(block.get("symbols"), (str, list, tuple, set)):
             block["symbols"] = default_block["symbols"]

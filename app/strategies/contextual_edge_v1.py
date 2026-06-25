@@ -9,6 +9,7 @@ class ContextualEdgeStrategyV1(BaseStrategy):
     Mỗi Pattern sẽ có bộ lọc Context (Regime, MTF, RSI) riêng biệt ở bước Score.
     """
     STRATEGY_NAME = "contextual_edge_v1"
+    DEFAULT_THRESHOLD = 8.0
     
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.25, momentum=0.25, volume=0.15, pattern=0.10, mtf=0.25, structure=0.0),
@@ -19,6 +20,11 @@ class ContextualEdgeStrategyV1(BaseStrategy):
     PAT_15M_LONG_PB  = "L Pullback 15m"
     PAT_4H_SHORT_PB  = "S Bearish Pullback 4h"
     PAT_15M_SHORT_REV= "S Reversal 15m"
+    PATTERN_THRESHOLDS = {
+        PAT_15M_LONG_PB: 8.0,
+        PAT_4H_SHORT_PB: 8.0,
+        PAT_15M_SHORT_REV: 8.0,
+    }
 
     def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if timeframe not in ["15m", "4h"]:

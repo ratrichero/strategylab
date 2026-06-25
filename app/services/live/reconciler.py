@@ -1331,8 +1331,15 @@ def _enforce_live_hard_cap():
         chỉ hủy các NEW zero-fill newest-first
     - KHÔNG tự đóng vị thế OPEN
     """
-    cfg = get_runtime_config()
-    c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+    cfg = get_runtime_config() or {}
+    try:
+        c_config = int(cfg.get("MAX_OPEN_TRADES", 10) or 10)
+    except (TypeError, ValueError):
+        print(
+            "[LIVE RECONCILE] invalid MAX_OPEN_TRADES config; "
+            f"using fallback=10 value={cfg.get('MAX_OPEN_TRADES')!r}"
+        )
+        c_config = 10
 
     with SessionLocal() as db:
         snap = get_capacity_snapshot(db, c_config)

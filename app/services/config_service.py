@@ -133,6 +133,7 @@ DEFAULTS = {
                 "Bullish Engulfing": 8.0,
                 "Hammer": 8.5,
                 "Bearish Engulfing": 99.0,
+                "Shooting Star": 99.0,
                 "Morning Star": 8.0,
                 "Evening Star": 8.5,
                 "Bullish Marubozu": 7.5,
@@ -156,11 +157,37 @@ DEFAULTS = {
         "mean_reversion": {
             "threshold": 99.0,
             "patterns": {
-                "Mean Reversion": 99.0
+                "Mean Reversion Long": 99.0,
+                "Mean Reversion Short": 99.0
             }
         },
         "trend_following": {
-            "threshold": 8.0
+            "threshold": 8.0,
+            "patterns": {
+                "Golden Cross": 8.0,
+                "Death Cross": 8.2,
+                "Trend Continuation Long": 8.0,
+                "Trend Continuation Short": 8.2,
+                "Momentum Acceleration": 8.0
+            }
+        },
+        "contextual_edge_v1": {
+            "threshold": 8.0,
+            "patterns": {
+                "L Pullback 15m": 8.0,
+                "S Bearish Pullback 4h": 8.0,
+                "S Reversal 15m": 8.0
+            }
+        },
+        "grid_reversion_v1": {
+            "threshold": 8.0,
+            "patterns": {
+                "Grid Lower Reclaim": 8.0,
+                "Grid Lower Overshoot": 8.0,
+                "Grid Upper Reject": 8.0,
+                "Grid Upper Overshoot": 8.0
+            },
+            "symbols": ["BTCUSDT"]
         }
     }),
     "VOL_ALERT_CONFIG": json.dumps({

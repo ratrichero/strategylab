@@ -6,6 +6,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class GridReversionStrategy(BaseStrategy):
     STRATEGY_NAME = "grid_reversion_v1"
+    DEFAULT_THRESHOLD = 8.0
     SUPPORTED_TIMEFRAMES = ["15m"]
 
     WEIGHTS = {
@@ -23,6 +24,12 @@ class GridReversionStrategy(BaseStrategy):
     PATTERN_LOWER_OVERSHOOT = "Grid Lower Overshoot"
     PATTERN_UPPER_REJECT = "Grid Upper Reject"
     PATTERN_UPPER_OVERSHOOT = "Grid Upper Overshoot"
+    PATTERN_THRESHOLDS = {
+        PATTERN_LOWER_RECLAIM: 8.0,
+        PATTERN_LOWER_OVERSHOOT: 8.0,
+        PATTERN_UPPER_REJECT: 8.0,
+        PATTERN_UPPER_OVERSHOOT: 8.0,
+    }
 
     HTF_RANGE_LOOKBACK = 36
     MIN_RANGE_PCT = 0.01

@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class TrendFollowingStrategy(BaseStrategy):
     STRATEGY_NAME = "trend_following"
+    DEFAULT_THRESHOLD = 8.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.35, momentum=0.20, volume=0.15, pattern=0.0, mtf=0.25, structure=0.05),
         "1h":  StrategyWeights(trend=0.35, momentum=0.20, volume=0.15, pattern=0.0, mtf=0.25, structure=0.05),
@@ -20,6 +21,13 @@ class TrendFollowingStrategy(BaseStrategy):
     PAT_TREND_CONT_LONG = "Trend Continuation Long"
     PAT_TREND_CONT_SHORT = "Trend Continuation Short"
     PAT_MOMENTUM_ACCEL = "Momentum Acceleration"
+    PATTERN_THRESHOLDS = {
+        PAT_GOLDEN_CROSS: 8.0,
+        PAT_DEATH_CROSS: 8.2,
+        PAT_TREND_CONT_LONG: 8.0,
+        PAT_TREND_CONT_SHORT: 8.2,
+        PAT_MOMENTUM_ACCEL: 8.0,
+    }
 
     def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if len(df) < self.get_min_bars():

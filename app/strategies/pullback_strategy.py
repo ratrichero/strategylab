@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class PullBackStrategy(BaseStrategy):
     STRATEGY_NAME = "pullback"
+    DEFAULT_THRESHOLD = 8.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.35, momentum=0.20, volume=0.10, pattern=0.0, mtf=0.25, structure=0.10),
         "1h":  StrategyWeights(trend=0.35, momentum=0.20, volume=0.10, pattern=0.0, mtf=0.25, structure=0.10),
@@ -12,6 +13,10 @@ class PullBackStrategy(BaseStrategy):
     }
     MIN_EMA_GAP = 0.002; PROXIMITY_ATR = 1.5
     RSI_LONG = (30, 55); RSI_SHORT = (45, 70)
+    PATTERN_THRESHOLDS = {
+        "Bullish Pullback": 8.0,
+        "Bearish Pullback": 8.2,
+    }
 
     def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if len(df) < self.get_min_bars(): return None

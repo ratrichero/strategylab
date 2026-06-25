@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class CandlestickStrategy(BaseStrategy):
     STRATEGY_NAME = "candlestick"
+    DEFAULT_THRESHOLD = 7.5
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.25, momentum=0.25, volume=0.10, pattern=0.15, mtf=0.25),
         "1h":  StrategyWeights(trend=0.30, momentum=0.20, volume=0.10, pattern=0.15, mtf=0.25),
@@ -17,6 +18,16 @@ class CandlestickStrategy(BaseStrategy):
         "Bullish Engulfing": 2.0, "Bearish Engulfing": 2.0,
         "Hammer": 1.5, "Shooting Star": 1.5,
         "Bullish Marubozu": 1.5, "Bearish Marubozu": 1.5,
+    }
+    PATTERN_THRESHOLDS = {
+        "Bullish Engulfing": 8.0,
+        "Hammer": 8.5,
+        "Bearish Engulfing": 99.0,
+        "Shooting Star": 99.0,
+        "Morning Star": 8.0,
+        "Evening Star": 8.5,
+        "Bullish Marubozu": 7.5,
+        "Bearish Marubozu": 99.0,
     }
 
     def detect(self, df: pd.DataFrame, timeframe: str, symbol: str = None,

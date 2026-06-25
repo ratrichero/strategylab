@@ -42,6 +42,8 @@ class BaseStrategy(ABC):
     STRATEGY_NAME:        str       = "base"
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
     WEIGHTS: Dict[str, StrategyWeights] = {}
+    DEFAULT_THRESHOLD: float = 8.0
+    PATTERN_THRESHOLDS: Dict[str, float] = {}
 
     PENALTY_WEIGHTS = {
         "body": 0.5, "volume": 0.5, "atr": 0.5,
@@ -187,11 +189,21 @@ class BaseStrategy(ABC):
 
     def default_pattern_thresholds(self) -> Dict[str, float]:
         patterns = {}
+        maybe_thresholds = getattr(self, "PATTERN_THRESHOLDS", None)
+        if isinstance(maybe_thresholds, dict):
+            for key, value in maybe_thresholds.items():
+                if not isinstance(key, str) or not key:
+                    continue
+                try:
+                    patterns[key] = float(value)
+                except (TypeError, ValueError):
+                    patterns[key] = 8.0
+
         maybe_scores = getattr(self, "PATTERN_SCORES", None)
         if isinstance(maybe_scores, dict):
             for key in maybe_scores.keys():
                 if isinstance(key, str) and key:
-                    patterns[key] = 8.0
+                    patterns.setdefault(key, 8.0)
 
         for attr in dir(self):
             if not (attr.startswith("PATTERN_") or attr.startswith("PAT_")):
@@ -205,8 +217,9 @@ class BaseStrategy(ABC):
         return patterns
 
     def get_default_strategy_config(self, default_threshold: float = 8.0) -> Dict[str, object]:
+        threshold = getattr(self, "DEFAULT_THRESHOLD", default_threshold)
         return {
-            "threshold": float(default_threshold),
+            "threshold": float(threshold),
             "patterns": self.default_pattern_thresholds(),
             "symbols": [],
         }
