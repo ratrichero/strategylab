@@ -20,7 +20,7 @@ class ContextualEdgeStrategyV1(BaseStrategy):
     PAT_4H_SHORT_PB  = "S Bearish Pullback 4h"
     PAT_15M_SHORT_REV= "S Reversal 15m"
 
-    def detect(self, df: pd.DataFrame, timeframe: str) -> Optional[SignalResult]:
+    def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if timeframe not in ["15m", "4h"]:
             return None
 
@@ -71,7 +71,7 @@ class ContextualEdgeStrategyV1(BaseStrategy):
 
         return None
 
-    def score(self, df, signal, timeframe, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None) -> SignalResult:
+    def score(self, df, signal, timeframe, symbol=None, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None)-> SignalResult:
         cfg = cfg or {}
         weights = self.get_weights(timeframe)
         last = df.iloc[-1]

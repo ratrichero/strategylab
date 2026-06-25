@@ -13,7 +13,7 @@ class PullBackStrategy(BaseStrategy):
     MIN_EMA_GAP = 0.002; PROXIMITY_ATR = 1.5
     RSI_LONG = (30, 55); RSI_SHORT = (45, 70)
 
-    def detect(self, df, timeframe):
+    def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if len(df) < self.get_min_bars(): return None
         curr = df.iloc[-2]
         ema50 = curr.get("ema50"); ema200 = curr.get("ema200")
@@ -40,7 +40,7 @@ class PullBackStrategy(BaseStrategy):
                 valid=True)
         return None
 
-    def score(self, df, signal, timeframe, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None):
+    def score(self, df, signal, timeframe, symbol=None, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None):
         cfg = cfg or {}; weights = self.get_weights(timeframe); direction = signal.direction
         trend_s = self._calc_trend_score(df, direction)
         mom_s   = self._pb_momentum(df, direction)

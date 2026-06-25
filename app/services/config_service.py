@@ -3,6 +3,7 @@ import traceback
 from app.db.session import SessionLocal
 from sqlalchemy import text
 from app.core.time_utils import utc_now
+from app.strategies.registry import merge_default_strategy_config
 import os as _os
 
 DEFAULTS = {
@@ -248,6 +249,14 @@ def get_runtime_config(force_reload=False):
         "PROTECTION_LEVELS_CONFIG": parse_json("PROTECTION_LEVELS_CONFIG"),
         "RETRY_POLICY_CONFIG":      parse_json("RETRY_POLICY_CONFIG"),
     }
+
+    _runtime_cache, defaults_written = merge_default_strategy_config(_runtime_cache)
+    if defaults_written:
+        try:
+            update_runtime_config({"STRATEGY_CONFIG": json.dumps(_runtime_cache["STRATEGY_CONFIG"])})
+        except Exception as e:
+            print(f"[CONFIG] Failed to persist default STRATEGY_CONFIG: {e}")
+
     return _runtime_cache
 
 

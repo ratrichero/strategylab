@@ -19,7 +19,8 @@ class CandlestickStrategy(BaseStrategy):
         "Bullish Marubozu": 1.5, "Bearish Marubozu": 1.5,
     }
 
-    def detect(self, df: pd.DataFrame, timeframe: str) -> Optional[SignalResult]:
+    def detect(self, df: pd.DataFrame, timeframe: str, symbol: str = None,
+           trend_df=None, context_df=None, cfg=None) -> Optional[SignalResult]:
         if len(df) < self.get_min_bars(): return None
         pattern = self._detect_pattern(df)
         if not pattern: return None
@@ -29,8 +30,8 @@ class CandlestickStrategy(BaseStrategy):
         return SignalResult(strategy_name=self.STRATEGY_NAME,
                             direction=direction, pattern=pattern, valid=True)
 
-    def score(self, df, signal, timeframe, trend_df=None,
-              context_df=None, regime="SIDEWAYS", cfg=None) -> SignalResult:
+    def score(self, df, signal, timeframe, symbol=None, trend_df=None,
+          context_df=None, regime="SIDEWAYS", cfg=None) -> SignalResult:
         cfg = cfg or {}; weights = self.get_weights(timeframe); direction = signal.direction
         trend_s = self._calc_trend_score(df, direction)
         mom_s   = self._calc_momentum_score(df, direction)

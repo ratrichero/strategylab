@@ -746,14 +746,33 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                 for strat in active_strats:
                     try:
-                        sig = strat.detect(df, timeframe)
+                        if not strat.is_symbol_allowed(symbol, runtime_cfg):
+                            continue
+
+                        sig = strat.detect(
+                            df=df,
+                            timeframe=timeframe,
+                            symbol=symbol,
+                            trend_df=trend_df,
+                            context_df=context_df,
+                            cfg=runtime_cfg
+                        )
                         if not sig or not sig.valid:
                             continue
+
                         sig = strat.score(
-                            df=df, signal=sig, timeframe=timeframe,
-                            trend_df=trend_df, context_df=context_df,
-                            regime=regime, cfg=runtime_cfg
+                            df=df,
+                            signal=sig,
+                            timeframe=timeframe,
+                            symbol=symbol,
+                            trend_df=trend_df,
+                            context_df=context_df,
+                            regime=regime,
+                            cfg=runtime_cfg
                         )
+                        if not sig or not sig.valid:
+                            continue
+
                         signal_candidates.append(sig)
                     except Exception as e:
                         print(f"[STRATEGY ERR] {strat.STRATEGY_NAME} {symbol}: {e}")

@@ -6,6 +6,7 @@ from app.strategies.mean_reversion_strategy import MeanReversionStrategy
 from app.strategies.pullback_strategy       import PullBackStrategy
 from app.strategies.trend_following_strategy import TrendFollowingStrategy
 from app.strategies.contextual_edge_v1      import ContextualEdgeStrategyV1
+from app.strategies.grid_reversion_strategy import GridReversionStrategy   
 
 _REGISTRY: Dict[str, BaseStrategy] = {
     "candlestick":    CandlestickStrategy(),
@@ -14,6 +15,7 @@ _REGISTRY: Dict[str, BaseStrategy] = {
     "pullback":       PullBackStrategy(),
     "trend_following":TrendFollowingStrategy(),
     "contextual_edge_v1": ContextualEdgeStrategyV1(),
+    "grid_reversion_v1": GridReversionStrategy(),
 }
 
 def get_strategy(name: str) -> Optional[BaseStrategy]:
@@ -31,6 +33,38 @@ def list_all() -> List[str]:
 def register_strategy(name: str, strategy: BaseStrategy):
     _REGISTRY[name] = strategy
     print(f"✅ Registered: {name}")
+
+
+def merge_default_strategy_config(runtime_cfg: dict, default_threshold: float = 8.0) -> tuple[dict, bool]:
+    strategy_cfg = runtime_cfg.get("STRATEGY_CONFIG") or {}
+    if not isinstance(strategy_cfg, dict):
+        strategy_cfg = {}
+
+    modified = False
+    for name, strat in _REGISTRY.items():
+        default_block = strat.get_default_strategy_config(default_threshold)
+        block = strategy_cfg.get(name)
+        if not isinstance(block, dict):
+            strategy_cfg[name] = default_block
+            modified = True
+            continue
+
+        if "threshold" not in block:
+            block["threshold"] = default_block["threshold"]
+            modified = True
+
+        if not isinstance(block.get("patterns"), dict):
+            block["patterns"] = default_block["patterns"]
+            modified = True
+
+        if not isinstance(block.get("symbols"), (str, list, tuple, set)):
+            block["symbols"] = default_block["symbols"]
+            modified = True
+
+        strategy_cfg[name] = block
+
+    runtime_cfg["STRATEGY_CONFIG"] = strategy_cfg
+    return runtime_cfg, modified
 
 
 # ============================================================
@@ -69,6 +103,11 @@ def verify_strategy_config(runtime_cfg: dict) -> None:
                 float(threshold)
             except (TypeError, ValueError):
                 print(f"[STRATEGY CONFIG WARN] threshold của '{strat_key}' không parse được float: {threshold!r}")
+        
+        # verify symbols là str/list/tuple/set
+        symbols = strat_val.get("symbols")
+        if symbols is not None and not isinstance(symbols, (str, list, tuple, set)):
+            print(f"[STRATEGY CONFIG WARN] symbols của '{strat_key}' không hợp lệ: {type(symbols)}")
 
         # verify patterns là dict
         patterns = strat_val.get("patterns")

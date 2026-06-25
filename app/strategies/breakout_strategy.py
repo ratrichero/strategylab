@@ -14,7 +14,7 @@ class BreakoutStrategy(BaseStrategy):
     VOLUME_SURGE_MIN = 1.5
     BREAKOUT_MIN_PCT = 0.001
 
-    def detect(self, df, timeframe):
+    def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         lookback = self.LOOKBACK.get(timeframe, 24)
         if len(df) < lookback + 5: return None
         curr = df.iloc[-2]; window = df.iloc[-(lookback+5):-2]
@@ -37,7 +37,7 @@ class BreakoutStrategy(BaseStrategy):
                 valid=True)
         return None
 
-    def score(self, df, signal, timeframe, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None):
+    def score(self, df, signal, timeframe, symbol=None, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None):
         cfg = cfg or {}; weights = self.get_weights(timeframe); direction = signal.direction
         trend_s = self._calc_trend_score(df, direction)
         mom_s   = self._calc_momentum_breakout(df, direction)

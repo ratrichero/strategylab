@@ -55,11 +55,12 @@ class BaseStrategy(ABC):
     MAX_STRUCTURE = 2.0
 
     @abstractmethod
-    def detect(self, df: pd.DataFrame, timeframe: str) -> Optional[SignalResult]:
+    def detect(self, df: pd.DataFrame, timeframe: str, symbol: str = None,
+               trend_df=None, context_df=None, cfg=None) -> Optional[SignalResult]:
         pass
 
     @abstractmethod
-    def score(self, df, signal, timeframe, trend_df=None,
+    def score(self, df, signal, timeframe, symbol=None, trend_df=None,
               context_df=None, regime="SIDEWAYS", cfg=None) -> SignalResult:
         pass
 
@@ -178,3 +179,81 @@ class BaseStrategy(ABC):
                 "mtf": weights.mtf, "structure": weights.structure,
             }
         }
+    def get_strategy_config(self, cfg: dict) -> Dict:
+        cfg = cfg or {}
+        strategy_cfg = cfg.get("STRATEGY_CONFIG") or {}
+        block = strategy_cfg.get(self.STRATEGY_NAME)
+        return block if isinstance(block, dict) else {}
+
+    def default_pattern_thresholds(self) -> Dict[str, float]:
+        patterns = {}
+        maybe_scores = getattr(self, "PATTERN_SCORES", None)
+        if isinstance(maybe_scores, dict):
+            for key in maybe_scores.keys():
+                if isinstance(key, str) and key:
+                    patterns[key] = 8.0
+
+        for attr in dir(self):
+            if not (attr.startswith("PATTERN_") or attr.startswith("PAT_")):
+                continue
+            if attr == "PATTERN_SCORES":
+                continue
+            val = getattr(self, attr)
+            if isinstance(val, str) and val:
+                patterns.setdefault(val, 8.0)
+
+        return patterns
+
+    def get_default_strategy_config(self, default_threshold: float = 8.0) -> Dict[str, object]:
+        return {
+            "threshold": float(default_threshold),
+            "patterns": self.default_pattern_thresholds(),
+            "symbols": [],
+        }
+
+    def _parse_symbol_list(self, raw) -> List[str]:
+        if isinstance(raw, str):
+            items = raw.split(",")
+        elif isinstance(raw, (list, tuple, set)):
+            items = list(raw)
+        else:
+            return []
+
+        result = []
+        seen = set()
+        for item in items:
+            if not isinstance(item, str):
+                continue
+            symbol = item.strip().upper()
+            if not symbol:
+                continue
+
+            # user chỉ cần ghi BTC / ETH, tự nối USDT
+            if not symbol.endswith("USDT") and symbol != "USDT":
+                symbol = f"{symbol}USDT"
+
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            result.append(symbol)
+        return result
+
+    def is_symbol_allowed(self, symbol: str, cfg: dict) -> bool:
+        strategy_cfg = self.get_strategy_config(cfg)
+        allowed = strategy_cfg.get("symbols")
+        if not allowed:
+            return True
+
+        allowed_symbols = self._parse_symbol_list(allowed)
+        if not allowed_symbols:
+            return True
+
+        return (symbol or "").upper() in allowed_symbols
+
+    def _invalidate(self, signal: SignalResult, reason: str) -> SignalResult:
+        signal.valid = False
+        signal.skip_reason = reason
+        signal.final_score = 0.0
+        signal.rule_score_raw = 0.0
+        signal.components = signal.components or {}
+        return signal

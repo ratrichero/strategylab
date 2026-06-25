@@ -14,7 +14,7 @@ class MeanReversionStrategy(BaseStrategy):
     BB_LOWER = 0.10; BB_UPPER = 0.90
     MAX_EMA_DIST = 0.05
 
-    def detect(self, df, timeframe):
+    def detect(self, df, timeframe, symbol=None, trend_df=None, context_df=None, cfg=None):
         if len(df) < self.get_min_bars(): return None
         curr = df.iloc[-2]
         rsi = curr.get("rsi"); bb_pos = curr.get("bb_position")
@@ -32,7 +32,7 @@ class MeanReversionStrategy(BaseStrategy):
                 structure_score=self._mr_structure(rsi, bb_pos, "SHORT"), valid=True)
         return None
 
-    def score(self, df, signal, timeframe, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None):
+    def score(self, df, signal, timeframe, symbol=None, trend_df=None, context_df=None, regime="SIDEWAYS", cfg=None):
         cfg = cfg or {}; weights = self.get_weights(timeframe); direction = signal.direction
         trend_s = self._calc_trend_score(df, direction)
         mom_s   = self._mr_momentum(df, direction)
