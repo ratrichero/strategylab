@@ -28,7 +28,9 @@ class RecentTradesResponse(BaseModel):
 
 @router.post("/api/dashboard/recent-trades")
 async def dashboard_recent_trades(body: RecentTradesRequest) -> RecentTradesResponse:
-    sql_filter = build_sql_filter(body, source="closed", alias="s")
+    # Recent trades must be realtime after a trade closes, so read the base
+    # signals table instead of waiting for mv_signal_performance to refresh.
+    sql_filter = build_sql_filter(body, source="signals", alias="s")
 
     # Symbol search: space-separated tokens, case-insensitive
     search_conds = []
@@ -75,13 +77,21 @@ async def dashboard_recent_trades(body: RecentTradesRequest) -> RecentTradesResp
                 s.score,
                 s.candle_time,
                 s.exit_time,
-                s.indicators_snapshot,
+                sd.indicators_snapshot,
                 s.market_context,
-                s.mae,
-                s.mfe,
+                toa.max_drawdown AS mae,
+                toa.max_favorable AS mfe,
                 s.strategy_name,
                 s.engine_version
             FROM {sql_filter.table} s
+            LEFT JOIN LATERAL (
+                SELECT indicators_snapshot
+                FROM scan_debug
+                WHERE signal_id = s.id
+                ORDER BY created_at DESC
+                LIMIT 1
+            ) sd ON TRUE
+            LEFT JOIN trade_outcome_analytics toa ON toa.signal_id = s.id
             WHERE {where}
             ORDER BY s.exit_time DESC
             LIMIT ${len(all_params) - 1} OFFSET ${len(all_params)}

@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, profit_factor_for_json, to_float
 
 router = APIRouter(tags=["Dashboard - Overview"])
 
@@ -31,6 +31,9 @@ class StreakStats(BaseModel):
 class OverviewResponse(BaseModel):
     total_trades: int
     trades_today: int
+    wins_today: int
+    losses_today: int
+    win_rate_today: float
     wins: int
     losses: int
     win_rate: float
@@ -75,7 +78,7 @@ def _duration_display(seconds: float) -> str:
 
 @router.post("/api/dashboard/overview")
 async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
-    sql_filter = build_sql_filter(body, source="closed", alias="s")
+    sql_filter = build_sql_filter(body, source="signals", alias="s")
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:
@@ -105,7 +108,7 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
     result_percents = [to_float(r["result_percent"]) for r in rows]
     gains = sum(rp for rp in result_percents if rp > 0)
     losses_abs = abs(sum(rp for rp in result_percents if rp < 0))
-    profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
+    profit_factor = profit_factor_for_json(gains, losses_abs)
 
     # Expectancy
     win_rows = [rp for rp in result_percents if rp > 0]
@@ -149,18 +152,25 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
     now_vn = now_utc + vn_offset
     vn_today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0) - vn_offset
     vn_today_end = vn_today_start + timedelta(days=1)
-    trades_today = sum(
-        1 for r in rows
+    today_rows = [
+        r for r in rows
         if r["exit_time"] and vn_today_start <= r["exit_time"] < vn_today_end
-    )
+    ]
+    trades_today = len(today_rows)
+    wins_today = sum(1 for r in today_rows if r["status"] == "WIN")
+    losses_today = sum(1 for r in today_rows if r["status"] == "LOSS")
+    win_rate_today = (wins_today / trades_today * 100) if trades_today > 0 else 0.0
 
     return OverviewResponse(
         total_trades=total,
         trades_today=trades_today,
+        wins_today=wins_today,
+        losses_today=losses_today,
+        win_rate_today=win_rate_today,
         wins=wins,
         losses=losses,
         win_rate=win_rate,
-        profit_factor=profit_factor if profit_factor != math.inf else float("inf"),
+        profit_factor=profit_factor,
         expectancy=expectancy,
         sharpe=sharpe,
         streaks={

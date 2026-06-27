@@ -264,11 +264,11 @@ export function BlockedPage() {
         <Card className="p-3 text-center"><p className="text-xs text-slate-400">All Time</p><p className="text-2xl font-bold text-slate-400">{data.length}</p></Card>
       </div>
       <Card>
-        <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <div className="flex items-end gap-3 mb-4 flex-wrap">
           <Select label="Block Reason" value={selectedReason} onChange={setSelectedReason} options={[{ value: "all", label: "All Reasons" }, ...reasonList.map(r => ({ value: r, label: r }))]} className="w-64" />
           <div><label className="block text-sm font-medium text-slate-400 mb-1.5">From</label><input type="date" value={pendingStartDate} onChange={e => setPendingStartDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
           <div><label className="block text-sm font-medium text-slate-400 mb-1.5">To</label><input type="date" value={pendingEndDate} onChange={e => setPendingEndDate(e.target.value)} className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm" /></div>
-          <div className="flex items-center"><Button onClick={() => { setAppliedStartDate(pendingStartDate); setAppliedEndDate(pendingEndDate); }}>Apply</Button></div>
+          <Button onClick={() => { setAppliedStartDate(pendingStartDate); setAppliedEndDate(pendingEndDate); }} className="self-end ml-2">Apply</Button>
         </div>
         <DataTable columns={cols} data={filtered} pageSize={20} emptyMessage="No blocked signals" />
       </Card>

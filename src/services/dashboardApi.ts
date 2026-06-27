@@ -13,7 +13,7 @@ async function postJSON<T>(url: string, body: unknown): Promise<T> {
 }
 
 export function fetchDashboardOverview(filters: Record<string, unknown>) {
-  return postJSON<{ total_trades: number; trades_today: number; wins: number; losses: number; win_rate: number; profit_factor: number; expectancy: number; sharpe: number; streaks: any; direction: any; avg_duration_seconds: number | null; avg_duration_display: string }>('/dashboard/overview', buildAnalyticsFilter(filters));
+  return postJSON<{ total_trades: number; trades_today: number; wins_today: number; losses_today: number; win_rate_today: number; wins: number; losses: number; win_rate: number; profit_factor: number; expectancy: number; sharpe: number; streaks: any; direction: any; avg_duration_seconds: number | null; avg_duration_display: string }>('/dashboard/overview', buildAnalyticsFilter(filters));
 }
 
 export function fetchDashboardPortfolio(filters: Record<string, unknown>, initial_capital: number, position_size: number) {

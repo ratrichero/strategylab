@@ -23,6 +23,7 @@ async function fetchAPI(ep) { const r = await fetch(`${API}${ep}`); if (!r.ok) t
 function ScoreCell({ value }) { const v = Number(value) || 0; return <span className={`font-mono text-sm ${v >= 8 ? 'text-emerald-400' : v >= 6 ? 'text-yellow-400' : 'text-red-400'}`}>{v.toFixed(2)}</span>; }
 const fetchBinancePrices = async () => { try { const r = await fetch('https://fapi.binance.com/fapi/v1/ticker/price'); const d = await r.json(); const p = {}; d.forEach((i) => { p[i.symbol] = parseFloat(i.price); }); return p; } catch { return {}; } };
 const fmtMoney = (v) => Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const isInfiniteMetric = (v) => !Number.isFinite(Number(v)) || Number(v) >= 1000000000;
 const fmtPrice = (v) => {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n.toFixed(n > 100 ? 2 : 4) : '-';
@@ -67,11 +68,12 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [apiError, setApiError] = useState('');
 
-  const [filters, setFilters] = useState({ startDate: todayVN, endDate: todayVN, timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', capPsize: '10000|1000' });
+  const [filters, setFilters] = useState({ startDate: '', endDate: '', timeframe: 'all', engineVersion: 'all', scoreMin: '', scoreMax: '', strategy: 'all', regime: 'all', pattern: 'all', direction: 'all', capPsize: '10000|1000' });
   const [appliedFilters, setAppliedFilters] = useState(filters);
   const [statusMode, setStatusMode] = useState('WL'); // WL = WIN/LOSS only, ALL = all statuses
   const [recentSearch, setRecentSearch] = useState('');
   const [recentTradesPage, setRecentTradesPage] = useState(1);
+  const [recentRefreshNonce, setRecentRefreshNonce] = useState(0);
   const [selectedTrade, setSelectedTrade] = useState(null);
   const [selectedTradeKlines, setSelectedTradeKlines] = useState([]);
   const [tradeKlineCache, setTradeKlineCache] = useState(new Map());
@@ -184,6 +186,11 @@ export function Dashboard() {
     setPendingCount(pending.total || 0);
   };
 
+  const refreshViewsAndRecent = async () => {
+    await fetch(`${API}/admin/refresh-views`, { method: 'POST' }).catch(e => console.error('[Dashboard] view refresh failed:', e));
+    setRecentRefreshNonce(v => v + 1);
+  };
+
   // ========== LOAD ==========
   useEffect(() => {
     (async () => {
@@ -254,7 +261,7 @@ export function Dashboard() {
         setLoading(false);
       }
     })();
-  }, [appliedFilters, statusMode, recentTradesPage, recentSearch]);
+  }, [appliedFilters, statusMode, recentTradesPage, recentSearch, recentRefreshNonce]);
 
   // Auto-refresh realtime tables so Active drops out quickly when trades close.
   useEffect(() => {
@@ -288,6 +295,9 @@ export function Dashboard() {
   // KPI from backend overview
   const totalTradesDisplay = overviewData?.total_trades || 0;
   const tradesTodayCount = overviewData?.trades_today || 0;
+  const winsToday = overviewData?.wins_today || 0;
+  const lossesToday = overviewData?.losses_today || 0;
+  const winRateToday = overviewData?.win_rate_today || 0;
   const wins = overviewData?.wins || 0;
   const losses = overviewData?.losses || 0;
   const winRate = overviewData?.win_rate || 0;
@@ -391,6 +401,7 @@ export function Dashboard() {
       if (!res.ok) throw new Error('Failed');
       toast.success('Signal closed');
       await refreshRealtimeTables();
+      await refreshViewsAndRecent();
     } catch (e) { toast.error('Failed to close signal'); }
   };
   const handleCancelAllActive = async () => {
@@ -400,6 +411,7 @@ export function Dashboard() {
       if (!res.ok) throw new Error('Failed');
       toast.success('All signals closed');
       await refreshRealtimeTables();
+      await refreshViewsAndRecent();
     } catch (e) { toast.error('Failed to close all signals'); }
   };
   const handleCancelPending = async (id) => {
@@ -498,7 +510,7 @@ export function Dashboard() {
     { key: 'wins', header: 'Wins', sortable: true, align: 'right' },
     { key: 'winrate', header: 'Win Rate', sortable: true, align: 'right', render: v => <span className={v >= 50 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(1)}%</span> },
     { key: 'expectancy', header: 'Expectancy', sortable: true, align: 'right', render: v => <span className={v >= 0 ? 'text-emerald-400' : 'text-red-400'}>{v.toFixed(2)}</span> },
-    { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => v === Infinity ? 'Infinity' : v.toFixed(2) },
+    { key: 'profitFactor', header: 'PF', sortable: true, align: 'right', render: v => isInfiniteMetric(v) ? 'Infinity' : v.toFixed(2) },
     { key: 'totalReturn', header: 'Total Return', sortable: true, render: v => <PercentChangeBadge value={v} /> },
   ];
 
@@ -522,7 +534,7 @@ export function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <Card className="flex items-center gap-4"><div className="p-3 bg-indigo-500/20 rounded-xl"><BarChart3 className="w-6 h-6 text-indigo-400" /></div><div><p className="text-sm text-slate-400">Total Trades</p><p className="text-2xl font-bold text-white">{totalTradesDisplay}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-cyan-500/20 rounded-xl"><CalendarCheck className="w-6 h-6 text-cyan-400" /></div><div><p className="text-sm text-slate-400">Trades Today</p><p className="text-2xl font-bold text-white">{tradesTodayCount}</p></div></Card>
-        <Card className="flex items-center gap-4"><div className="p-3 bg-emerald-500/20 rounded-xl"><Target className="w-6 h-6 text-emerald-400" /></div><div><p className="text-sm text-slate-400">Win Rate</p><p className={`text-2xl font-bold ${winRate >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{winRate.toFixed(1)}%</p></div></Card>
+        <Card className="flex items-center gap-4"><div className="p-3 bg-emerald-500/20 rounded-xl"><Target className="w-6 h-6 text-emerald-400" /></div><div><p className="text-sm text-slate-400">Today's Win Rate</p><p className={`text-2xl font-bold ${winRateToday >= 50 ? 'text-emerald-400' : 'text-red-400'}`}>{winRateToday.toFixed(1)}%</p><p className="text-xs text-slate-500">{winsToday} win / {lossesToday} loss</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-yellow-500/20 rounded-xl"><Zap className="w-6 h-6 text-yellow-400" /></div><div><p className="text-sm text-slate-400">Active Signals</p><p className="text-2xl font-bold text-white">{allOpen.length}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-purple-500/20 rounded-xl"><Clock className="w-6 h-6 text-purple-400" /></div><div><p className="text-sm text-slate-400">Pending Signals</p><p className="text-2xl font-bold text-white">{pendingCount}</p></div></Card>
         <Card className="flex items-center gap-4"><div className="p-3 bg-orange-500/20 rounded-xl"><Filter className="w-6 h-6 text-orange-400" /></div><div><p className="text-sm text-slate-400">Open / Max</p><p className="text-2xl font-bold text-white">{allOpen.length} / {maxOpen}</p></div></Card>
@@ -556,8 +568,8 @@ export function Dashboard() {
             <div><h3 className="text-lg font-semibold text-white">Strategy Metrics</h3><p className="text-sm text-slate-400">Trade-Level</p></div>
           </div>
           <div className="space-y-3">
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Win / Loss</span><span className="font-bold"><span className="text-emerald-400">{wins}</span> / <span className="text-red-400">{losses}</span></span></div>
-            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Profit Factor</span><span className={`font-bold ${profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{profitFactor === Infinity ? 'Infinity' : profitFactor.toFixed(2)}</span></div>
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Win / Loss / WinRate</span><span className="font-bold"><span className="text-emerald-400">{wins}</span> / <span className="text-red-400">{losses}</span> / <span className={winRate >= 50 ? 'text-emerald-400' : 'text-red-400'}>{winRate.toFixed(1)}%</span></span></div>
+            <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Profit Factor</span><span className={`font-bold ${profitFactor >= 1 ? 'text-emerald-400' : 'text-red-400'}`}>{isInfiniteMetric(profitFactor) ? 'Infinity' : profitFactor.toFixed(2)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Expectancy</span><span className={`font-bold ${clr(expectancy)}`}>{expectancy.toFixed(2)}%</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Sharpe</span><span className="font-bold text-white">{tradeSharpe.toFixed(2)}</span></div>
             <div className="flex justify-between py-2 border-b border-slate-700"><span className="text-slate-400">Max Loss Streak</span><span className="font-bold text-red-400">{streaks.candle.maxLoss} / {streaks.exit.maxLoss}</span></div>

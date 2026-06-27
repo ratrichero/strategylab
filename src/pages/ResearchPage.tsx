@@ -68,13 +68,24 @@ function DebugPanel({ trades }) {
   const totalPages = Math.ceil(filteredTrades.length / pageSize);
   const paged = filteredTrades.slice((page - 1) * pageSize, page * pageSize);
 
+  const fallbackCopy = (text) => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.left = '-9999px';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch(e) { console.error('copy failed', e); }
+    document.body.removeChild(ta);
+  };
+
   const copyStreak = () => {
     const streak = trades.map(t => {
       const s = t.sim_status || '';
       return s === 'WIN' ? 'W' : s === 'LOSS' ? 'L' : s === 'NOT_COUNT' ? 'N' : '-';
     }).join(' ');
-    navigator.clipboard.writeText(streak);
-    alert(`Copied ${trades.length} simulated results to clipboard`);
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(streak).then(() => {
+        alert(`Copied ${trades.length} simulated results to clipboard`);
+      }).catch(() => { fallbackCopy(streak); alert(`Copied ${trades.length} simulated results`); });
+    } else { fallbackCopy(streak); alert(`Copied ${trades.length} simulated results`); }
   };
 
   const exportCSV = () => {
@@ -521,7 +532,7 @@ export function Research() {
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
                   <div><h3 className="text-lg font-semibold text-white">Simulated Trades</h3><p className="text-sm text-slate-400">{trades.length} trades{results.notCount > 0 ? ` (${results.notCount} not counted)` : ''}</p></div>
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => { const streak = tradesDesc.map(t => t.sim_status === 'WIN' ? 'W' : t.sim_status === 'LOSS' ? 'L' : t.sim_status === 'NOT_COUNT' ? 'N' : '-').join(' '); navigator.clipboard.writeText(streak); alert(`Copied ${tradesDesc.length} simulated results`); }} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">📋 Streak</button>
+                    <button onClick={() => { const streak = tradesDesc.map(t => t.sim_status === 'WIN' ? 'W' : t.sim_status === 'LOSS' ? 'L' : t.sim_status === 'NOT_COUNT' ? 'N' : '-').join(' '); if (navigator.clipboard) { navigator.clipboard.writeText(streak).then(() => alert(`Copied ${tradesDesc.length} simulated results`)).catch(() => { fallbackCopy(streak); alert(`Copied ${tradesDesc.length} simulated results`); }); } else { fallbackCopy(streak); alert(`Copied ${tradesDesc.length} simulated results`); } }} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs">📋 Streak</button>
                     <button onClick={() => {
                       const headers = ['#','Symbol','Dir','TF','Pattern','Entry','SL_Sim','TP_Sim','PnL_Sim','Status_Orig','Status_Sim','Score','Regime','Opened','Closed'];
                       const rows = tradesDesc.map((t, i) => [i+1, t.symbol, t.direction, t.timeframe, t.pattern, t.entry_price, t.sim_sl, t.sim_tp, t.sim_result, t.status, t.sim_status, t.score, t.regime, t.entry_time || t.created_at || t.candle_time, t.exit_time].join(','));

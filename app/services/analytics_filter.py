@@ -11,12 +11,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Iterable, Literal, Optional
+import math
 import re
 
 from pydantic import BaseModel, Field
 
 
 DATE_FIELDS = {"exit_time", "created_at", "candle_time"}
+JSON_INF_SENTINEL = 1_000_000_000.0
 SOURCE_TABLES = {
     "closed": "mv_signal_performance",
     "open": "signals",
@@ -134,6 +136,17 @@ def to_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def json_safe_float(value: Any, default: float = 0.0) -> float:
+    number = to_float(value, default)
+    return number if math.isfinite(number) else default
+
+
+def profit_factor_for_json(gains: float, losses_abs: float) -> float:
+    if losses_abs > 0:
+        return json_safe_float(gains / losses_abs)
+    return JSON_INF_SENTINEL if gains > 0 else 0.0
 
 
 def indicator_sql_expr(indicator: str, alias: str = "s") -> str:

@@ -56,7 +56,7 @@ def _calc_sharpe(returns: list[float]) -> float:
 
 @router.post("/api/dashboard/portfolio")
 async def dashboard_portfolio(body: PortfolioRequest) -> PortfolioResponse:
-    sql_filter = build_sql_filter(body, source="closed", alias="s")
+    sql_filter = build_sql_filter(body, source="signals", alias="s")
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:

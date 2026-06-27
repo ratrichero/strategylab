@@ -1,14 +1,13 @@
 """Signals Group Performance API — grouped metrics for SignalsPage."""
 from __future__ import annotations
 
-import math
 from typing import Optional, Literal
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, profit_factor_for_json, to_float
 
 router = APIRouter(tags=["Signals - Group Performance"])
 
@@ -82,7 +81,7 @@ async def signals_group_performance(body: GroupPerformanceRequest) -> GroupPerfo
         winrate = (wins / trades * 100) if trades > 0 else 0.0
         gains = to_float(r["gains"])
         losses_abs = to_float(r["losses_abs"])
-        profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
+        profit_factor = profit_factor_for_json(gains, losses_abs)
         avg_return = to_float(r["total_return"]) / trades if trades > 0 else 0.0
 
         groups.append(
@@ -92,7 +91,7 @@ async def signals_group_performance(body: GroupPerformanceRequest) -> GroupPerfo
                 wins=wins,
                 losses=losses,
                 winrate=round(winrate, 1),
-                profit_factor=round(profit_factor, 2) if profit_factor != math.inf else float("inf"),
+                profit_factor=round(profit_factor, 2),
                 avg_return=round(avg_return, 2),
             )
         )

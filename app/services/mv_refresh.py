@@ -29,8 +29,15 @@ def _do_refresh():
                     db.commit()
                     #print(f"  Refreshed: {mv}")
                 except Exception as e:
-                    print(f"  [MV] Skip {mv}: {e}")
+                    print(f"  [MV] Concurrent refresh failed for {mv}: {e}")
                     db.rollback()
+                    try:
+                        db.execute(text(f"REFRESH MATERIALIZED VIEW {mv}"))
+                        db.commit()
+                        print(f"  [MV] Refreshed without CONCURRENTLY: {mv}")
+                    except Exception as fallback_error:
+                        print(f"  [MV] Skip {mv}: {fallback_error}")
+                        db.rollback()
         finally:
             _refresh_lock.release()
 

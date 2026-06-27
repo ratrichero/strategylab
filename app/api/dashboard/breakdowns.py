@@ -1,14 +1,13 @@
 """Dashboard Breakdowns API — regime breakdown and pattern/timeframe heatmap."""
 from __future__ import annotations
 
-import math
 from typing import Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, profit_factor_for_json, to_float
 
 router = APIRouter(tags=["Dashboard - Breakdowns"])
 
@@ -41,7 +40,7 @@ class BreakdownsResponse(BaseModel):
 
 @router.post("/api/dashboard/breakdowns")
 async def dashboard_breakdowns(body: BreakdownsRequest) -> BreakdownsResponse:
-    sql_filter = build_sql_filter(body, source="closed", alias="s")
+    sql_filter = build_sql_filter(body, source="signals", alias="s")
 
     pool = await get_async_pool()
     async with pool.acquire() as conn:
@@ -98,7 +97,7 @@ async def dashboard_breakdowns(body: BreakdownsRequest) -> BreakdownsResponse:
         expectancy = win_rate_decimal * avg_win - loss_rate_decimal * avg_loss
 
         # Calculate profit factor: gains / losses_abs, handle division by zero
-        profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
+        profit_factor = profit_factor_for_json(gains, losses_abs)
 
         regime_items.append(
             RegimeItem(
@@ -107,7 +106,7 @@ async def dashboard_breakdowns(body: BreakdownsRequest) -> BreakdownsResponse:
                 wins=wins,
                 win_rate=win_rate,
                 expectancy=round(expectancy, 2),
-                profit_factor=round(profit_factor, 2) if profit_factor != math.inf else float("inf"),
+                profit_factor=round(profit_factor, 2),
                 total_return=round(to_float(r["total_return"]), 2),
             )
         )

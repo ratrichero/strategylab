@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.db.async_pool import get_async_pool
-from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, to_float
+from app.services.analytics_filter import AnalyticsFilter, build_sql_filter, profit_factor_for_json, to_float
 
 router = APIRouter(tags=["Signals - Overview"])
 
@@ -66,7 +66,7 @@ async def signals_overview(body: SignalsOverviewRequest) -> SignalsOverviewRespo
     result_percents = [to_float(r["result_percent"]) for r in rows]
     gains = sum(rp for rp in result_percents if rp > 0)
     losses_abs = abs(sum(rp for rp in result_percents if rp < 0))
-    profit_factor = (gains / losses_abs) if losses_abs > 0 else (math.inf if gains > 0 else 0.0)
+    profit_factor = profit_factor_for_json(gains, losses_abs)
 
     # Expectancy
     win_rows = [rp for rp in result_percents if rp > 0]
@@ -103,7 +103,7 @@ async def signals_overview(body: SignalsOverviewRequest) -> SignalsOverviewRespo
         total=total,
         scanned=scanned,
         win_rate=round(win_rate, 1),
-        profit_factor=round(profit_factor, 2) if profit_factor != math.inf else float("inf"),
+        profit_factor=round(profit_factor, 2),
         expectancy=round(expectancy, 2),
         score_return_corr=round(score_return_corr, 3),
     )

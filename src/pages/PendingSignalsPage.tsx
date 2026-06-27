@@ -22,6 +22,19 @@ function createdToVNDate(createdAt) {
   return `${vn.getUTCFullYear()}-${String(vn.getUTCMonth()+1).padStart(2,'0')}-${String(vn.getUTCDate()).padStart(2,'0')}`;
 }
 
+function renderRejectReason(reason) {
+  if (!reason) return '-';
+
+  return (
+    <span
+      className="block max-w-[340px] whitespace-normal break-words font-mono text-[11px] leading-4 text-slate-300"
+      title={reason}
+    >
+      {reason}
+    </span>
+  );
+}
+
 export function PendingSignalsPage() {
   const today = getTodayVN();
   const [loading, setLoading] = useState(true);
@@ -160,7 +173,7 @@ export function PendingSignalsPage() {
     { key: 'stop_loss', header: 'SL', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'take_profit', header: 'TP', render: v => v?.toFixed(v > 100 ? 2 : 4) || '-' },
     { key: 'status', header: 'Status', sortable: true, render: v => <StatusBadge status={v} /> },
-    { key: 'rejection_reason', header: 'Reason', render: v => v ? <span className="text-xs text-slate-400" title={v}>{v.split('::')[0]}</span> : '-' },
+    { key: 'rejection_reason', header: 'Reason', render: v => renderRejectReason(v) },
     { key: 'signal_score', header: 'Score', sortable: true, render: v => v ? <span className={`font-mono text-sm ${v >= 8 ? 'text-emerald-400' : v >= 6 ? 'text-yellow-400' : 'text-red-400'}`}>{v.toFixed(2)}</span> : '-' },
     { key: 'exchange_status', header: 'EStatus', render: v => v || '-' },
     { key: 'placed_at', header: 'OrderAt', sortable: true, render: v => v ? utcToVN(v) : '-' },

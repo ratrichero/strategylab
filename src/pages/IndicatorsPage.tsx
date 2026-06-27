@@ -25,6 +25,7 @@ function exitToVNDate(exitTime) {
 }
 
 function ChartTT({ active, payload, label }) { if (!active || !payload?.length) return null; return (<div className="bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl text-sm"><p className="text-yellow-400 font-semibold mb-1">{label}</p>{payload.map((e, i) => (<div key={i} className="flex items-center gap-2"><div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: e.color }} /><span className="text-white">{e.name}: <strong>{typeof e.value === 'number' ? e.value.toFixed(2) : e.value}</strong></span></div>))}</div>); }
+const isInfiniteMetric = (v) => !Number.isFinite(Number(v)) || Number(v) >= 1000000000;
 async function fetchQ(query, params = {}) {
   console.log('[Indicators] fetchQ:', query, JSON.stringify(params));
   try {
@@ -160,7 +161,7 @@ export function Indicators() {
   return(
     <div className="space-y-6">
       <h2 className="text-2xl font-bold text-white flex items-center gap-2">Indicator Analysis {loading && <Loader2 className="w-5 h-5 animate-spin text-indigo-400" />}</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"><Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Trades</p><p className="text-lg font-bold text-white">{kpi.total}</p></Card><Card className="p-3 text-center"><p className="text-xs text-slate-400">Win Rate</p><p className={`text-lg font-bold ${kpi.wr>=50?'text-emerald-400':'text-red-400'}`}>{kpi.wr.toFixed(1)}%</p></Card><Card className="p-3 text-center"><p className="text-xs text-slate-400">Profit Factor</p><p className="text-lg font-bold text-white">{kpi.pf===Infinity?'Infinity':kpi.pf.toFixed(2)}</p></Card></div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3"><Card className="p-3 text-center"><p className="text-xs text-slate-400">Total Trades</p><p className="text-lg font-bold text-white">{kpi.total}</p></Card><Card className="p-3 text-center"><p className="text-xs text-slate-400">Win Rate</p><p className={`text-lg font-bold ${kpi.wr>=50?'text-emerald-400':'text-red-400'}`}>{kpi.wr.toFixed(1)}%</p></Card><Card className="p-3 text-center"><p className="text-xs text-slate-400">Profit Factor</p><p className="text-lg font-bold text-white">{isInfiniteMetric(kpi.pf)?'Infinity':kpi.pf.toFixed(2)}</p></Card></div>
       <Card><div className="flex items-center gap-2 mb-4"><Filter className="w-4 h-4 text-slate-400" /><span className="text-sm font-semibold text-white">Filters</span><span className="text-xs text-slate-500 ml-2">Leave dates empty = all time.</span></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-4">
           <Input type="date" label="Start" value={f.startDate} onChange={e=>set('startDate',e.target.value)} />
