@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class CandlestickStrategy(BaseStrategy):
     STRATEGY_NAME = "candlestick"
+    STRATEGY_DESCRIPTION = "Mô hình nến: Engulfing, Hammer, Star, Doji, Harami, Marubozu"
     DEFAULT_THRESHOLD = 7.5
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.25, momentum=0.25, volume=0.10, pattern=0.15, mtf=0.25),

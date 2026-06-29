@@ -6,6 +6,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class GridReversionStrategy(BaseStrategy):
     STRATEGY_NAME = "grid_reversion_v1"
+    STRATEGY_DESCRIPTION = "Grid zone: Lower reclaim/overshoot + Upper reject/overshoot"
     DEFAULT_THRESHOLD = 8.0
     SUPPORTED_TIMEFRAMES = ["15m"]
 

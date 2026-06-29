@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class TrendFollowingStrategy(BaseStrategy):
     STRATEGY_NAME = "trend_following"
+    STRATEGY_DESCRIPTION = "EMA crossover + volume confirm → trend following"
     DEFAULT_THRESHOLD = 8.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.35, momentum=0.20, volume=0.15, pattern=0.0, mtf=0.25, structure=0.05),

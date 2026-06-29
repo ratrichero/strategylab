@@ -40,6 +40,7 @@ class StrategyWeights:
 
 class BaseStrategy(ABC):
     STRATEGY_NAME:        str       = "base"
+    STRATEGY_DESCRIPTION: str       = ""
     SUPPORTED_TIMEFRAMES: List[str] = ["15m", "1h", "4h"]
     WEIGHTS: Dict[str, StrategyWeights] = {}
     DEFAULT_THRESHOLD: float = 8.0

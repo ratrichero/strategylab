@@ -101,7 +101,11 @@ async def list_strategies():
         "all": list_all(),
         "active": active,
         "details": {
-            n: {"supported_timeframes": s.SUPPORTED_TIMEFRAMES}
+            n: {
+                "supported_timeframes": s.SUPPORTED_TIMEFRAMES,
+                "patterns": list(s.default_pattern_thresholds().keys()),
+                "description": s.STRATEGY_DESCRIPTION if hasattr(s, "STRATEGY_DESCRIPTION") else "",
+            }
             for n, s in _REGISTRY.items()
         }
     }

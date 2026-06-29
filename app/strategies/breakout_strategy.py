@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class BreakoutStrategy(BaseStrategy):
     STRATEGY_NAME = "breakout"
+    STRATEGY_DESCRIPTION = "Phá vỡ swing high/low + volume surge → breakout"
     DEFAULT_THRESHOLD = 8.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.20, momentum=0.15, volume=0.20, pattern=0.0, mtf=0.25, structure=0.20),

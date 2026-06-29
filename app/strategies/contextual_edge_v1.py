@@ -9,6 +9,7 @@ class ContextualEdgeStrategyV1(BaseStrategy):
     Mỗi Pattern sẽ có bộ lọc Context (Regime, MTF, RSI) riêng biệt ở bước Score.
     """
     STRATEGY_NAME = "contextual_edge_v1"
+    STRATEGY_DESCRIPTION = "Contextual: 15m Long Pullback + 4h Bearish Pullback + 15m Reversal"
     DEFAULT_THRESHOLD = 8.0
     
     WEIGHTS = {

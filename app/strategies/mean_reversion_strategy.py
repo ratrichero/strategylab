@@ -5,6 +5,7 @@ from app.strategies.base import BaseStrategy, SignalResult, StrategyWeights
 
 class MeanReversionStrategy(BaseStrategy):
     STRATEGY_NAME = "mean_reversion"
+    STRATEGY_DESCRIPTION = "RSI extreme + BB touch → đảo chiều (mean reversion)"
     DEFAULT_THRESHOLD = 99.0
     WEIGHTS = {
         "15m": StrategyWeights(trend=0.15, momentum=0.30, volume=0.15, pattern=0.0, mtf=0.20, structure=0.20),
