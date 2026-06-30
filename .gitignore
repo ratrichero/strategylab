@@ -1,5 +1,6 @@
 .agent/
 .vscode/
+plans/
 
 test.py
 test_pending.py
