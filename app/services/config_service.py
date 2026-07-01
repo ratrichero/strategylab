@@ -29,7 +29,12 @@ DEFAULTS = {
         "atr_entry_multiplier": {"15m": 0.4, "1h": 0.5, "4h": 0.6},
         "expire_hours": {"15m": 0.5, "1h": 2, "4h": 8}
     }),
-    "OPEN_TRADE_FILTER": json.dumps({"enabled": True}),
+    "OPEN_TRADE_FILTER": json.dumps({
+        "enabled": True,
+        "identity": {
+            "disabled_patterns_by_strategy": {}
+        }
+    }),
     "PREFILL_CONFIG": json.dumps({"enabled": True}),
     # ← REMOVED: STRATEGY_THRESHOLDS đã được gộp vào STRATEGY_CONFIG
     "LIMIT_ORDER_CONFIG": json.dumps({

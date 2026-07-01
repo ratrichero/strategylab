@@ -57,6 +57,15 @@ class OpenTradeFilter:
                 return False, f"strategy_blocked_{strategy_name}"
 
         allowed_patterns = identity.get("patterns")
+        disabled_by_strat = identity.get("disabled_patterns_by_strategy", {})
+        
+        # New style: check disabled patterns by strategy (takes precedence)
+        if strategy_name in disabled_by_strat:
+            disabled_patterns = disabled_by_strat[strategy_name]
+            if disabled_patterns and pattern in disabled_patterns:
+                return False, f"pattern_blocked_{strategy_name}_{pattern}"
+        
+        # Backward compatibility: if old whitelist patterns config exists, use it
         if allowed_patterns is not None and len(allowed_patterns) > 0:
             if pattern not in allowed_patterns:
                 return False, f"pattern_blocked_{pattern}"

@@ -122,6 +122,36 @@ export function Dashboard() {
 
   const handleApply = () => setAppliedFilters({ ...filters });
 
+  // Helper function to add days to a date string (YYYY-MM-DD format)
+  const addDaysToDateString = (dateString, delta) => {
+    if (!dateString) return dateString;
+    const [year, month, day] = dateString.split('-').map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    date.setUTCDate(date.getUTCDate() + delta);
+    const newYear = date.getUTCFullYear();
+    const newMonth = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const newDay = String(date.getUTCDate()).padStart(2, '0');
+    return `${newYear}-${newMonth}-${newDay}`;
+  };
+
+  // Shift both start and end dates by delta days
+  const shiftDateRange = (delta) => {
+    const todayVN = getTodayVN();
+    let newStartDate, newEndDate;
+    
+    if (!filters.startDate && !filters.endDate) {
+      // Both empty: start from today and shift
+      newStartDate = addDaysToDateString(todayVN, delta);
+      newEndDate = addDaysToDateString(todayVN, delta);
+    } else {
+      // At least one is set: shift only the ones that are set
+      newStartDate = filters.startDate ? addDaysToDateString(filters.startDate, delta) : filters.startDate;
+      newEndDate = filters.endDate ? addDaysToDateString(filters.endDate, delta) : filters.endDate;
+    }
+    
+    setFilters({ ...filters, startDate: newStartDate, endDate: newEndDate });
+  };
+
   const getTradeKlineKey = (trade) => {
     const plan = buildFetchPlan([trade])[0];
     return plan ? `${plan.symbol}_${plan.startMs}_${plan.endMs}` : '';
@@ -544,8 +574,12 @@ export function Dashboard() {
       <Card>
         <div className="flex items-center gap-2 mb-4"><Filter className="w-5 h-5 text-slate-400" /><h3 className="font-semibold text-white">Filters</h3><span className="text-xs text-slate-500 ml-2">- Metrics, Portfolio, Charts, Regime</span></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3">
-          <Input type="date" label="From" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} />
-          <Input type="date" label="To" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} />
+          <div className="flex items-end gap-1">
+            <Input type="date" label="From" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} />
+            <button onClick={() => shiftDateRange(-1)} className="mb-2 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-bold border border-slate-600 transition-colors" title="Shift range back 1 day">&lt;&lt;</button>
+            <button onClick={() => shiftDateRange(1)} className="mb-2 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-bold border border-slate-600 transition-colors" title="Shift range forward 1 day">&gt;&gt;</button>
+          </div>
+          <Input type="date" label="To" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="flex-1" />
           <Select label="Strategy" value={filters.strategy} onChange={v => setFilterInstant('strategy', v)} options={[{ value: 'all', label: 'All' }, ...strategies.map(s => ({ value: s, label: s }))]} />
           <Select label="Pattern" value={filters.pattern} onChange={v => setFilterInstant('pattern', v)} options={[{ value: 'all', label: 'All' }, ...allPatterns.map(p => ({ value: p, label: p }))]} />
           <Select label="Direction" value={filters.direction} onChange={v => setFilterInstant('direction', v)} options={[{ value: 'all', label: 'All' }, { value: 'LONG', label: 'LONG' }, { value: 'SHORT', label: 'SHORT' }]} />

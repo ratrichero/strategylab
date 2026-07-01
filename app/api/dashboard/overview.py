@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import math
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter
@@ -98,6 +99,59 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
             """,
             *sql_filter.params,
         )
+        
+        # Fetch current day trades separately (without date filter)
+        # Build filter without date constraints for current day metrics
+        now_utc = datetime.now(timezone.utc)
+        vn_offset = timedelta(hours=7)
+        now_vn = now_utc + vn_offset
+        vn_today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0) - vn_offset
+        vn_today_end = vn_today_start + timedelta(days=1)
+        
+        # Build SQL filter without date constraints for current day
+        # For current day metrics, we use all filters except date range
+        # Create a modified body without date fields
+        current_day_body = OverviewRequest(
+            start_date=None,
+            end_date=None,
+            date_field=body.date_field,
+            symbols=body.symbols,
+            symbol_mode=body.symbol_mode,
+            timeframes=body.timeframes,
+            strategies=body.strategies,
+            patterns=body.patterns,
+            regimes=body.regimes,
+            directions=body.directions,
+            engine_version=body.engine_version,
+            engine_mode=body.engine_mode,
+            score_min=body.score_min,
+            score_max=body.score_max,
+            include_manual=body.include_manual,
+        )
+        current_day_filter = build_sql_filter(
+            current_day_body,
+            source="signals",
+            alias="s"
+        )
+        
+        today_rows = await conn.fetch(
+            f"""
+            SELECT
+                s.status,
+                s.result_percent,
+                s.direction,
+                s.candle_time,
+                s.exit_time,
+                EXTRACT(EPOCH FROM (s.exit_time - s.candle_time)) AS duration_sec
+            FROM {current_day_filter.table} s
+            WHERE {current_day_filter.where}
+            AND s.exit_time >= $1 AND s.exit_time < $2
+            ORDER BY s.exit_time ASC
+            """,
+            *current_day_filter.params,
+            vn_today_start,
+            vn_today_end,
+        )
 
     total = len(rows)
     wins = sum(1 for r in rows if r["status"] == "WIN")
@@ -141,21 +195,7 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
     durations = [to_float(r["duration_sec"]) for r in rows if to_float(r["duration_sec"]) > 0]
     avg_dur = sum(durations) / len(durations) if durations else None
 
-    # trades_today: use the same VN date logic as the filter
-    from app.services.analytics_filter import parse_vn_date_range
-    today_start, today_end = parse_vn_date_range(body.start_date, body.end_date)
-    # Actually, trades_today is independent of filter — it's always "today"
-    # We need to compute it based on current VN date
-    from datetime import datetime, timedelta, timezone
-    now_utc = datetime.now(timezone.utc)
-    vn_offset = timedelta(hours=7)
-    now_vn = now_utc + vn_offset
-    vn_today_start = now_vn.replace(hour=0, minute=0, second=0, microsecond=0) - vn_offset
-    vn_today_end = vn_today_start + timedelta(days=1)
-    today_rows = [
-        r for r in rows
-        if r["exit_time"] and vn_today_start <= r["exit_time"] < vn_today_end
-    ]
+    # trades_today: use separate query that excludes date filter
     trades_today = len(today_rows)
     wins_today = sum(1 for r in today_rows if r["status"] == "WIN")
     losses_today = sum(1 for r in today_rows if r["status"] == "LOSS")
