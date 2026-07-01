@@ -112,9 +112,9 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
         # For current day metrics, we use all filters except date range
         # Create a modified body without date fields
         current_day_body = OverviewRequest(
-            start_date=None,
-            end_date=None,
-            date_field=body.date_field,
+            start_date=vn_today_start.isoformat(),
+            end_date=vn_today_end.isoformat(),
+            date_field="exit_time",
             symbols=body.symbols,
             symbol_mode=body.symbol_mode,
             timeframes=body.timeframes,
@@ -133,7 +133,7 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
             source="signals",
             alias="s"
         )
-        
+
         today_rows = await conn.fetch(
             f"""
             SELECT
@@ -145,12 +145,9 @@ async def dashboard_overview(body: OverviewRequest) -> OverviewResponse:
                 EXTRACT(EPOCH FROM (s.exit_time - s.candle_time)) AS duration_sec
             FROM {current_day_filter.table} s
             WHERE {current_day_filter.where}
-            AND s.exit_time >= $1 AND s.exit_time < $2
             ORDER BY s.exit_time ASC
             """,
             *current_day_filter.params,
-            vn_today_start,
-            vn_today_end,
         )
 
     total = len(rows)
