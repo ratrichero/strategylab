@@ -574,12 +574,17 @@ export function Dashboard() {
       <Card>
         <div className="flex items-center gap-2 mb-4"><Filter className="w-5 h-5 text-slate-400" /><h3 className="font-semibold text-white">Filters</h3><span className="text-xs text-slate-500 ml-2">- Metrics, Portfolio, Charts, Regime</span></div>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 lg:grid-cols-10 gap-3">
-          <div className="flex items-end gap-1">
-            <Input type="date" label="From" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} />
-            <button onClick={() => shiftDateRange(-1)} className="mb-2 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-bold border border-slate-600 transition-colors" title="Shift range back 1 day">&lt;&lt;</button>
-            <button onClick={() => shiftDateRange(1)} className="mb-2 px-2 py-1.5 bg-slate-700 hover:bg-slate-600 text-white rounded text-xs font-bold border border-slate-600 transition-colors" title="Shift range forward 1 day">&gt;&gt;</button>
+          <div>
+            <div className="mb-1 flex h-5 items-center justify-between gap-2">
+              <label className="text-sm font-medium text-slate-300">From</label>
+              <div className="flex items-center gap-1">
+                <button onClick={() => shiftDateRange(-1)} className="h-5 rounded border border-slate-600 bg-slate-700 px-1.5 text-[10px] font-bold leading-none text-slate-200 transition-colors hover:bg-slate-600" title="Shift range back 1 day">&lt;&lt;</button>
+                <button onClick={() => shiftDateRange(1)} className="h-5 rounded border border-slate-600 bg-slate-700 px-1.5 text-[10px] font-bold leading-none text-slate-200 transition-colors hover:bg-slate-600" title="Shift range forward 1 day">&gt;&gt;</button>
+              </div>
+            </div>
+            <input type="date" value={filters.startDate} onChange={e => setFilters({ ...filters, startDate: e.target.value })} className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
-          <Input type="date" label="To" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} className="flex-1" />
+          <Input type="date" label="To" value={filters.endDate} onChange={e => setFilters({ ...filters, endDate: e.target.value })} />
           <Select label="Strategy" value={filters.strategy} onChange={v => setFilterInstant('strategy', v)} options={[{ value: 'all', label: 'All' }, ...strategies.map(s => ({ value: s, label: s }))]} />
           <Select label="Pattern" value={filters.pattern} onChange={v => setFilterInstant('pattern', v)} options={[{ value: 'all', label: 'All' }, ...allPatterns.map(p => ({ value: p, label: p }))]} />
           <Select label="Direction" value={filters.direction} onChange={v => setFilterInstant('direction', v)} options={[{ value: 'all', label: 'All' }, { value: 'LONG', label: 'LONG' }, { value: 'SHORT', label: 'SHORT' }]} />
